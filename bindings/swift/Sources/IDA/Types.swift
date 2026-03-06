@@ -75,7 +75,10 @@ public final class TypeHandle: @unchecked Sendable {
     public func clone() throws(IDAError) -> TypeHandle {
         var out: IdaxTypeHandle?
         try checkStatus(idax_type_clone(handle, &out), "type.clone")
-        return TypeHandle(out!)
+        guard let out else {
+            throw IDAError(category: .internal, code: 0, message: "nil handle after successful call")
+        }
+        return TypeHandle(out)
     }
 
     // MARK: - Struct/Union members
@@ -92,13 +95,19 @@ public final class TypeHandle: @unchecked Sendable {
     public static func byName(_ name: String) throws(IDAError) -> TypeHandle {
         var out: IdaxTypeHandle?
         try checkStatus(name.withCString { idax_type_by_name($0, &out) }, "type.byName")
-        return TypeHandle(out!)
+        guard let out else {
+            throw IDAError(category: .internal, code: 0, message: "nil handle after successful call")
+        }
+        return TypeHandle(out)
     }
 
     public static func fromDeclaration(_ decl: String) throws(IDAError) -> TypeHandle {
         var out: IdaxTypeHandle?
         try checkStatus(decl.withCString { idax_type_from_declaration($0, &out) }, "type.fromDeclaration")
-        return TypeHandle(out!)
+        guard let out else {
+            throw IDAError(category: .internal, code: 0, message: "nil handle after successful call")
+        }
+        return TypeHandle(out)
     }
 
     public func apply(at address: Address) throws(IDAError) {
@@ -112,6 +121,9 @@ public final class TypeHandle: @unchecked Sendable {
     public static func retrieve(at address: Address) throws(IDAError) -> TypeHandle {
         var out: IdaxTypeHandle?
         try checkStatus(idax_type_retrieve(address, &out), "type.retrieve")
-        return TypeHandle(out!)
+        guard let out else {
+            throw IDAError(category: .internal, code: 0, message: "nil handle after successful call")
+        }
+        return TypeHandle(out)
     }
 }
