@@ -3,21 +3,25 @@ import CIDA
 /// RAII event subscription token. Unsubscribes on deinit.
 public final class EventSubscription: @unchecked Sendable {
     private let token: UInt64
+    private let context: UnsafeMutableRawPointer
     private var active = true
 
-    init(token: UInt64) {
+    init(token: UInt64, context: UnsafeMutableRawPointer) {
         self.token = token
+        self.context = context
     }
 
     deinit {
         if active {
             idax_event_unsubscribe(token)
+            Unmanaged<AnyObject>.fromOpaque(context).release()
         }
     }
 
     public func cancel() {
         if active {
             idax_event_unsubscribe(token)
+            Unmanaged<AnyObject>.fromOpaque(context).release()
             active = false
         }
     }
@@ -35,11 +39,16 @@ public enum Event {
         let box = RenamedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
         var token: UInt64 = 0
-        try checkStatus(
-            idax_event_on_renamed(renamedTrampoline, ctx, &token),
-            "event.onRenamed"
-        )
-        return EventSubscription(token: token)
+        do {
+            try checkStatus(
+                idax_event_on_renamed(renamedTrampoline, ctx, &token),
+                "event.onRenamed"
+            )
+        } catch {
+            Unmanaged<AnyObject>.fromOpaque(ctx).release()
+            throw error
+        }
+        return EventSubscription(token: token, context: ctx)
     }
 
     public static func onFunctionAdded(
@@ -48,11 +57,16 @@ public enum Event {
         let box = AddressBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
         var token: UInt64 = 0
-        try checkStatus(
-            idax_event_on_function_added(functionAddedTrampoline, ctx, &token),
-            "event.onFunctionAdded"
-        )
-        return EventSubscription(token: token)
+        do {
+            try checkStatus(
+                idax_event_on_function_added(functionAddedTrampoline, ctx, &token),
+                "event.onFunctionAdded"
+            )
+        } catch {
+            Unmanaged<AnyObject>.fromOpaque(ctx).release()
+            throw error
+        }
+        return EventSubscription(token: token, context: ctx)
     }
 
     public static func onFunctionDeleted(
@@ -61,11 +75,16 @@ public enum Event {
         let box = AddressBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
         var token: UInt64 = 0
-        try checkStatus(
-            idax_event_on_function_deleted(functionDeletedTrampoline, ctx, &token),
-            "event.onFunctionDeleted"
-        )
-        return EventSubscription(token: token)
+        do {
+            try checkStatus(
+                idax_event_on_function_deleted(functionDeletedTrampoline, ctx, &token),
+                "event.onFunctionDeleted"
+            )
+        } catch {
+            Unmanaged<AnyObject>.fromOpaque(ctx).release()
+            throw error
+        }
+        return EventSubscription(token: token, context: ctx)
     }
 
     public static func onBytePatched(
@@ -74,11 +93,16 @@ public enum Event {
         let box = BytePatchedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
         var token: UInt64 = 0
-        try checkStatus(
-            idax_event_on_byte_patched(bytePatchedTrampoline, ctx, &token),
-            "event.onBytePatched"
-        )
-        return EventSubscription(token: token)
+        do {
+            try checkStatus(
+                idax_event_on_byte_patched(bytePatchedTrampoline, ctx, &token),
+                "event.onBytePatched"
+            )
+        } catch {
+            Unmanaged<AnyObject>.fromOpaque(ctx).release()
+            throw error
+        }
+        return EventSubscription(token: token, context: ctx)
     }
 
     public static func unsubscribe(token: UInt64) {
