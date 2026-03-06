@@ -19,8 +19,8 @@ public struct EntryPoint: Sendable {
         defer { idax_entry_free(&raw) }
         return EntryPoint(
             ordinal: raw.ordinal, address: raw.address,
-            name: takeCString(raw.name),
-            forwarder: takeCString(raw.forwarder)
+            name: borrowCString(raw.name),
+            forwarder: borrowCString(raw.forwarder)
         )
     }
 

@@ -119,8 +119,8 @@ public struct Segment: Sendable {
             write: raw.perm_write != 0,
             execute: raw.perm_exec != 0
         )
-        self.name = takeCString(raw.name)
-        self.className = takeCString(raw.class_name)
+        self.name = borrowCString(raw.name)
+        self.className = borrowCString(raw.class_name)
         self.isVisible = raw.visible != 0
     }
 }

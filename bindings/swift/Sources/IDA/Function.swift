@@ -106,10 +106,10 @@ public struct Function: Sendable {
             let buf = UnsafeBufferPointer(start: ptr, count: raw.variable_count)
             vars = buf.map { v in
                 FrameVariable(
-                    name: takeCString(v.name),
+                    name: borrowCString(v.name),
                     byteOffset: v.byte_offset,
                     byteSize: v.byte_size,
-                    comment: takeCString(v.comment),
+                    comment: borrowCString(v.comment),
                     isSpecial: v.is_special != 0
                 )
             }
@@ -143,7 +143,7 @@ public struct Function: Sendable {
     init(raw: IdaxFunction) {
         self.start = raw.start
         self.end = raw.end
-        self.name = takeCString(raw.name)
+        self.name = borrowCString(raw.name)
         self.bitness = Int(raw.bitness)
         self.returns = raw.returns != 0
         self.isLibrary = raw.is_library != 0
