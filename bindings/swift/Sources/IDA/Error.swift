@@ -95,6 +95,13 @@ func takeCString(_ ptr: UnsafeMutablePointer<CChar>?) -> String {
     return String(cString: ptr)
 }
 
+/// Read a C string without freeing it. Used when a separate `_free` function
+/// owns the lifecycle of the containing struct.
+func borrowCString(_ ptr: UnsafePointer<CChar>?) -> String {
+    guard let ptr else { return "" }
+    return String(cString: ptr)
+}
+
 /// Read an address array output from a C shim call.
 func withAddressArrayOutput(
     _ fallback: String,

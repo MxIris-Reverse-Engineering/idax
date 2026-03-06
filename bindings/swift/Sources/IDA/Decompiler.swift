@@ -66,13 +66,13 @@ public final class DecompiledFunction: @unchecked Sendable {
             let buf = UnsafeBufferPointer(start: ptr, count: count)
             return buf.map { v in
                 LocalVariable(
-                    name: takeCString(v.name),
-                    typeName: takeCString(v.type_name),
+                    name: borrowCString(v.name),
+                    typeName: borrowCString(v.type_name),
                     isArgument: v.is_argument != 0,
                     width: Int(v.width),
                     hasUserName: v.has_user_name != 0,
                     storage: Int(v.storage),
-                    comment: takeCString(v.comment)
+                    comment: borrowCString(v.comment)
                 )
             }
         }
@@ -103,6 +103,9 @@ public enum Decompiler {
     public static func decompile(at address: Address) throws(IDAError) -> DecompiledFunction {
         var handle: IdaxDecompiledHandle?
         try checkStatus(idax_decompiler_decompile(address, &handle), "decompiler.decompile")
-        return DecompiledFunction(handle!)
+        guard let handle else {
+            throw IDAError(category: .internal, code: 0, message: "nil handle after successful call")
+        }
+        return DecompiledFunction(handle)
     }
 }

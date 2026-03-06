@@ -100,7 +100,7 @@ public struct Instruction: Sendable {
         self.address = raw.address
         self.size = raw.size
         self.opcode = raw.opcode
-        self.mnemonic = takeCString(raw.mnemonic)
+        self.mnemonic = borrowCString(raw.mnemonic)
 
         var ops: [Operand] = []
         if let ptr = raw.operands, raw.operand_count > 0 {
@@ -110,7 +110,7 @@ public struct Instruction: Sendable {
                     index: Int(o.index),
                     operandType: OperandType(rawValue: Int32(o.type)) ?? .void_,
                     registerID: o.register_id,
-                    registerName: takeCString(o.register_name),
+                    registerName: borrowCString(o.register_name),
                     value: o.value,
                     targetAddress: o.target_address,
                     byteWidth: Int(o.byte_width)
