@@ -1,0 +1,3 @@
+bindings/swift/.build/
+bindings/swift/.build-libs/
+bindings/swift/.cmake-build/
