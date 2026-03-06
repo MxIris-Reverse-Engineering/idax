@@ -20,13 +20,19 @@ public final class StorageNode: @unchecked Sendable {
             name.withCString { idax_storage_node_open($0, create ? 1 : 0, &handle) },
             "storage.open"
         )
-        return StorageNode(handle!)
+        guard let handle else {
+            throw IDAError(category: .internal, code: 0, message: "nil handle after successful call")
+        }
+        return StorageNode(handle)
     }
 
     public static func open(id: UInt64) throws(IDAError) -> StorageNode {
         var handle: IdaxNodeHandle?
         try checkStatus(idax_storage_node_open_by_id(id, &handle), "storage.openByID")
-        return StorageNode(handle!)
+        guard let handle else {
+            throw IDAError(category: .internal, code: 0, message: "nil handle after successful call")
+        }
+        return StorageNode(handle)
     }
 
     public var id: UInt64 {
