@@ -3778,6 +3778,7 @@ Result<int> StatementView::goto_target_label() const {
     return s->cgoto->label_num;
 }
 
+
 Result<std::optional<CtreeItemView>> StatementView::parent() const {
     if (!raw_) return std::unexpected(Error::internal("null statement"));
     if (parents_ == nullptr || parents_->empty())
@@ -3790,6 +3791,170 @@ Result<std::vector<CtreeItemView>> StatementView::parents() const {
     if (parents_ == nullptr)
         return std::vector<CtreeItemView>{};
     return *parents_;
+}
+// ── StatementView sub-structure navigation ──────────────────────────────
+
+Result<ExpressionView> StatementView::condition() const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    switch (s->op) {
+        case cit_if:
+            if (s->cif == nullptr)
+                return std::unexpected(Error::internal("null if details"));
+            return ExpressionView(ExpressionView::Tag{}, &s->cif->expr);
+        case cit_for:
+            if (s->cfor == nullptr)
+                return std::unexpected(Error::internal("null for details"));
+            return ExpressionView(ExpressionView::Tag{}, &s->cfor->expr);
+        case cit_while:
+            if (s->cwhile == nullptr)
+                return std::unexpected(Error::internal("null while details"));
+            return ExpressionView(ExpressionView::Tag{}, &s->cwhile->expr);
+        case cit_do:
+            if (s->cdo == nullptr)
+                return std::unexpected(Error::internal("null do details"));
+            return ExpressionView(ExpressionView::Tag{}, &s->cdo->expr);
+        case cit_switch:
+            if (s->cswitch == nullptr)
+                return std::unexpected(Error::internal("null switch details"));
+            return ExpressionView(ExpressionView::Tag{}, &s->cswitch->expr);
+        case cit_return:
+            if (s->creturn == nullptr)
+                return std::unexpected(Error::internal("null return details"));
+            return ExpressionView(ExpressionView::Tag{}, &s->creturn->expr);
+        case cit_throw:
+            if (s->cthrow == nullptr)
+                return std::unexpected(Error::internal("null throw details"));
+            return ExpressionView(ExpressionView::Tag{}, &s->cthrow->expr);
+        default:
+            return std::unexpected(Error::validation("Statement type does not have a condition expression"));
+    }
+}
+
+Result<StatementView> StatementView::then_branch() const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    if (s->op != cit_if || s->cif == nullptr)
+        return std::unexpected(Error::validation("Statement is not an if"));
+    if (s->cif->ithen == nullptr)
+        return std::unexpected(Error::internal("null then-branch"));
+    return StatementView(StatementView::Tag{}, s->cif->ithen);
+}
+
+Result<StatementView> StatementView::else_branch() const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    if (s->op != cit_if || s->cif == nullptr)
+        return std::unexpected(Error::validation("Statement is not an if"));
+    if (s->cif->ielse == nullptr)
+        return std::unexpected(Error::validation("If statement has no else-branch"));
+    return StatementView(StatementView::Tag{}, s->cif->ielse);
+}
+
+bool StatementView::has_else_branch() const noexcept {
+    if (!raw_) return false;
+    auto* s = static_cast<cinsn_t*>(raw_);
+    return s->op == cit_if && s->cif != nullptr && s->cif->ielse != nullptr;
+}
+
+Result<StatementView> StatementView::body() const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    switch (s->op) {
+        case cit_for:
+            if (s->cfor == nullptr || s->cfor->body == nullptr)
+                return std::unexpected(Error::internal("null for-loop body"));
+            return StatementView(StatementView::Tag{}, s->cfor->body);
+        case cit_while:
+            if (s->cwhile == nullptr || s->cwhile->body == nullptr)
+                return std::unexpected(Error::internal("null while-loop body"));
+            return StatementView(StatementView::Tag{}, s->cwhile->body);
+        case cit_do:
+            if (s->cdo == nullptr || s->cdo->body == nullptr)
+                return std::unexpected(Error::internal("null do-loop body"));
+            return StatementView(StatementView::Tag{}, s->cdo->body);
+        default:
+            return std::unexpected(Error::validation("Statement is not a loop"));
+    }
+}
+
+Result<ExpressionView> StatementView::init_expression() const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    if (s->op != cit_for || s->cfor == nullptr)
+        return std::unexpected(Error::validation("Statement is not a for-loop"));
+    return ExpressionView(ExpressionView::Tag{}, &s->cfor->init);
+}
+
+Result<ExpressionView> StatementView::step_expression() const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    if (s->op != cit_for || s->cfor == nullptr)
+        return std::unexpected(Error::validation("Statement is not a for-loop"));
+    return ExpressionView(ExpressionView::Tag{}, &s->cfor->step);
+}
+
+Result<ExpressionView> StatementView::expression() const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    if (s->op != cit_expr || s->cexpr == nullptr)
+        return std::unexpected(Error::validation("Statement is not an expression-statement"));
+    return ExpressionView(ExpressionView::Tag{}, s->cexpr);
+}
+
+Result<std::size_t> StatementView::block_size() const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    if (s->op != cit_block || s->cblock == nullptr)
+        return std::unexpected(Error::validation("Statement is not a block"));
+    return static_cast<std::size_t>(s->cblock->size());
+}
+
+Result<StatementView> StatementView::block_statement(std::size_t index) const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    if (s->op != cit_block || s->cblock == nullptr)
+        return std::unexpected(Error::validation("Statement is not a block"));
+    if (index >= static_cast<std::size_t>(s->cblock->size()))
+        return std::unexpected(Error::validation("Block statement index out of range"));
+    auto it = s->cblock->begin();
+    for (std::size_t i = 0; i < index; ++i)
+        ++it;
+    return StatementView(StatementView::Tag{}, &*it);
+}
+
+Result<std::size_t> StatementView::switch_case_count() const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    if (s->op != cit_switch || s->cswitch == nullptr)
+        return std::unexpected(Error::validation("Statement is not a switch"));
+    return static_cast<std::size_t>(s->cswitch->cases.size());
+}
+
+Result<std::vector<std::uint64_t>> StatementView::switch_case_values(std::size_t index) const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    if (s->op != cit_switch || s->cswitch == nullptr)
+        return std::unexpected(Error::validation("Statement is not a switch"));
+    if (index >= static_cast<std::size_t>(s->cswitch->cases.size()))
+        return std::unexpected(Error::validation("Switch case index out of range"));
+    const auto& cc = s->cswitch->cases[index];
+    std::vector<std::uint64_t> vals;
+    vals.reserve(cc.values.size());
+    for (std::size_t i = 0; i < cc.values.size(); ++i)
+        vals.push_back(cc.values[i]);
+    return vals;
+}
+
+Result<StatementView> StatementView::switch_case_body(std::size_t index) const {
+    if (!raw_) return std::unexpected(Error::internal("null statement"));
+    auto* s = static_cast<cinsn_t*>(raw_);
+    if (s->op != cit_switch || s->cswitch == nullptr)
+        return std::unexpected(Error::validation("Statement is not a switch"));
+    if (index >= static_cast<std::size_t>(s->cswitch->cases.size()))
+        return std::unexpected(Error::validation("Switch case index out of range"));
+    // ccase_t inherits from cinsn_t, so we can treat it as a statement
+    return StatementView(StatementView::Tag{}, &s->cswitch->cases[index]);
 }
 
 // ── CtreeVisitor default implementations ────────────────────────────────

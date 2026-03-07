@@ -37,3 +37,10 @@ Desktop.ini
 *.pdb
 node_modules/
 target/
+bindings/swift/.build
+bindings/swift/.cmake-build
+bindings/swift/.cmake-build-arm64
+bindings/swift/.cmake-build-x86_64
+bindings/swift/.swiftpm
+.swiftpm
+.build
