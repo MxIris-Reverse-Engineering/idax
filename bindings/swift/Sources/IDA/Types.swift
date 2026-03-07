@@ -2,7 +2,7 @@ internal import CIDA
 import Darwin
 
 /// Type member descriptor (struct/union field).
-public struct TypeMember: Sendable {
+public struct TypeMember: ~Copyable, @unchecked Sendable {
     public let name: String
     public let type: TypeHandle
     public let byteOffset: Int
@@ -17,10 +17,19 @@ public struct TypeEnumMember: Sendable {
     public let comment: String
 }
 
+/// Builder for constructing function type argument lists.
+public struct FunctionTypeArguments: ~Copyable {
+    var handles: [IdaxTypeHandle?] = []
+
+    public mutating func add(_ type: borrowing TypeHandle) {
+        handles.append(type.handle)
+    }
+}
+
 /// Opaque type handle wrapping IDA's type system.
 ///
-/// Reference type — `deinit` frees the underlying handle.
-public final class TypeHandle: @unchecked Sendable {
+/// Move-only value — `deinit` frees the underlying handle.
+public struct TypeHandle: ~Copyable, @unchecked Sendable {
     let handle: IdaxTypeHandle
 
     init(_ handle: IdaxTypeHandle) {
@@ -45,11 +54,11 @@ public final class TypeHandle: @unchecked Sendable {
     public static func float32() -> TypeHandle { TypeHandle(idax_type_float32()) }
     public static func float64() -> TypeHandle { TypeHandle(idax_type_float64()) }
 
-    public static func pointerTo(_ target: TypeHandle) -> TypeHandle {
+    public static func pointerTo(_ target: borrowing TypeHandle) -> TypeHandle {
         TypeHandle(idax_type_pointer_to(target.handle))
     }
 
-    public static func arrayOf(_ element: TypeHandle, count: Int) -> TypeHandle {
+    public static func arrayOf(_ element: borrowing TypeHandle, count: Int) -> TypeHandle {
         TypeHandle(idax_type_array_of(element.handle, count))
     }
 
@@ -139,14 +148,15 @@ public final class TypeHandle: @unchecked Sendable {
     // MARK: - Function type introspection
 
     public static func functionType(
-        returnType: TypeHandle,
-        argumentTypes: [TypeHandle],
+        returnType: borrowing TypeHandle,
         callingConvention: Int = 0,
-        hasVarargs: Bool = false
+        hasVarargs: Bool = false,
+        arguments: (inout FunctionTypeArguments) -> Void
     ) throws(IDAError) -> TypeHandle {
-        var argHandles = argumentTypes.map { $0.handle as IdaxTypeHandle? }
+        var args = FunctionTypeArguments()
+        arguments(&args)
         var out: IdaxTypeHandle?
-        let ret = argHandles.withUnsafeMutableBufferPointer { buf in
+        let ret = args.handles.withUnsafeMutableBufferPointer { buf in
             idax_type_function_type(
                 returnType.handle,
                 buf.baseAddress,
@@ -172,34 +182,41 @@ public final class TypeHandle: @unchecked Sendable {
         return TypeHandle(out)
     }
 
-    public func functionArgumentTypes() throws(IDAError) -> [TypeHandle] {
+    public var functionArgumentCount: Int {
+        get throws(IDAError) {
+            var ptr: UnsafeMutablePointer<IdaxTypeHandle?>? = nil
+            var count: Int = 0
+            try checkStatus(idax_type_function_argument_types(handle, &ptr, &count), "type.functionArgumentCount")
+            if let ptr { idax_type_handle_array_free(ptr, count) }
+            return count
+        }
+    }
+
+    public func functionArgumentType(at index: Int) throws(IDAError) -> TypeHandle {
         var ptr: UnsafeMutablePointer<IdaxTypeHandle?>? = nil
         var count: Int = 0
-        try checkStatus(idax_type_function_argument_types(handle, &ptr, &count), "type.functionArgumentTypes")
-        guard let ptr, count > 0 else { return [] }
-        // Clone each handle before freeing the array, since idax_type_handle_array_free
-        // frees both the handles and the array container.
-        var result: [TypeHandle] = []
-        result.reserveCapacity(count)
-        for i in 0..<count {
-            guard let h = ptr[i] else {
-                idax_type_handle_array_free(ptr, count)
-                throw IDAError(category: .internal, code: 0, message: "nil handle in argument types")
-            }
-            var cloned: IdaxTypeHandle?
-            let cloneRet = idax_type_clone(h, &cloned)
-            if cloneRet != 0 {
-                idax_type_handle_array_free(ptr, count)
-                throw consumeLastError(fallback: "type.functionArgumentTypes.clone")
-            }
-            guard let cloned else {
-                idax_type_handle_array_free(ptr, count)
-                throw IDAError(category: .internal, code: 0, message: "nil handle after clone")
-            }
-            result.append(TypeHandle(cloned))
+        try checkStatus(idax_type_function_argument_types(handle, &ptr, &count), "type.functionArgumentType")
+        guard let ptr else {
+            throw IDAError(category: .internal, code: 0, message: "nil argument type array")
         }
+        guard index >= 0, index < count else {
+            idax_type_handle_array_free(ptr, count)
+            throw IDAError(category: .validation, code: 0, message: "argument index \(index) out of range [0, \(count))")
+        }
+        guard let h = ptr[index] else {
+            idax_type_handle_array_free(ptr, count)
+            throw IDAError(category: .internal, code: 0, message: "nil handle in argument types")
+        }
+        var cloned: IdaxTypeHandle?
+        let cloneRet = idax_type_clone(h, &cloned)
         idax_type_handle_array_free(ptr, count)
-        return result
+        if cloneRet != 0 {
+            throw consumeLastError(fallback: "type.functionArgumentType.clone")
+        }
+        guard let cloned else {
+            throw IDAError(category: .internal, code: 0, message: "nil handle after clone")
+        }
+        return TypeHandle(cloned)
     }
 
     public var callingConvention: Int {
@@ -225,7 +242,6 @@ public final class TypeHandle: @unchecked Sendable {
         byteWidth: Int,
         bitmask: Bool = false
     ) throws(IDAError) -> TypeHandle {
-        // Build C-compatible member array with strdup'd strings.
         let cMembers: [IdaxTypeEnumMemberInput] = members.map { m in
             IdaxTypeEnumMemberInput(
                 name: strdup(m.name),
@@ -276,35 +292,35 @@ public final class TypeHandle: @unchecked Sendable {
         }
     }
 
-    public func members() throws(IDAError) -> [TypeMember] {
+    public func member(at index: Int) throws(IDAError) -> TypeMember {
         var ptr: UnsafeMutablePointer<IdaxTypeMember>? = nil
         var count: Int = 0
-        try checkStatus(idax_type_members(handle, &ptr, &count), "type.members")
-        guard let ptr, count > 0 else { return [] }
-        // Clone each member's type handle before freeing the array,
-        // since idax_type_members_free frees contained type handles.
-        var result: [TypeMember] = []
-        result.reserveCapacity(count)
-        for i in 0..<count {
-            let m = ptr[i]
-            var cloned: IdaxTypeHandle?
-            let cloneRet = idax_type_clone(m.type, &cloned)
-            if cloneRet != 0 {
-                idax_type_members_free(ptr, count)
-                throw consumeLastError(fallback: "type.members.clone")
-            }
-            guard let cloned else {
-                idax_type_members_free(ptr, count)
-                throw IDAError(category: .internal, code: 0, message: "nil handle after clone")
-            }
-            result.append(TypeMember(
-                name: borrowCString(m.name),
-                type: TypeHandle(cloned),
-                byteOffset: m.byte_offset,
-                bitSize: m.bit_size,
-                comment: borrowCString(m.comment)
-            ))
+        try checkStatus(idax_type_members(handle, &ptr, &count), "type.member")
+        guard let ptr else {
+            throw IDAError(category: .internal, code: 0, message: "nil member array")
         }
+        guard index >= 0, index < count else {
+            idax_type_members_free(ptr, count)
+            throw IDAError(category: .validation, code: 0, message: "member index \(index) out of range [0, \(count))")
+        }
+        let m = ptr[index]
+        var cloned: IdaxTypeHandle?
+        let cloneRet = idax_type_clone(m.type, &cloned)
+        if cloneRet != 0 {
+            idax_type_members_free(ptr, count)
+            throw consumeLastError(fallback: "type.member.clone")
+        }
+        guard let cloned else {
+            idax_type_members_free(ptr, count)
+            throw IDAError(category: .internal, code: 0, message: "nil handle after clone")
+        }
+        let result = TypeMember(
+            name: borrowCString(m.name),
+            type: TypeHandle(cloned),
+            byteOffset: m.byte_offset,
+            bitSize: m.bit_size,
+            comment: borrowCString(m.comment)
+        )
         idax_type_members_free(ptr, count)
         return result
     }
@@ -315,7 +331,6 @@ public final class TypeHandle: @unchecked Sendable {
             name.withCString { idax_type_member_by_name(handle, $0, &raw) },
             "type.memberByName"
         )
-        // Clone the type handle before freeing the member.
         var cloned: IdaxTypeHandle?
         try checkStatus(idax_type_clone(raw.type, &cloned), "type.memberByName.clone")
         guard let cloned else {
@@ -338,7 +353,6 @@ public final class TypeHandle: @unchecked Sendable {
             idax_type_member_by_offset(handle, byteOffset, &raw),
             "type.memberByOffset"
         )
-        // Clone the type handle before freeing the member.
         var cloned: IdaxTypeHandle?
         try checkStatus(idax_type_clone(raw.type, &cloned), "type.memberByOffset.clone")
         guard let cloned else {
@@ -357,7 +371,7 @@ public final class TypeHandle: @unchecked Sendable {
 
     // MARK: - Struct/Union members
 
-    public func addMember(_ name: String, type: TypeHandle, byteOffset: Int = 0) throws(IDAError) {
+    public func addMember(_ name: String, type: borrowing TypeHandle, byteOffset: Int = 0) throws(IDAError) {
         try checkStatus(
             name.withCString { idax_type_add_member(handle, $0, type.handle, byteOffset) },
             "type.addMember"

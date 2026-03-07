@@ -21,8 +21,8 @@ public struct LocalVariable: Sendable {
 
 /// Decompiled function handle.
 ///
-/// Reference type — `deinit` frees the underlying handle.
-public final class DecompiledFunction: @unchecked Sendable {
+/// Move-only value — `deinit` frees the underlying handle.
+public struct DecompiledFunction: ~Copyable, @unchecked Sendable {
     let handle: IdaxDecompiledHandle
 
     init(_ handle: IdaxDecompiledHandle) {
@@ -660,10 +660,9 @@ private func makeMicrocodeInstruction(_ raw: IdaxMicrocodeInstruction) -> Microc
 // MARK: - Decompiler subscription
 
 /// RAII decompiler event subscription token. Unsubscribes on deinit.
-public final class DecompilerSubscription: @unchecked Sendable {
+public struct DecompilerSubscription: ~Copyable, @unchecked Sendable {
     private let token: UInt64
     private let context: UnsafeMutableRawPointer
-    private var active = true
 
     init(token: UInt64, context: UnsafeMutableRawPointer) {
         self.token = token
@@ -671,26 +670,21 @@ public final class DecompilerSubscription: @unchecked Sendable {
     }
 
     deinit {
-        if active {
-            idax_decompiler_unsubscribe(token)
-            Unmanaged<AnyObject>.fromOpaque(context).release()
-        }
+        idax_decompiler_unsubscribe(token)
+        Unmanaged<AnyObject>.fromOpaque(context).release()
     }
 
-    public func cancel() {
-        if active {
-            idax_decompiler_unsubscribe(token)
-            Unmanaged<AnyObject>.fromOpaque(context).release()
-            active = false
-        }
+    public consuming func cancel() {
+        idax_decompiler_unsubscribe(token)
+        Unmanaged<AnyObject>.fromOpaque(context).release()
+        discard self
     }
 }
 
 /// RAII microcode filter subscription token. Unregisters on deinit.
-public final class MicrocodeFilterSubscription: @unchecked Sendable {
+public struct MicrocodeFilterSubscription: ~Copyable, @unchecked Sendable {
     private let token: UInt64
     private let context: UnsafeMutableRawPointer
-    private var active = true
 
     init(token: UInt64, context: UnsafeMutableRawPointer) {
         self.token = token
@@ -698,18 +692,14 @@ public final class MicrocodeFilterSubscription: @unchecked Sendable {
     }
 
     deinit {
-        if active {
-            idax_decompiler_unregister_microcode_filter(token)
-            Unmanaged<AnyObject>.fromOpaque(context).release()
-        }
+        idax_decompiler_unregister_microcode_filter(token)
+        Unmanaged<AnyObject>.fromOpaque(context).release()
     }
 
-    public func cancel() {
-        if active {
-            idax_decompiler_unregister_microcode_filter(token)
-            Unmanaged<AnyObject>.fromOpaque(context).release()
-            active = false
-        }
+    public consuming func cancel() {
+        idax_decompiler_unregister_microcode_filter(token)
+        Unmanaged<AnyObject>.fromOpaque(context).release()
+        discard self
     }
 }
 

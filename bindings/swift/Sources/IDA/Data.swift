@@ -206,14 +206,14 @@ public enum Data {
 
     // MARK: - Typed read/write
 
-    public static func readTyped(at address: Address, type: TypeHandle) throws(IDAError) -> TypedValue {
+    public static func readTyped(at address: Address, type: borrowing TypeHandle) throws(IDAError) -> TypedValue {
         var raw = IdaxDataTypedValue()
         try checkStatus(idax_data_read_typed(address, type.handle, &raw), "data.readTyped")
         defer { idax_data_typed_value_free(&raw) }
         return TypedValue(raw: raw)
     }
 
-    public static func writeTyped(_ value: TypedValue, at address: Address, type: TypeHandle) throws(IDAError) {
+    public static func writeTyped(_ value: TypedValue, at address: Address, type: borrowing TypeHandle) throws(IDAError) {
         var raw = IdaxDataTypedValue()
         raw.kind = value.kind.rawValue
         raw.unsigned_value = value.unsignedValue

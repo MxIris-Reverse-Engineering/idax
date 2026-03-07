@@ -1,10 +1,9 @@
 internal import CIDA
 
 /// RAII event subscription token. Unsubscribes on deinit.
-public final class EventSubscription: @unchecked Sendable {
+public struct EventSubscription: ~Copyable, @unchecked Sendable {
     private let token: UInt64
     private let context: UnsafeMutableRawPointer
-    private var active = true
 
     init(token: UInt64, context: UnsafeMutableRawPointer) {
         self.token = token
@@ -12,18 +11,14 @@ public final class EventSubscription: @unchecked Sendable {
     }
 
     deinit {
-        if active {
-            idax_event_unsubscribe(token)
-            Unmanaged<AnyObject>.fromOpaque(context).release()
-        }
+        idax_event_unsubscribe(token)
+        Unmanaged<AnyObject>.fromOpaque(context).release()
     }
 
-    public func cancel() {
-        if active {
-            idax_event_unsubscribe(token)
-            Unmanaged<AnyObject>.fromOpaque(context).release()
-            active = false
-        }
+    public consuming func cancel() {
+        idax_event_unsubscribe(token)
+        Unmanaged<AnyObject>.fromOpaque(context).release()
+        discard self
     }
 }
 

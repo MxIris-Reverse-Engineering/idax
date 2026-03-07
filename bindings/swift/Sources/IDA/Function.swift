@@ -260,9 +260,17 @@ public struct Function: Sendable {
         )
     }
 
-    public static func defineStackVariable(at address: Address, name: String, frameOffset: Int32, type: TypeHandle? = nil) throws(IDAError) {
+    public static func defineStackVariable(at address: Address, name: String, frameOffset: Int32) throws(IDAError) {
         try checkStatus(
-            name.withCString { idax_function_define_stack_variable(address, $0, frameOffset, type?.handle) },
+            name.withCString { idax_function_define_stack_variable(address, $0, frameOffset, nil) },
+            "function.defineStackVariable"
+        )
+    }
+
+    public static func defineStackVariable(at address: Address, name: String, frameOffset: Int32, type: borrowing TypeHandle) throws(IDAError) {
+        let h = type.handle
+        try checkStatus(
+            name.withCString { idax_function_define_stack_variable(address, $0, frameOffset, h) },
             "function.defineStackVariable"
         )
     }
