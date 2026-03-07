@@ -1,5 +1,12 @@
 import CIDA
 
+/// Storage class for a decompiler local variable.
+public enum VariableStorage: Int, Sendable {
+    case unknown = 0
+    case register = 1
+    case stack = 2
+}
+
 /// Local variable from decompilation.
 public struct LocalVariable: Sendable {
     public let name: String
@@ -7,7 +14,7 @@ public struct LocalVariable: Sendable {
     public let isArgument: Bool
     public let width: Int
     public let hasUserName: Bool
-    public let storage: Int
+    public let storage: VariableStorage
     public let comment: String
 }
 
@@ -71,7 +78,7 @@ public final class DecompiledFunction: @unchecked Sendable {
                     isArgument: v.is_argument != 0,
                     width: Int(v.width),
                     hasUserName: v.has_user_name != 0,
-                    storage: Int(v.storage),
+                    storage: VariableStorage(rawValue: Int(v.storage)) ?? .unknown,
                     comment: borrowCString(v.comment)
                 )
             }

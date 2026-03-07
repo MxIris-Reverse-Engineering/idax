@@ -1,12 +1,29 @@
 import CIDA
 import Darwin
 
+/// Cross-reference type classification matching C++ `ida::xref::ReferenceType`.
+public enum ReferenceType: Int32, Sendable {
+    case unknown = 0
+    case flow, callNear, callFar, jumpNear, jumpFar
+    case offset, read, write, text, informational
+}
+
+/// Code xref type matching C++ `ida::xref::CodeType`.
+public enum CodeXrefType: Int32, Sendable {
+    case callFar = 0, callNear, jumpFar, jumpNear, flow
+}
+
+/// Data xref type matching C++ `ida::xref::DataType`.
+public enum DataXrefType: Int32, Sendable {
+    case offset = 0, write, read, text, informational
+}
+
 /// Cross-reference descriptor.
 public struct CrossReference: Sendable {
     public let from: Address
     public let to: Address
     public let isCode: Bool
-    public let type: Int32
+    public let type: ReferenceType
     public let isUserDefined: Bool
 }
 
@@ -38,12 +55,12 @@ public enum Xref {
         try withAddressArrayOutput("xref.dataRefsTo") { idax_xref_data_refs_to(address, $0, $1) }
     }
 
-    public static func addCode(from: Address, to: Address, type: Int32 = 0) throws(IDAError) {
-        try checkStatus(idax_xref_add_code(from, to, type), "xref.addCode")
+    public static func addCode(from: Address, to: Address, type: CodeXrefType = .callNear) throws(IDAError) {
+        try checkStatus(idax_xref_add_code(from, to, type.rawValue), "xref.addCode")
     }
 
-    public static func addData(from: Address, to: Address, type: Int32 = 0) throws(IDAError) {
-        try checkStatus(idax_xref_add_data(from, to, type), "xref.addData")
+    public static func addData(from: Address, to: Address, type: DataXrefType = .offset) throws(IDAError) {
+        try checkStatus(idax_xref_add_data(from, to, type.rawValue), "xref.addData")
     }
 
     public static func removeCode(from: Address, to: Address) throws(IDAError) {
@@ -69,7 +86,7 @@ private func xrefArray(
         CrossReference(
             from: r.from, to: r.to,
             isCode: r.is_code != 0,
-            type: r.type,
+            type: ReferenceType(rawValue: r.type) ?? .unknown,
             isUserDefined: r.user_defined != 0
         )
     }
