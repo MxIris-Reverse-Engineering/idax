@@ -2,8 +2,8 @@ internal import CIDA
 
 /// Persistent key-value storage node (netnode abstraction).
 ///
-/// Reference type — `deinit` frees the underlying handle.
-public final class StorageNode: @unchecked Sendable {
+/// Move-only value — `deinit` frees the underlying handle.
+public struct StorageNode: ~Copyable, @unchecked Sendable {
     let handle: IdaxNodeHandle
 
     init(_ handle: IdaxNodeHandle) {
