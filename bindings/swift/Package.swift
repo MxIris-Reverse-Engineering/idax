@@ -48,7 +48,7 @@ let package = Package(
                     "-L\(libDir)",
                     "-lidax", "-lidax_shim",
                     "-L\(idaDir)",
-                    "-lida",
+                    "-lida", "-lidalib",
                 ]),
                 .linkedLibrary("c++"),
             ]
