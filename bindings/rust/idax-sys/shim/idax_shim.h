@@ -1444,6 +1444,84 @@ int idax_decompiler_for_each_item(IdaxDecompiledHandle handle,
                                   void* context,
                                   int* out_visited);
 
+/* ── Ctree handle-based API ──────────────────────────────────────────── */
+
+/** Opaque ctree expression handle. Valid only during visitor callback. */
+typedef const void* IdaxCtreeExprHandle;
+/** Opaque ctree statement handle. Valid only during visitor callback. */
+typedef const void* IdaxCtreeStmtHandle;
+
+/** Visitor callback receiving an opaque expression handle.
+ *  Return: 0=Continue, 1=Stop, 2=SkipChildren */
+typedef int (*IdaxCtreeExprVisitor)(void* context, IdaxCtreeExprHandle expr);
+/** Visitor callback receiving an opaque statement handle.
+ *  Return: 0=Continue, 1=Stop, 2=SkipChildren */
+typedef int (*IdaxCtreeStmtVisitor)(void* context, IdaxCtreeStmtHandle stmt);
+
+/** Visit all ctree items with opaque handles.
+ *  Set expr_cb or stmt_cb to NULL to skip that item type. */
+int idax_ctree_visit(IdaxDecompiledHandle handle,
+                     IdaxCtreeExprVisitor expr_cb,
+                     IdaxCtreeStmtVisitor stmt_cb,
+                     void* context,
+                     int post_order,
+                     int* out_visited);
+
+/* ── Expression query functions ──────────────────────────────────────── */
+
+int idax_ctree_expr_type(IdaxCtreeExprHandle expr, int* out);
+int idax_ctree_expr_address(IdaxCtreeExprHandle expr, uint64_t* out);
+int idax_ctree_expr_number_value(IdaxCtreeExprHandle expr, uint64_t* out);
+int idax_ctree_expr_string_value(IdaxCtreeExprHandle expr, char** out);
+int idax_ctree_expr_object_address(IdaxCtreeExprHandle expr, uint64_t* out);
+int idax_ctree_expr_variable_index(IdaxCtreeExprHandle expr, int* out);
+int idax_ctree_expr_operand_count(IdaxCtreeExprHandle expr, int* out);
+int idax_ctree_expr_left(IdaxCtreeExprHandle expr, IdaxCtreeExprHandle* out);
+int idax_ctree_expr_right(IdaxCtreeExprHandle expr, IdaxCtreeExprHandle* out);
+int idax_ctree_expr_call_argument_count(IdaxCtreeExprHandle expr, size_t* out);
+int idax_ctree_expr_call_callee(IdaxCtreeExprHandle expr, IdaxCtreeExprHandle* out);
+int idax_ctree_expr_call_argument(IdaxCtreeExprHandle expr, size_t index,
+                                  IdaxCtreeExprHandle* out);
+int idax_ctree_expr_member_offset(IdaxCtreeExprHandle expr, uint32_t* out);
+int idax_ctree_expr_to_string(IdaxCtreeExprHandle expr, char** out);
+
+/* ── Statement query functions ───────────────────────────────────────── */
+
+int idax_ctree_stmt_type(IdaxCtreeStmtHandle stmt, int* out);
+int idax_ctree_stmt_address(IdaxCtreeStmtHandle stmt, uint64_t* out);
+int idax_ctree_stmt_goto_target_label(IdaxCtreeStmtHandle stmt, int* out);
+
+/** For if/for/while/do/switch/return/throw: the condition or value expression. */
+int idax_ctree_stmt_condition(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out);
+/** For if: the then-branch. */
+int idax_ctree_stmt_then_branch(IdaxCtreeStmtHandle stmt, IdaxCtreeStmtHandle* out);
+/** For if: the else-branch. Returns error if no else. */
+int idax_ctree_stmt_else_branch(IdaxCtreeStmtHandle stmt, IdaxCtreeStmtHandle* out);
+/** For if: whether an else-branch exists. */
+int idax_ctree_stmt_has_else_branch(IdaxCtreeStmtHandle stmt, int* out);
+/** For for/while/do: the loop body. */
+int idax_ctree_stmt_body(IdaxCtreeStmtHandle stmt, IdaxCtreeStmtHandle* out);
+/** For for: the init expression. */
+int idax_ctree_stmt_init_expression(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out);
+/** For for: the step expression. */
+int idax_ctree_stmt_step_expression(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out);
+/** For expr-stmt: the expression. */
+int idax_ctree_stmt_expression(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out);
+/** For block: number of child statements. */
+int idax_ctree_stmt_block_size(IdaxCtreeStmtHandle stmt, size_t* out);
+/** For block: child statement at index. */
+int idax_ctree_stmt_block_statement(IdaxCtreeStmtHandle stmt, size_t index,
+                                    IdaxCtreeStmtHandle* out);
+/** For switch: number of cases (including default). */
+int idax_ctree_stmt_switch_case_count(IdaxCtreeStmtHandle stmt, size_t* out);
+/** For switch: case values at index (empty values = default case). */
+int idax_ctree_stmt_switch_case_values(IdaxCtreeStmtHandle stmt, size_t index,
+                                       uint64_t** out, size_t* count);
+/** For switch: case body statement at index. */
+int idax_ctree_stmt_switch_case_body(IdaxCtreeStmtHandle stmt, size_t index,
+                                     IdaxCtreeStmtHandle* out);
+void idax_ctree_switch_case_values_free(uint64_t* values);
+
 /* Microcode filter support */
 typedef int (*IdaxMicrocodeMatchCallback)(void* context, uint64_t address, int itype);
 typedef int (*IdaxMicrocodeApplyCallback)(void* context, void* mctx);
