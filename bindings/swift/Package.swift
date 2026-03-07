@@ -35,7 +35,6 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .library(name: "IDA", targets: ["IDA"]),
-        .library(name: "CIDA", targets: ["CIDA"]),
     ],
     targets: [
         .target(
