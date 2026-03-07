@@ -256,6 +256,45 @@ struct VariableStorageTests {
     }
 }
 
+@Suite("IDA CtreeItemType")
+struct CtreeItemTypeTests {
+    @Test func expressionRawValues() {
+        #expect(CtreeItemType.exprEmpty.rawValue == 0)
+        #expect(CtreeItemType.exprCall.rawValue == 57)
+        #expect(CtreeItemType.exprType.rawValue == 69)
+    }
+
+    @Test func statementRawValues() {
+        #expect(CtreeItemType.stmtEmpty.rawValue == 70)
+        #expect(CtreeItemType.stmtBlock.rawValue == 71)
+        #expect(CtreeItemType.stmtIf.rawValue == 73)
+        #expect(CtreeItemType.stmtFor.rawValue == 74)
+        #expect(CtreeItemType.stmtSwitch.rawValue == 77)
+        #expect(CtreeItemType.stmtReturn.rawValue == 80)
+        #expect(CtreeItemType.stmtThrow.rawValue == 84)
+    }
+
+    @Test func isExpressionAndStatement() {
+        #expect(CtreeItemType.exprCall.isExpression)
+        #expect(!CtreeItemType.exprCall.isStatement)
+        #expect(CtreeItemType.stmtIf.isStatement)
+        #expect(!CtreeItemType.stmtIf.isExpression)
+    }
+
+    @Test func unknownRawValueReturnsNil() {
+        #expect(CtreeItemType(rawValue: 999) == nil)
+    }
+}
+
+@Suite("IDA CtreeVisitAction")
+struct CtreeVisitActionTests {
+    @Test func rawValues() {
+        #expect(CtreeVisitAction.continue.rawValue == 0)
+        #expect(CtreeVisitAction.stop.rawValue == 1)
+        #expect(CtreeVisitAction.skipChildren.rawValue == 2)
+    }
+}
+
 // MARK: - Value Type Construction
 
 @Suite("IDA Chunk")
