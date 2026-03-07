@@ -1,4 +1,35 @@
-import CIDA
+internal import CIDA
+
+/// Compiler metadata returned by `Database.compilerInfo()`.
+public struct CompilerInfo: Sendable {
+    public let id: UInt32
+    public let uncertain: Bool
+    public let name: String
+    public let abbreviation: String
+}
+
+/// A single imported symbol within an import module.
+public struct ImportSymbol: Sendable {
+    public let address: Address
+    public let name: String
+    public let ordinal: UInt64
+}
+
+/// An import module containing its symbols.
+public struct ImportModule: Sendable {
+    public let index: Int
+    public let name: String
+    public let symbols: [ImportSymbol]
+}
+
+/// A database snapshot (recursive tree node).
+public struct Snapshot: Sendable {
+    public let id: Int64
+    public let flags: UInt16
+    public let description: String
+    public let filename: String
+    public let children: [Snapshot]
+}
 
 /// Database lifecycle and metadata operations.
 ///
@@ -82,5 +113,138 @@ public enum Database {
 
     public static func processorID() throws(IDAError) -> Int32 {
         try withOutput("database.processorID", Int32(0)) { idax_database_processor_id($0) }
+    }
+
+    // MARK: - Binary Loading
+
+    public static func openBinary(_ path: String, mode: Int) throws(IDAError) {
+        try checkStatus(
+            path.withCString { idax_database_open_binary($0, Int32(mode)) },
+            "database.openBinary"
+        )
+    }
+
+    public static func openNonBinary(_ path: String, mode: Int) throws(IDAError) {
+        try checkStatus(
+            path.withCString { idax_database_open_non_binary($0, Int32(mode)) },
+            "database.openNonBinary"
+        )
+    }
+
+    public static func fileToDatabase(
+        filePath: String, fileOffset: Int64, address: Address,
+        size: UInt64, patchable: Bool, remote: Bool
+    ) throws(IDAError) {
+        try checkStatus(
+            filePath.withCString {
+                idax_database_file_to_database(
+                    $0, fileOffset, address, size,
+                    patchable ? 1 : 0, remote ? 1 : 0
+                )
+            },
+            "database.fileToDatabase"
+        )
+    }
+
+    public static func memoryToDatabase(
+        bytes: [UInt8], address: Address, fileOffset: Int64
+    ) throws(IDAError) {
+        try checkStatus(
+            bytes.withUnsafeBufferPointer {
+                idax_database_memory_to_database($0.baseAddress, $0.count, address, fileOffset)
+            },
+            "database.memoryToDatabase"
+        )
+    }
+
+    // MARK: - Compiler Info
+
+    public static func compilerInfo() throws(IDAError) -> CompilerInfo {
+        var raw = IdaxDatabaseCompilerInfo()
+        try checkStatus(idax_database_compiler_info(&raw), "database.compilerInfo")
+        defer { idax_database_compiler_info_free(&raw) }
+        return CompilerInfo(
+            id: raw.id,
+            uncertain: raw.uncertain != 0,
+            name: borrowCString(raw.name),
+            abbreviation: borrowCString(raw.abbreviation)
+        )
+    }
+
+    // MARK: - Imports
+
+    public static func importModules() throws(IDAError) -> [ImportModule] {
+        var ptr: UnsafeMutablePointer<IdaxDatabaseImportModule>? = nil
+        var count: Int = 0
+        try checkStatus(idax_database_import_modules(&ptr, &count), "database.importModules")
+        defer { idax_database_import_modules_free(ptr, count) }
+        guard let ptr, count > 0 else { return [] }
+        var result: [ImportModule] = []
+        for i in 0..<count {
+            let raw = ptr[i]
+            var symbols: [ImportSymbol] = []
+            if let symPtr = raw.symbols, raw.symbol_count > 0 {
+                for j in 0..<raw.symbol_count {
+                    let s = symPtr[j]
+                    symbols.append(ImportSymbol(
+                        address: s.address,
+                        name: borrowCString(s.name),
+                        ordinal: s.ordinal
+                    ))
+                }
+            }
+            result.append(ImportModule(
+                index: raw.index,
+                name: borrowCString(raw.name),
+                symbols: symbols
+            ))
+        }
+        return result
+    }
+
+    // MARK: - Snapshots
+
+    public static func snapshots() throws(IDAError) -> [Snapshot] {
+        var ptr: UnsafeMutablePointer<IdaxDatabaseSnapshot>? = nil
+        var count: Int = 0
+        try checkStatus(idax_database_snapshots(&ptr, &count), "database.snapshots")
+        defer { idax_database_snapshots_free(ptr, count) }
+        guard let ptr, count > 0 else { return [] }
+        var result: [Snapshot] = []
+        for i in 0..<count {
+            result.append(convertSnapshot(ptr[i]))
+        }
+        return result
+    }
+
+    public static func setSnapshotDescription(_ description: String) throws(IDAError) {
+        try checkStatus(
+            description.withCString { idax_database_set_snapshot_description($0) },
+            "database.setSnapshotDescription"
+        )
+    }
+
+    public static func isSnapshotDatabase() throws(IDAError) -> Bool {
+        try withOutput("database.isSnapshotDatabase", Int32(0)) {
+            idax_database_is_snapshot_database($0)
+        } != 0
+    }
+
+    // MARK: - Private Helpers
+
+    private static func convertSnapshot(_ raw: IdaxDatabaseSnapshot) -> Snapshot {
+        var kids: [Snapshot] = []
+        if let childPtr = raw.children, raw.child_count > 0 {
+            for i in 0..<raw.child_count {
+                kids.append(convertSnapshot(childPtr[i]))
+            }
+        }
+        return Snapshot(
+            id: raw.id,
+            flags: raw.flags,
+            description: borrowCString(raw.description),
+            filename: borrowCString(raw.filename),
+            children: kids
+        )
     }
 }

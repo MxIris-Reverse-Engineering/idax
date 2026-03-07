@@ -1,4 +1,4 @@
-import CIDA
+internal import CIDA
 import Darwin
 
 /// Cross-reference type classification matching C++ `ida::xref::ReferenceType`.
@@ -69,6 +69,32 @@ public enum Xref {
 
     public static func removeData(from: Address, to: Address) throws(IDAError) {
         try checkStatus(idax_xref_remove_data(from, to), "xref.removeData")
+    }
+
+    // MARK: - Range Queries
+
+    public static func refsFromRange(_ address: Address) throws(IDAError) -> [CrossReference] {
+        try xrefArray("xref.refsFromRange") { idax_xref_refs_from_range(address, $0, $1) }
+    }
+
+    public static func refsToRange(_ address: Address) throws(IDAError) -> [CrossReference] {
+        try xrefArray("xref.refsToRange") { idax_xref_refs_to_range(address, $0, $1) }
+    }
+
+    public static func codeRefsFromRange(_ address: Address) throws(IDAError) -> [Address] {
+        try withAddressArrayOutput("xref.codeRefsFromRange") { idax_xref_code_refs_from_range(address, $0, $1) }
+    }
+
+    public static func codeRefsToRange(_ address: Address) throws(IDAError) -> [Address] {
+        try withAddressArrayOutput("xref.codeRefsToRange") { idax_xref_code_refs_to_range(address, $0, $1) }
+    }
+
+    public static func dataRefsFromRange(_ address: Address) throws(IDAError) -> [Address] {
+        try withAddressArrayOutput("xref.dataRefsFromRange") { idax_xref_data_refs_from_range(address, $0, $1) }
+    }
+
+    public static func dataRefsToRange(_ address: Address) throws(IDAError) -> [Address] {
+        try withAddressArrayOutput("xref.dataRefsToRange") { idax_xref_data_refs_to_range(address, $0, $1) }
     }
 }
 

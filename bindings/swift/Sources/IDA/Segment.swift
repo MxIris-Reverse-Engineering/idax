@@ -1,4 +1,4 @@
-import CIDA
+internal import CIDA
 
 /// Segment type classification.
 public enum SegmentType: Int32, Sendable {
@@ -104,6 +104,68 @@ public struct Segment: Sendable {
                 read ? 1 : 0, write ? 1 : 0, execute ? 1 : 0
             ),
             "segment.setPermissions"
+        )
+    }
+
+    public static func setType(_ type: SegmentType, at address: Address) throws(IDAError) {
+        try checkStatus(idax_segment_set_type(address, type.rawValue), "segment.setType")
+    }
+
+    public static func setClass(_ className: String, at address: Address) throws(IDAError) {
+        try checkStatus(
+            className.withCString { idax_segment_set_class(address, $0) },
+            "segment.setClass"
+        )
+    }
+
+    public static func setBitness(_ bits: Int, at address: Address) throws(IDAError) {
+        try checkStatus(idax_segment_set_bitness(address, Int32(bits)), "segment.setBitness")
+    }
+
+    public static func comment(at address: Address, repeatable: Bool = false) throws(IDAError) -> String {
+        try withStringOutput("segment.comment") { idax_segment_comment(address, repeatable ? 1 : 0, $0) }
+    }
+
+    public static func setComment(_ text: String, at address: Address, repeatable: Bool = false) throws(IDAError) {
+        try checkStatus(
+            text.withCString { idax_segment_set_comment(address, $0, repeatable ? 1 : 0) },
+            "segment.setComment"
+        )
+    }
+
+    public static func resize(at address: Address, newStart: Address, newEnd: Address) throws(IDAError) {
+        try checkStatus(idax_segment_resize(address, newStart, newEnd), "segment.resize")
+    }
+
+    public static func move(at address: Address, to newStart: Address) throws(IDAError) {
+        try checkStatus(idax_segment_move(address, newStart), "segment.move")
+    }
+
+    public static func next(after address: Address) throws(IDAError) -> Segment {
+        var raw = IdaxSegment()
+        try checkStatus(idax_segment_next(address, &raw), "segment.next")
+        defer { idax_segment_free(&raw) }
+        return Segment(raw: raw)
+    }
+
+    public static func prev(before address: Address) throws(IDAError) -> Segment {
+        var raw = IdaxSegment()
+        try checkStatus(idax_segment_prev(address, &raw), "segment.prev")
+        defer { idax_segment_free(&raw) }
+        return Segment(raw: raw)
+    }
+
+    public static func setDefaultSegmentRegister(at address: Address, registerIndex: Int, value: UInt64) throws(IDAError) {
+        try checkStatus(
+            idax_segment_set_default_segment_register(address, Int32(registerIndex), value),
+            "segment.setDefaultSegmentRegister"
+        )
+    }
+
+    public static func setDefaultSegmentRegisterForAll(registerIndex: Int, value: UInt64) throws(IDAError) {
+        try checkStatus(
+            idax_segment_set_default_segment_register_for_all(Int32(registerIndex), value),
+            "segment.setDefaultSegmentRegisterForAll"
         )
     }
 

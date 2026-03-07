@@ -1,4 +1,4 @@
-import CIDA
+internal import CIDA
 
 /// Lumina metadata pull/push.
 ///
@@ -47,5 +47,9 @@ public enum Lumina {
         )
         return BatchResult(requested: raw.requested, completed: raw.completed,
                            succeeded: raw.succeeded, failed: raw.failed)
+    }
+
+    public static func closeAllConnections() throws(IDAError) {
+        try checkStatus(idax_lumina_close_all_connections(), "lumina.closeAllConnections")
     }
 }

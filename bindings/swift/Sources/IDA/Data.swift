@@ -1,4 +1,48 @@
-import CIDA
+internal import CIDA
+
+/// Typed value kind for structured data reads/writes.
+public enum TypedValueKind: Int32, Sendable {
+    case unsignedInteger = 0
+    case signedInteger = 1
+    case floatingPoint = 2
+    case pointer = 3
+    case string = 4
+    case bytes = 5
+    case array = 6
+}
+
+/// Typed value representing structured data read from the database.
+public struct TypedValue: Sendable {
+    public let kind: TypedValueKind
+    public let unsignedValue: UInt64
+    public let signedValue: Int64
+    public let floatingValue: Double
+    public let pointerValue: UInt64
+    public let stringValue: String
+    public let bytes: [UInt8]
+    public let elements: [TypedValue]
+}
+
+extension TypedValue {
+    init(raw: IdaxDataTypedValue) {
+        self.kind = TypedValueKind(rawValue: raw.kind) ?? .unsignedInteger
+        self.unsignedValue = raw.unsigned_value
+        self.signedValue = raw.signed_value
+        self.floatingValue = raw.floating_value
+        self.pointerValue = raw.pointer_value
+        self.stringValue = borrowCString(raw.string_value)
+        if let bp = raw.bytes, raw.byte_count > 0 {
+            self.bytes = Array(UnsafeBufferPointer(start: bp, count: raw.byte_count))
+        } else {
+            self.bytes = []
+        }
+        if let ep = raw.elements, raw.element_count > 0 {
+            self.elements = (0..<raw.element_count).map { TypedValue(raw: ep[$0]) }
+        } else {
+            self.elements = []
+        }
+    }
+}
 
 /// Byte-level read, write, patch, and define operations.
 ///
@@ -96,6 +140,24 @@ public enum Data {
         try withOutput("data.originalByte", UInt8(0)) { idax_data_original_byte(address, $0) }
     }
 
+    public static func originalWord(at address: Address) throws(IDAError) -> UInt16 {
+        try withOutput("data.originalWord", UInt16(0)) { idax_data_original_word(address, $0) }
+    }
+
+    public static func originalDword(at address: Address) throws(IDAError) -> UInt32 {
+        try withOutput("data.originalDword", UInt32(0)) { idax_data_original_dword(address, $0) }
+    }
+
+    public static func originalQword(at address: Address) throws(IDAError) -> UInt64 {
+        try withOutput("data.originalQword", UInt64(0)) { idax_data_original_qword(address, $0) }
+    }
+
+    public static func revertPatches(at address: Address, count: UInt64) throws(IDAError) -> UInt64 {
+        var reverted: UInt64 = 0
+        try checkStatus(idax_data_revert_patches(address, count, &reverted), "data.revertPatches")
+        return reverted
+    }
+
     // MARK: - Define
 
     public static func defineByte(at address: Address, count: UInt64 = 1) throws(IDAError) {
@@ -114,8 +176,52 @@ public enum Data {
         try checkStatus(idax_data_define_qword(address, count), "data.defineQword")
     }
 
+    public static func defineFloat(at address: Address, count: UInt64 = 1) throws(IDAError) {
+        try checkStatus(idax_data_define_float(address, count), "data.defineFloat")
+    }
+
+    public static func defineDouble(at address: Address, count: UInt64 = 1) throws(IDAError) {
+        try checkStatus(idax_data_define_double(address, count), "data.defineDouble")
+    }
+
+    public static func defineOword(at address: Address, count: UInt64 = 1) throws(IDAError) {
+        try checkStatus(idax_data_define_oword(address, count), "data.defineOword")
+    }
+
+    public static func defineTbyte(at address: Address, count: UInt64 = 1) throws(IDAError) {
+        try checkStatus(idax_data_define_tbyte(address, count), "data.defineTbyte")
+    }
+
+    public static func defineString(at address: Address, length: UInt64, stringType: Int32 = 0) throws(IDAError) {
+        try checkStatus(idax_data_define_string(address, length, stringType), "data.defineString")
+    }
+
+    public static func defineStruct(at address: Address, length: UInt64, structureID: UInt64) throws(IDAError) {
+        try checkStatus(idax_data_define_struct(address, length, structureID), "data.defineStruct")
+    }
+
     public static func undefine(at address: Address, count: UInt64) throws(IDAError) {
         try checkStatus(idax_data_undefine(address, count), "data.undefine")
+    }
+
+    // MARK: - Typed read/write
+
+    public static func readTyped(at address: Address, type: TypeHandle) throws(IDAError) -> TypedValue {
+        var raw = IdaxDataTypedValue()
+        try checkStatus(idax_data_read_typed(address, type.handle, &raw), "data.readTyped")
+        defer { idax_data_typed_value_free(&raw) }
+        return TypedValue(raw: raw)
+    }
+
+    public static func writeTyped(_ value: TypedValue, at address: Address, type: TypeHandle) throws(IDAError) {
+        var raw = IdaxDataTypedValue()
+        raw.kind = value.kind.rawValue
+        raw.unsigned_value = value.unsignedValue
+        raw.signed_value = value.signedValue
+        raw.floating_value = value.floatingValue
+        raw.pointer_value = value.pointerValue
+        // For simple scalar types this works; string/bytes/array need more work
+        try checkStatus(idax_data_write_typed(address, type.handle, &raw), "data.writeTyped")
     }
 
     // MARK: - Search

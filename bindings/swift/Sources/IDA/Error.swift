@@ -1,4 +1,4 @@
-import CIDA
+internal import CIDA
 
 /// Error classification matching C++ `ida::ErrorCategory`.
 public enum IDAErrorCategory: Int32, Sendable, CustomStringConvertible {

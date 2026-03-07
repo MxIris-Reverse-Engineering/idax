@@ -1,4 +1,4 @@
-import CIDA
+internal import CIDA
 
 /// Program entry point descriptor.
 public struct EntryPoint: Sendable {
@@ -41,5 +41,31 @@ public struct EntryPoint: Sendable {
 
     public static func rename(ordinal: UInt64, name: String) throws(IDAError) {
         try checkStatus(name.withCString { idax_entry_rename(ordinal, $0) }, "entry.rename")
+    }
+
+    public static func byOrdinal(_ ordinal: UInt64) throws(IDAError) -> EntryPoint {
+        var raw = IdaxEntryPoint()
+        try checkStatus(idax_entry_by_ordinal(ordinal, &raw), "entry.byOrdinal")
+        defer { idax_entry_free(&raw) }
+        return EntryPoint(
+            ordinal: raw.ordinal, address: raw.address,
+            name: borrowCString(raw.name),
+            forwarder: borrowCString(raw.forwarder)
+        )
+    }
+
+    public static func forwarder(ordinal: UInt64) throws(IDAError) -> String {
+        try withStringOutput("entry.forwarder") { idax_entry_forwarder(ordinal, $0) }
+    }
+
+    public static func setForwarder(ordinal: UInt64, target: String) throws(IDAError) {
+        try checkStatus(
+            target.withCString { idax_entry_set_forwarder(ordinal, $0) },
+            "entry.setForwarder"
+        )
+    }
+
+    public static func clearForwarder(ordinal: UInt64) throws(IDAError) {
+        try checkStatus(idax_entry_clear_forwarder(ordinal), "entry.clearForwarder")
     }
 }

@@ -1,4 +1,4 @@
-import CIDA
+internal import CIDA
 
 /// Auto-analysis control.
 ///
