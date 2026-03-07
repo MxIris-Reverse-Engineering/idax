@@ -1,5 +1,12 @@
 import CIDA
 
+/// Demangling output form.
+public enum DemangledForm: Int32, Sendable {
+    case short = 0
+    case long = 1
+    case typeOnly = 2
+}
+
 /// Naming and demangling operations.
 ///
 /// Mirrors C++ `ida::name`.
@@ -20,8 +27,8 @@ public enum Name {
         try checkStatus(idax_name_remove(address), "name.remove")
     }
 
-    public static func demangled(at address: Address, form: Int32 = 0) throws(IDAError) -> String {
-        try withStringOutput("name.demangled") { idax_name_demangled(address, form, $0) }
+    public static func demangled(at address: Address, form: DemangledForm = .short) throws(IDAError) -> String {
+        try withStringOutput("name.demangled") { idax_name_demangled(address, form.rawValue, $0) }
     }
 
     public static func resolve(_ name: String, context: Address = 0) throws(IDAError) -> Address {

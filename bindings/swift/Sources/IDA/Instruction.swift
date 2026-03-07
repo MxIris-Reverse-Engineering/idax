@@ -12,6 +12,7 @@ public struct Operand: Sendable {
     public let operandType: OperandType
     public let registerID: UInt16
     public let registerName: String
+    public let registerCategory: Int32
     public let value: UInt64
     public let targetAddress: Address
     public let byteWidth: Int
@@ -111,6 +112,7 @@ public struct Instruction: Sendable {
                     operandType: OperandType(rawValue: Int32(o.type)) ?? .void_,
                     registerID: o.register_id,
                     registerName: borrowCString(o.register_name),
+                    registerCategory: o.register_category,
                     value: o.value,
                     targetAddress: o.target_address,
                     byteWidth: Int(o.byte_width)

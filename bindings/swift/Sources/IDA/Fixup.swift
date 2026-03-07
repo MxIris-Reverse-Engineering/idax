@@ -1,10 +1,20 @@
 import CIDA
 import Darwin
 
+/// Fixup (relocation) type matching C++ `ida::fixup::Type`.
+public enum FixupType: Int32, Sendable {
+    case off8 = 0, off16, seg16, ptr16
+    case off32, ptr32
+    case hi8, hi16, low8, low16
+    case off64
+    case off8Signed, off16Signed, off32Signed
+    case custom
+}
+
 /// Fixup/relocation descriptor.
 public struct Fixup: Sendable {
     public let source: Address
-    public let type: Int32
+    public let type: FixupType
     public let flags: UInt32
     public let base: Address
     public let target: Address
@@ -38,7 +48,7 @@ public struct Fixup: Sendable {
 
     init(raw: IdaxFixup) {
         self.source = raw.source
-        self.type = raw.type
+        self.type = FixupType(rawValue: raw.type) ?? .off32
         self.flags = raw.flags
         self.base = raw.base
         self.target = raw.target
