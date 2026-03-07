@@ -1,4 +1,4 @@
-import CIDA
+internal import CIDA
 
 /// IDA address type (64-bit unsigned).
 public typealias Address = UInt64
@@ -83,5 +83,19 @@ public enum AddressAPI {
 
     public static func prevMapped(_ address: Address) throws(IDAError) -> Address {
         try withOutput("address.prevMapped", UInt64(0)) { idax_address_prev_mapped(address, $0) }
+    }
+
+    // MARK: - Search
+
+    public static func findFirst(start: Address, end: Address, predicate: Int) throws(IDAError) -> Address {
+        try withOutput("address.findFirst", UInt64(0)) {
+            idax_address_find_first(start, end, Int32(predicate), $0)
+        }
+    }
+
+    public static func findNext(_ address: Address, predicate: Int, end: Address) throws(IDAError) -> Address {
+        try withOutput("address.findNext", UInt64(0)) {
+            idax_address_find_next(address, Int32(predicate), end, $0)
+        }
     }
 }

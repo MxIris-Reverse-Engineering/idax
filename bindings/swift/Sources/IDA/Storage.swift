@@ -1,4 +1,4 @@
-import CIDA
+internal import CIDA
 
 /// Persistent key-value storage node (netnode abstraction).
 ///
@@ -94,5 +94,47 @@ public final class StorageNode: @unchecked Sendable {
             },
             "storage.blobSet"
         )
+    }
+
+    // MARK: - Sup (byte array values)
+
+    public func supGet(index: UInt64, tag: UInt8 = UInt8(ascii: "S")) throws(IDAError) -> [UInt8] {
+        var ptr: UnsafeMutablePointer<UInt8>? = nil
+        var len: Int = 0
+        try checkStatus(idax_storage_node_sup_get(handle, index, tag, &ptr, &len), "storage.supGet")
+        defer { idax_free_bytes(ptr) }
+        guard let ptr, len > 0 else { return [] }
+        return Array(UnsafeBufferPointer(start: ptr, count: len))
+    }
+
+    public func supSet(index: UInt64, data: [UInt8], tag: UInt8 = UInt8(ascii: "S")) throws(IDAError) {
+        try checkStatus(
+            data.withUnsafeBufferPointer {
+                idax_storage_node_sup_set(handle, index, $0.baseAddress, $0.count, tag)
+            },
+            "storage.supSet"
+        )
+    }
+
+    // MARK: - Alt remove
+
+    public func altRemove(index: UInt64, tag: UInt8 = UInt8(ascii: "A")) throws(IDAError) {
+        try checkStatus(idax_storage_node_alt_remove(handle, index, tag), "storage.altRemove")
+    }
+
+    // MARK: - Blob extended
+
+    public func blobSize(index: UInt64, tag: UInt8 = UInt8(ascii: "B")) throws(IDAError) -> Int {
+        var out: Int = 0
+        try checkStatus(idax_storage_node_blob_size(handle, index, tag, &out), "storage.blobSize")
+        return out
+    }
+
+    public func blobString(index: UInt64, tag: UInt8 = UInt8(ascii: "B")) throws(IDAError) -> String {
+        try withStringOutput("storage.blobString") { idax_storage_node_blob_string(handle, index, tag, $0) }
+    }
+
+    public func blobRemove(index: UInt64, tag: UInt8 = UInt8(ascii: "B")) throws(IDAError) {
+        try checkStatus(idax_storage_node_blob_remove(handle, index, tag), "storage.blobRemove")
     }
 }

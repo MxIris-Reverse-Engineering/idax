@@ -1,4 +1,4 @@
-import CIDA
+internal import CIDA
 import Darwin
 
 /// Storage class for a decompiler local variable.

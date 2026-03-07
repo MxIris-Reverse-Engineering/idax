@@ -1,4 +1,4 @@
-import CIDA
+internal import CIDA
 
 /// Operand type classification.
 public enum OperandType: Int32, Sendable {
@@ -93,6 +93,153 @@ public struct Instruction: Sendable {
 
     public static func setOperandDecimal(_ address: Address, operand n: Int) throws(IDAError) {
         try checkStatus(idax_instruction_set_operand_decimal(address, Int32(n)), "instruction.setOperandDecimal")
+    }
+
+    // MARK: - Create / Navigate
+
+    public static func create(at address: Address) throws(IDAError) -> Instruction {
+        var raw = IdaxInstruction()
+        try checkStatus(idax_instruction_create(address, &raw), "instruction.create")
+        defer { idax_instruction_free(&raw) }
+        return Instruction(raw: raw)
+    }
+
+    public static func next(after address: Address) throws(IDAError) -> Instruction {
+        var raw = IdaxInstruction()
+        try checkStatus(idax_instruction_next(address, &raw), "instruction.next")
+        defer { idax_instruction_free(&raw) }
+        return Instruction(raw: raw)
+    }
+
+    public static func prev(before address: Address) throws(IDAError) -> Instruction {
+        var raw = IdaxInstruction()
+        try checkStatus(idax_instruction_prev(address, &raw), "instruction.prev")
+        defer { idax_instruction_free(&raw) }
+        return Instruction(raw: raw)
+    }
+
+    // MARK: - Operand queries
+
+    public static func operandText(at address: Address, operand n: Int) throws(IDAError) -> String {
+        try withStringOutput("instruction.operandText") { idax_instruction_operand_text(address, Int32(n), $0) }
+    }
+
+    public static func operandByteWidth(at address: Address, operand n: Int) throws(IDAError) -> Int {
+        var out: Int32 = 0
+        try checkStatus(idax_instruction_operand_byte_width(address, Int32(n), &out), "instruction.operandByteWidth")
+        return Int(out)
+    }
+
+    public static func operandRegisterName(at address: Address, operand n: Int) throws(IDAError) -> String {
+        try withStringOutput("instruction.operandRegisterName") { idax_instruction_operand_register_name(address, Int32(n), $0) }
+    }
+
+    public static func operandRegisterCategory(at address: Address, operand n: Int) throws(IDAError) -> Int {
+        var out: Int32 = 0
+        try checkStatus(idax_instruction_operand_register_category(address, Int32(n), &out), "instruction.operandRegisterCategory")
+        return Int(out)
+    }
+
+    // MARK: - Operand representation
+
+    public static func setOperandOctal(_ address: Address, operand n: Int) throws(IDAError) {
+        try checkStatus(idax_instruction_set_operand_octal(address, Int32(n)), "instruction.setOperandOctal")
+    }
+
+    public static func setOperandBinary(_ address: Address, operand n: Int) throws(IDAError) {
+        try checkStatus(idax_instruction_set_operand_binary(address, Int32(n)), "instruction.setOperandBinary")
+    }
+
+    public static func setOperandCharacter(_ address: Address, operand n: Int) throws(IDAError) {
+        try checkStatus(idax_instruction_set_operand_character(address, Int32(n)), "instruction.setOperandCharacter")
+    }
+
+    public static func setOperandFloat(_ address: Address, operand n: Int) throws(IDAError) {
+        try checkStatus(idax_instruction_set_operand_float(address, Int32(n)), "instruction.setOperandFloat")
+    }
+
+    public static func setOperandFormat(_ address: Address, operand n: Int, format: Int, base: UInt64) throws(IDAError) {
+        try checkStatus(idax_instruction_set_operand_format(address, Int32(n), Int32(format), base), "instruction.setOperandFormat")
+    }
+
+    public static func setOperandOffset(_ address: Address, operand n: Int, base: UInt64) throws(IDAError) {
+        try checkStatus(idax_instruction_set_operand_offset(address, Int32(n), base), "instruction.setOperandOffset")
+    }
+
+    public static func setOperandStructOffsetByName(_ address: Address, operand n: Int, structureName: String, delta: Int64) throws(IDAError) {
+        try checkStatus(
+            structureName.withCString { idax_instruction_set_operand_struct_offset_by_name(address, Int32(n), $0, delta) },
+            "instruction.setOperandStructOffsetByName"
+        )
+    }
+
+    public static func setOperandStructOffsetByID(_ address: Address, operand n: Int, structureID: UInt64, delta: Int64) throws(IDAError) {
+        try checkStatus(idax_instruction_set_operand_struct_offset_by_id(address, Int32(n), structureID, delta), "instruction.setOperandStructOffsetByID")
+    }
+
+    public static func setOperandBasedStructOffset(_ address: Address, operand n: Int, operandValue: UInt64, base: UInt64) throws(IDAError) {
+        try checkStatus(idax_instruction_set_operand_based_struct_offset(address, Int32(n), operandValue, base), "instruction.setOperandBasedStructOffset")
+    }
+
+    public static func setOperandStackVariable(_ address: Address, operand n: Int) throws(IDAError) {
+        try checkStatus(idax_instruction_set_operand_stack_variable(address, Int32(n)), "instruction.setOperandStackVariable")
+    }
+
+    public static func setForcedOperand(_ address: Address, operand n: Int, text: String) throws(IDAError) {
+        try checkStatus(
+            text.withCString { idax_instruction_set_forced_operand(address, Int32(n), $0) },
+            "instruction.setForcedOperand"
+        )
+    }
+
+    public static func forcedOperand(at address: Address, operand n: Int) throws(IDAError) -> String {
+        try withStringOutput("instruction.forcedOperand") { idax_instruction_get_forced_operand(address, Int32(n), $0) }
+    }
+
+    public static func clearOperandRepresentation(_ address: Address, operand n: Int) throws(IDAError) {
+        try checkStatus(idax_instruction_clear_operand_representation(address, Int32(n)), "instruction.clearOperandRepresentation")
+    }
+
+    public static func toggleOperandSign(_ address: Address, operand n: Int) throws(IDAError) {
+        try checkStatus(idax_instruction_toggle_operand_sign(address, Int32(n)), "instruction.toggleOperandSign")
+    }
+
+    public static func toggleOperandNegate(_ address: Address, operand n: Int) throws(IDAError) {
+        try checkStatus(idax_instruction_toggle_operand_negate(address, Int32(n)), "instruction.toggleOperandNegate")
+    }
+
+    // MARK: - Struct offset paths
+
+    public static func operandStructOffsetPath(at address: Address, operand n: Int) throws(IDAError) -> (ids: [UInt64], delta: Int64) {
+        var idsPtr: UnsafeMutablePointer<UInt64>? = nil
+        var count: Int = 0
+        var delta: Int64 = 0
+        try checkStatus(
+            idax_instruction_operand_struct_offset_path(address, Int32(n), &idsPtr, &count, &delta),
+            "instruction.operandStructOffsetPath"
+        )
+        defer { idax_free_addresses(idsPtr) }
+        let ids: [UInt64]
+        if let idsPtr, count > 0 {
+            ids = Array(UnsafeBufferPointer(start: idsPtr, count: count))
+        } else {
+            ids = []
+        }
+        return (ids: ids, delta: delta)
+    }
+
+    public static func operandStructOffsetPathNames(at address: Address, operand n: Int) throws(IDAError) -> [String] {
+        var ptr: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>? = nil
+        var count: Int = 0
+        try checkStatus(
+            idax_instruction_operand_struct_offset_path_names(address, Int32(n), &ptr, &count),
+            "instruction.operandStructOffsetPathNames"
+        )
+        defer { idax_instruction_string_array_free(ptr, count) }
+        guard let ptr, count > 0 else { return [] }
+        return (0..<count).map { i in
+            if let s = ptr[i] { String(cString: s) } else { "" }
+        }
     }
 
     // MARK: - Internal

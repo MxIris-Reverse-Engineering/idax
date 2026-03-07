@@ -1,4 +1,4 @@
-import CIDA
+internal import CIDA
 
 /// Text, binary, and immediate value search.
 ///
@@ -33,5 +33,13 @@ public enum Search {
 
     public static func nextUnknown(after address: Address) throws(IDAError) -> Address {
         try withOutput("search.nextUnknown", UInt64(0)) { idax_search_next_unknown(address, $0) }
+    }
+
+    public static func nextError(after address: Address) throws(IDAError) -> Address {
+        try withOutput("search.nextError", UInt64(0)) { idax_search_next_error(address, $0) }
+    }
+
+    public static func nextDefined(after address: Address) throws(IDAError) -> Address {
+        try withOutput("search.nextDefined", UInt64(0)) { idax_search_next_defined(address, $0) }
     }
 }
