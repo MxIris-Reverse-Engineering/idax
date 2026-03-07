@@ -5321,6 +5321,357 @@ int idax_decompiler_for_each_item(IdaxDecompiledHandle handle,
     return 0;
 }
 
+// ── Ctree handle-based API ──────────────────────────────────────────────
+
+int idax_ctree_visit(IdaxDecompiledHandle handle,
+                     IdaxCtreeExprVisitor expr_cb,
+                     IdaxCtreeStmtVisitor stmt_cb,
+                     void* context,
+                     int post_order,
+                     int* out_visited) {
+    clear_error();
+    if (expr_cb == nullptr && stmt_cb == nullptr)
+        return fail(ida::Error::validation("at least one ctree visitor callback is required"));
+
+    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
+    ida::decompiler::VisitOptions opts;
+    opts.post_order = (post_order != 0);
+
+    class Visitor : public ida::decompiler::CtreeVisitor {
+    public:
+        IdaxCtreeExprVisitor expr_cb_;
+        IdaxCtreeStmtVisitor stmt_cb_;
+        void* ctx_;
+
+        Visitor(IdaxCtreeExprVisitor ec, IdaxCtreeStmtVisitor sc, void* c)
+            : expr_cb_(ec), stmt_cb_(sc), ctx_(c) {}
+
+        ida::decompiler::VisitAction visit_expression(ida::decompiler::ExpressionView expr) override {
+            if (expr_cb_ == nullptr)
+                return ida::decompiler::VisitAction::Continue;
+            return visit_action_from_c_int(expr_cb_(ctx_, expr.raw_handle()));
+        }
+        ida::decompiler::VisitAction visit_statement(ida::decompiler::StatementView stmt) override {
+            if (stmt_cb_ == nullptr)
+                return ida::decompiler::VisitAction::Continue;
+            return visit_action_from_c_int(stmt_cb_(ctx_, stmt.raw_handle()));
+        }
+    };
+
+    Visitor visitor(expr_cb, stmt_cb, context);
+    auto result = df->visit(visitor, opts);
+    if (!result) return fail(result.error());
+    *out_visited = *result;
+    return 0;
+}
+
+// ── Expression query functions ──────────────────────────────────────────
+
+int idax_ctree_expr_type(IdaxCtreeExprHandle expr, int* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    *out = static_cast<int>(ev.type());
+    return 0;
+}
+
+int idax_ctree_expr_address(IdaxCtreeExprHandle expr, uint64_t* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    *out = ev.address();
+    return 0;
+}
+
+int idax_ctree_expr_number_value(IdaxCtreeExprHandle expr, uint64_t* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    auto r = ev.number_value();
+    if (!r) return fail(r.error());
+    *out = *r;
+    return 0;
+}
+
+int idax_ctree_expr_string_value(IdaxCtreeExprHandle expr, char** out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    auto r = ev.string_value();
+    if (!r) return fail(r.error());
+    *out = dup_string(*r);
+    return 0;
+}
+
+int idax_ctree_expr_object_address(IdaxCtreeExprHandle expr, uint64_t* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    auto r = ev.object_address();
+    if (!r) return fail(r.error());
+    *out = *r;
+    return 0;
+}
+
+int idax_ctree_expr_variable_index(IdaxCtreeExprHandle expr, int* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    auto r = ev.variable_index();
+    if (!r) return fail(r.error());
+    *out = *r;
+    return 0;
+}
+
+int idax_ctree_expr_operand_count(IdaxCtreeExprHandle expr, int* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    *out = ev.operand_count();
+    return 0;
+}
+
+int idax_ctree_expr_left(IdaxCtreeExprHandle expr, IdaxCtreeExprHandle* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    auto r = ev.left();
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_expr_right(IdaxCtreeExprHandle expr, IdaxCtreeExprHandle* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    auto r = ev.right();
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_expr_call_argument_count(IdaxCtreeExprHandle expr, size_t* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    auto r = ev.call_argument_count();
+    if (!r) return fail(r.error());
+    *out = *r;
+    return 0;
+}
+
+int idax_ctree_expr_call_callee(IdaxCtreeExprHandle expr, IdaxCtreeExprHandle* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    auto r = ev.call_callee();
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_expr_call_argument(IdaxCtreeExprHandle expr, size_t index,
+                                  IdaxCtreeExprHandle* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    auto r = ev.call_argument(index);
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_expr_member_offset(IdaxCtreeExprHandle expr, uint32_t* out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    auto r = ev.member_offset();
+    if (!r) return fail(r.error());
+    *out = *r;
+    return 0;
+}
+
+int idax_ctree_expr_to_string(IdaxCtreeExprHandle expr, char** out) {
+    clear_error();
+    auto ev = ida::decompiler::ExpressionView(
+        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
+    auto r = ev.to_string();
+    if (!r) return fail(r.error());
+    *out = dup_string(*r);
+    return 0;
+}
+
+// ── Statement query functions ───────────────────────────────────────────
+
+int idax_ctree_stmt_type(IdaxCtreeStmtHandle stmt, int* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    *out = static_cast<int>(sv.type());
+    return 0;
+}
+
+int idax_ctree_stmt_address(IdaxCtreeStmtHandle stmt, uint64_t* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    *out = sv.address();
+    return 0;
+}
+
+int idax_ctree_stmt_goto_target_label(IdaxCtreeStmtHandle stmt, int* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.goto_target_label();
+    if (!r) return fail(r.error());
+    *out = *r;
+    return 0;
+}
+
+int idax_ctree_stmt_condition(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.condition();
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_stmt_then_branch(IdaxCtreeStmtHandle stmt, IdaxCtreeStmtHandle* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.then_branch();
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_stmt_else_branch(IdaxCtreeStmtHandle stmt, IdaxCtreeStmtHandle* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.else_branch();
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_stmt_has_else_branch(IdaxCtreeStmtHandle stmt, int* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    *out = sv.has_else_branch() ? 1 : 0;
+    return 0;
+}
+
+int idax_ctree_stmt_body(IdaxCtreeStmtHandle stmt, IdaxCtreeStmtHandle* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.body();
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_stmt_init_expression(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.init_expression();
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_stmt_step_expression(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.step_expression();
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_stmt_expression(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.expression();
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_stmt_block_size(IdaxCtreeStmtHandle stmt, size_t* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.block_size();
+    if (!r) return fail(r.error());
+    *out = *r;
+    return 0;
+}
+
+int idax_ctree_stmt_block_statement(IdaxCtreeStmtHandle stmt, size_t index,
+                                    IdaxCtreeStmtHandle* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.block_statement(index);
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+int idax_ctree_stmt_switch_case_count(IdaxCtreeStmtHandle stmt, size_t* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.switch_case_count();
+    if (!r) return fail(r.error());
+    *out = *r;
+    return 0;
+}
+
+int idax_ctree_stmt_switch_case_values(IdaxCtreeStmtHandle stmt, size_t index,
+                                       uint64_t** out, size_t* count) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.switch_case_values(index);
+    if (!r) return fail(r.error());
+    *count = r->size();
+    if (r->empty()) {
+        *out = nullptr;
+        return 0;
+    }
+    auto* arr = static_cast<uint64_t*>(malloc(r->size() * sizeof(uint64_t)));
+    std::copy(r->begin(), r->end(), arr);
+    *out = arr;
+    return 0;
+}
+
+int idax_ctree_stmt_switch_case_body(IdaxCtreeStmtHandle stmt, size_t index,
+                                     IdaxCtreeStmtHandle* out) {
+    clear_error();
+    auto sv = ida::decompiler::StatementView(
+        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
+    auto r = sv.switch_case_body(index);
+    if (!r) return fail(r.error());
+    *out = r->raw_handle();
+    return 0;
+}
+
+void idax_ctree_switch_case_values_free(uint64_t* values) {
+    free(values);
+}
+
 // Microcode filter support
 namespace {
 
