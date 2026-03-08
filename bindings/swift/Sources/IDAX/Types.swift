@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 import Darwin
 
 /// Type member descriptor (struct/union field).

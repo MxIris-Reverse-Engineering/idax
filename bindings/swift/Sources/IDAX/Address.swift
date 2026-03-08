@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// IDA address type (64-bit unsigned).
 public typealias Address = UInt64

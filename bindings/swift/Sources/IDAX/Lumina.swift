@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// Lumina metadata pull/push.
 ///
@@ -22,13 +22,11 @@ public enum Lumina {
     }
 
     public static func pull(
-        addresses: [Address], autoApply: Bool = true, feature: Int = 0
+        addresses: Span<Address>, autoApply: Bool = true, feature: Int = 0
     ) throws(IDAError) -> BatchResult {
         var raw = IdaxLuminaBatchResult()
         try checkStatus(
-            addresses.withUnsafeBufferPointer {
-                idax_lumina_pull($0.baseAddress, $0.count, autoApply ? 1 : 0, Int32(feature), &raw)
-            },
+            idax_lumina_pull(addresses, autoApply ? 1 : 0, Int32(feature), &raw),
             "lumina.pull"
         )
         return BatchResult(requested: raw.requested, completed: raw.completed,
@@ -36,13 +34,11 @@ public enum Lumina {
     }
 
     public static func push(
-        addresses: [Address], pushMode: Int = 0, feature: Int = 0
+        addresses: Span<Address>, pushMode: Int = 0, feature: Int = 0
     ) throws(IDAError) -> BatchResult {
         var raw = IdaxLuminaBatchResult()
         try checkStatus(
-            addresses.withUnsafeBufferPointer {
-                idax_lumina_push($0.baseAddress, $0.count, Int32(pushMode), Int32(feature), &raw)
-            },
+            idax_lumina_push(addresses, Int32(pushMode), Int32(feature), &raw),
             "lumina.push"
         )
         return BatchResult(requested: raw.requested, completed: raw.completed,

@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// RAII event subscription token. Unsubscribes on deinit.
 public struct EventSubscription: ~Copyable, @unchecked Sendable {

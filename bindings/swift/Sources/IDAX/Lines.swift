@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// Color tag manipulation for pseudocode and listing output.
 ///

@@ -31,9 +31,16 @@ cp "$LIBIDAX" "$OUTPUT_DIR/libidax.a"
 SHIM_CPP="$REPO_ROOT/bindings/rust/idax-sys/shim/idax_shim.cpp"
 IDASDK="${IDASDK:-}"
 
+# If IDASDK is not set, try to use the SDK fetched by CMake
 if [ -z "$IDASDK" ]; then
-    echo "ERROR: IDASDK environment variable not set" >&2
-    exit 1
+    FETCHED_SDK="$BUILD_DIR/_deps/ida_sdk-src"
+    if [ -d "$FETCHED_SDK" ]; then
+        echo "    Using FetchContent SDK at $FETCHED_SDK"
+        IDASDK="$FETCHED_SDK"
+    else
+        echo "ERROR: IDASDK environment variable not set and no FetchContent SDK found" >&2
+        exit 1
+    fi
 fi
 
 # Resolve SDK include path (handle both layouts)

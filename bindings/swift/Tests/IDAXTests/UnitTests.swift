@@ -1,5 +1,5 @@
 import Testing
-@testable import IDA
+@testable import IDAX
 
 // MARK: - Error Model
 
@@ -356,5 +356,23 @@ struct LocalVariableTests {
         )
         #expect(lv.isArgument)
         #expect(lv.storage == .register)
+    }
+}
+
+// MARK: - Runtime Availability
+
+@Suite("IDA Runtime")
+struct RuntimeTests {
+    @Test func isAvailableDoesNotCrash() {
+        // Must return a Bool without crashing, regardless of whether IDA is installed.
+        let result = IDARuntime.isAvailable
+        #expect(result == true || result == false)
+    }
+
+    @Test func isAvailableIsConsistent() {
+        // Repeated calls must return the same value.
+        let first = IDARuntime.isAvailable
+        let second = IDARuntime.isAvailable
+        #expect(first == second)
     }
 }

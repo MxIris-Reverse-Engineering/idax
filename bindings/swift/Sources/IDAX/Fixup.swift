@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 import Darwin
 
 /// Fixup (relocation) type matching C++ `ida::fixup::Type`.

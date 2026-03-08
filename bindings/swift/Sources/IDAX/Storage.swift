@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// Persistent key-value storage node (netnode abstraction).
 ///
@@ -87,11 +87,9 @@ public struct StorageNode: ~Copyable, @unchecked Sendable {
         return Array(UnsafeBufferPointer(start: ptr, count: len))
     }
 
-    public func blobSet(index: UInt64, data: [UInt8], tag: UInt8 = UInt8(ascii: "B")) throws(IDAError) {
+    public func blobSet(index: UInt64, data: Span<UInt8>, tag: UInt8 = UInt8(ascii: "B")) throws(IDAError) {
         try checkStatus(
-            data.withUnsafeBufferPointer {
-                idax_storage_node_blob_set(handle, index, $0.baseAddress, $0.count, tag)
-            },
+            idax_storage_node_blob_set(handle, index, data, tag),
             "storage.blobSet"
         )
     }
@@ -107,11 +105,9 @@ public struct StorageNode: ~Copyable, @unchecked Sendable {
         return Array(UnsafeBufferPointer(start: ptr, count: len))
     }
 
-    public func supSet(index: UInt64, data: [UInt8], tag: UInt8 = UInt8(ascii: "S")) throws(IDAError) {
+    public func supSet(index: UInt64, data: Span<UInt8>, tag: UInt8 = UInt8(ascii: "S")) throws(IDAError) {
         try checkStatus(
-            data.withUnsafeBufferPointer {
-                idax_storage_node_sup_set(handle, index, $0.baseAddress, $0.count, tag)
-            },
+            idax_storage_node_sup_set(handle, index, data, tag),
             "storage.supSet"
         )
     }

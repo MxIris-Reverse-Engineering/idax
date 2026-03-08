@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// Compiler metadata returned by `Database.compilerInfo()`.
 public struct CompilerInfo: Sendable {
@@ -147,12 +147,10 @@ public enum Database {
     }
 
     public static func memoryToDatabase(
-        bytes: [UInt8], address: Address, fileOffset: Int64
+        bytes: Span<UInt8>, address: Address, fileOffset: Int64
     ) throws(IDAError) {
         try checkStatus(
-            bytes.withUnsafeBufferPointer {
-                idax_database_memory_to_database($0.baseAddress, $0.count, address, fileOffset)
-            },
+            idax_database_memory_to_database(bytes, address, fileOffset),
             "database.memoryToDatabase"
         )
     }

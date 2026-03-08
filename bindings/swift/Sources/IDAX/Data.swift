@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// Typed value kind for structured data reads/writes.
 public enum TypedValueKind: Int32, Sendable {
@@ -98,11 +98,8 @@ public enum Data {
         try checkStatus(idax_data_write_qword(address, value), "data.writeQword")
     }
 
-    public static func writeBytes(_ data: [UInt8], at address: Address) throws(IDAError) {
-        try checkStatus(
-            data.withUnsafeBufferPointer { idax_data_write_bytes(address, $0.baseAddress, $0.count) },
-            "data.writeBytes"
-        )
+    public static func writeBytes(_ data: Span<UInt8>, at address: Address) throws(IDAError) {
+        try checkStatus(idax_data_write_bytes(address, data), "data.writeBytes")
     }
 
     // MARK: - Patch
@@ -123,11 +120,8 @@ public enum Data {
         try checkStatus(idax_data_patch_qword(address, value), "data.patchQword")
     }
 
-    public static func patchBytes(_ data: [UInt8], at address: Address) throws(IDAError) {
-        try checkStatus(
-            data.withUnsafeBufferPointer { idax_data_patch_bytes(address, $0.baseAddress, $0.count) },
-            "data.patchBytes"
-        )
+    public static func patchBytes(_ data: Span<UInt8>, at address: Address) throws(IDAError) {
+        try checkStatus(idax_data_patch_bytes(address, data), "data.patchBytes")
     }
 
     public static func revertPatch(at address: Address) throws(IDAError) {
