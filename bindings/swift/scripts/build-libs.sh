@@ -81,6 +81,7 @@ fi
 
 cmake -S "$REPO_ROOT" -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
+    -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
     -DIDAX_BUILD_TESTS=OFF \
     -DIDAX_BUILD_EXAMPLES=OFF \
     "${CMAKE_EXTRA_ARGS[@]+"${CMAKE_EXTRA_ARGS[@]}"}"
@@ -142,6 +143,7 @@ $CXX $STD_FLAG "${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"}" \
     -I"$REPO_ROOT/src" \
     -I"$SDK_INCLUDE" \
     -D__EA64__ \
+    -mmacosx-version-min=13.0 \
     -fPIC -O2
 
 ar rcs "$OUTPUT_DIR/libidax_shim.a" "$SHIM_OBJ"

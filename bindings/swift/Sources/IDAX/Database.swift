@@ -40,6 +40,7 @@ public enum Database {
 
     public static func initialize() throws(IDAError) {
         try checkStatus(idax_database_init(0, nil), "database.init")
+        idax_sync_ida_globals()
     }
 
     public static func open(_ path: String, autoAnalysis: Bool = true) throws(IDAError) {

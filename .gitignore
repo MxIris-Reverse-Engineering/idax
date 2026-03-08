@@ -43,3 +43,5 @@ target/
 .cmake-build-x86_64
 .swiftpm
 .build
+.cmake-build-*
+.xcframework-staging

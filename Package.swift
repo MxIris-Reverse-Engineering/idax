@@ -2,8 +2,10 @@
 import PackageDescription
 import Foundation
 
-// Pre-build libraries first: bindings/swift/scripts/build-libs.sh
-// Set IDAX_LIB_DIR to override library search path.
+// IDAX_DEV=1 swift build  → developer mode (link pre-built .a files)
+// swift build              → consumer mode  (use XCFramework)
+let devMode = ProcessInfo.processInfo.environment["IDAX_DEV"] != nil
+
 let libDir: String = {
     if let dir = ProcessInfo.processInfo.environment["IDAX_LIB_DIR"] {
         return dir
@@ -12,6 +14,26 @@ let libDir: String = {
     return "\(packageDir)/bindings/swift/.build-libs"
 }()
 
+let cidaxTarget: Target = devMode
+    ? .target(
+        name: "CIDAX",
+        path: "bindings/swift/Sources/CIDAX",
+        publicHeadersPath: "include",
+        cSettings: [
+            .headerSearchPath("include"),
+        ],
+        linkerSettings: [
+            .unsafeFlags([
+                "-L\(libDir)",
+                "-lidax", "-lidax_shim",
+            ]),
+        ]
+    )
+    : .binaryTarget(
+        name: "CIDAX",
+        path: "bindings/swift/Frameworks/CIDAX.xcframework"
+    )
+
 let package = Package(
     name: "IDAX",
     platforms: [.macOS(.v13)],
@@ -19,23 +41,7 @@ let package = Package(
         .library(name: "IDAX", targets: ["IDAX"]),
     ],
     targets: [
-        .target(
-            name: "CIDAX",
-            path: "bindings/swift/Sources/CIDAX",
-            publicHeadersPath: "include",
-            cSettings: [
-                .headerSearchPath("include"),
-            ],
-            linkerSettings: [
-                .unsafeFlags([
-                    "-L\(libDir)",
-                    "-lidax", "-lidax_shim",
-                    "-Xlinker", "-undefined",
-                    "-Xlinker", "dynamic_lookup",
-                ]),
-                .linkedLibrary("c++"),
-            ]
-        ),
+        cidaxTarget,
         .target(
             name: "IDAX",
             dependencies: ["CIDAX"],
@@ -43,6 +49,11 @@ let package = Package(
             swiftSettings: [
                 .enableExperimentalFeature("SafeInteropWrappers"),
             ]
+        ),
+        .executableTarget(
+            name: "idax-example",
+            dependencies: ["IDAX"],
+            path: "bindings/swift/Examples"
         ),
         .testTarget(
             name: "IDAXTests",
