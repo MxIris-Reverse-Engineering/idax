@@ -375,4 +375,53 @@ struct RuntimeTests {
         let second = IDARuntime.isAvailable
         #expect(first == second)
     }
+
+    @Test func test() async throws {
+        let dbPath = "/Volumes/RE/Xcode/26.2/SharedFrameworks/DVTExplorableKit.framework/Versions/A/DVTExplorableKit.i64"
+
+        print("=== IDAX Swift Example ===")
+        print("Runtime available: \(IDARuntime.isAvailable)")
+
+        guard IDARuntime.isAvailable else {
+            print("ERROR: IDA Pro runtime not found.")
+            return 
+        }
+
+        do {
+            print("Initializing IDA...")
+            try Database.initialize()
+
+            print("Opening: \(dbPath)")
+            try Database.open(dbPath, autoAnalysis: false)
+
+            print("--- Database Info ---")
+            try print("  Input file:  \(Database.inputFilePath())")
+            try print("  File type:   \(Database.fileTypeName())")
+            try print("  Processor:   \(Database.processorName())")
+            try print("  Image base:  0x\(String(Database.imageBase(), radix: 16))")
+            try print("  Address bits: \(Database.addressBitness())")
+
+            print("--- Segments ---")
+            let segments = try Segment.all()
+            for seg in segments {
+                let start = String(seg.start, radix: 16)
+                let end = String(seg.end, radix: 16)
+                print("  \(seg.name): 0x\(start) - 0x\(end) (\(seg.size) bytes)")
+            }
+
+            print("--- Functions (first 20) ---")
+            let functions = try Function.all()
+            print("  Total: \(functions.count)")
+            for fn in functions.prefix(20) {
+                let addr = String(fn.start, radix: 16)
+                print("  0x\(addr): \(fn.name)")
+            }
+
+            print("--- Closing ---")
+            try Database.close()
+            print("Done.")
+        } catch {
+            print("ERROR: \(error)")
+        }
+    }
 }

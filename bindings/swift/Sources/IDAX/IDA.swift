@@ -31,12 +31,13 @@ public enum IDARuntime {
 
     /// Whether the IDA Pro runtime libraries can be located on this system.
     ///
-    /// Performs a lightweight `dlopen` probe using the same search order
-    /// as the C shim's `IdaLibLoader`: already-loaded check, `$IDADIR`
-    /// environment variable, then platform-specific discovery.
+    /// Uses file-existence checks (`access`) instead of `dlopen` to avoid
+    /// pre-loading `libida.dylib`.  Pre-loading would cause the C shim's
+    /// `IdaLibLoader::ensure_loaded()` to skip loading `libidalib.dylib`
+    /// (which exports `init_library`), leading to a crash.
     ///
-    /// The probe does **not** retain the library handle — the actual
-    /// loading happens inside ``Database/initialize()`` via the C shim.
+    /// The actual loading happens inside ``Database/initialize()`` via
+    /// the C shim's `IdaLibLoader`.
     public static var isAvailable: Bool {
         #if os(macOS)
         let libName = "libida.dylib"
@@ -54,7 +55,7 @@ public enum IDARuntime {
         // $IDADIR takes priority.
         if let env = getenv("IDADIR") {
             let path = String(cString: env) + "/" + libName
-            if let h = dlopen(path, RTLD_LAZY) { dlclose(h); return true }
+            if access(path, F_OK) == 0 { return true }
         }
 
         return discoverIDA(libName)
@@ -73,7 +74,7 @@ public enum IDARuntime {
             }
             guard name.hasPrefix("IDA"), name.hasSuffix(".app") else { continue }
             let path = "/Applications/\(name)/Contents/MacOS/\(libName)"
-            if let h = dlopen(path, RTLD_LAZY) { dlclose(h); return true }
+            if access(path, F_OK) == 0 { return true }
         }
         return false
     }
@@ -82,7 +83,7 @@ public enum IDARuntime {
         let prefixes = ["/opt/idapro", "/opt/ida"]
         for prefix in prefixes {
             let path = "\(prefix)/\(libName)"
-            if let h = dlopen(path, RTLD_LAZY) { dlclose(h); return true }
+            if access(path, F_OK) == 0 { return true }
         }
         // Scan /opt for versioned directories (e.g. /opt/idapro-9.0).
         guard let dir = opendir("/opt") else { return false }
@@ -94,7 +95,7 @@ public enum IDARuntime {
             }
             guard name.hasPrefix("idapro-") || name.hasPrefix("ida-") else { continue }
             let path = "/opt/\(name)/\(libName)"
-            if let h = dlopen(path, RTLD_LAZY) { dlclose(h); return true }
+            if access(path, F_OK) == 0 { return true }
         }
         return false
     }

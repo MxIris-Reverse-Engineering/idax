@@ -12,8 +12,9 @@
 #   IDASDK       IDA SDK root (passed through to build-libs.sh)
 #
 # The script calls build-libs.sh twice (arm64, x86_64), merges the resulting
-# static libraries with libtool + lipo, compiles the IDA SDK data symbol stubs,
-# and packages everything into an XCFramework via xcodebuild.
+# static libraries, compiles the IDA SDK data symbol stubs, links everything
+# into a dynamic framework with -undefined dynamic_lookup, and packages into
+# an XCFramework via xcodebuild.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -27,7 +28,7 @@ BUILD_TYPE="${2:-RelWithDebInfo}"
 STAGING="$SWIFT_DIR/.xcframework-staging"
 ARCHS=(arm64 x86_64)
 
-echo "==> Building CIDAX.xcframework"
+echo "==> Building CIDAX.xcframework (dynamic)"
 echo "    Output dir:  $OUTPUT_DIR"
 echo "    Build type:  $BUILD_TYPE"
 echo "    Staging dir: $STAGING"
@@ -65,36 +66,79 @@ for arch in "${ARCHS[@]}"; do
     ARCH_DIR="$STAGING/$arch"
     STUBS_OBJ="$ARCH_DIR/shim_stubs.o"
 
-    cc -arch "$arch" -c "$STUBS_SRC" -o "$STUBS_OBJ" -O2
+    cc -arch "$arch" -mmacosx-version-min=13.0 -c "$STUBS_SRC" -o "$STUBS_OBJ" -O2
     ar r "$ARCH_DIR/libCIDAX.a" "$STUBS_OBJ"
     rm -f "$STUBS_OBJ"
     echo "    Added stubs to $ARCH_DIR/libCIDAX.a"
 done
 
-# ── Step 4: Create universal (fat) library with lipo ───────────────────────
-echo "==> Creating universal fat library..."
-mkdir -p "$STAGING/universal"
+# ── Step 4: Link into dynamic framework per arch ────────────────────────────
+# Using -undefined dynamic_lookup so IDA SDK symbols are resolved at runtime
+# when libida.dylib is dlopen'd with RTLD_GLOBAL by ensure_loaded().
+for arch in "${ARCHS[@]}"; do
+    echo "==> Linking dynamic framework for $arch..."
+    ARCH_DIR="$STAGING/$arch"
+    FW_DIR="$ARCH_DIR/CIDAX.framework"
+    mkdir -p "$FW_DIR/Headers" "$FW_DIR/Modules"
+
+    c++ -dynamiclib \
+        -arch "$arch" \
+        -mmacosx-version-min=13.0 \
+        -install_name @rpath/CIDAX.framework/CIDAX \
+        -undefined dynamic_lookup \
+        -all_load "$ARCH_DIR/libCIDAX.a" \
+        -lc++ \
+        -o "$FW_DIR/CIDAX"
+
+    echo "    Created $FW_DIR/CIDAX"
+done
+
+# ── Step 5: Create universal (fat) framework ─────────────────────────────────
+echo "==> Creating universal fat framework..."
+UNIVERSAL_FW="$STAGING/universal/CIDAX.framework"
+mkdir -p "$UNIVERSAL_FW/Headers" "$UNIVERSAL_FW/Modules"
+
 lipo -create \
-    "$STAGING/arm64/libCIDAX.a" \
-    "$STAGING/x86_64/libCIDAX.a" \
-    -output "$STAGING/universal/libCIDAX.a"
-echo "    $(lipo -info "$STAGING/universal/libCIDAX.a")"
+    "$STAGING/arm64/CIDAX.framework/CIDAX" \
+    "$STAGING/x86_64/CIDAX.framework/CIDAX" \
+    -output "$UNIVERSAL_FW/CIDAX"
+echo "    $(lipo -info "$UNIVERSAL_FW/CIDAX")"
 
-# ── Step 5: Prepare headers + modulemap ────────────────────────────────────
+# ── Step 6: Prepare headers + modulemap ────────────────────────────────────
 echo "==> Preparing headers..."
-HEADERS_DIR="$STAGING/headers"
-mkdir -p "$HEADERS_DIR"
-cp "$SWIFT_DIR/Sources/CIDAX/include/idax_shim.h" "$HEADERS_DIR/"
+cp "$SWIFT_DIR/Sources/CIDAX/include/idax_shim.h" "$UNIVERSAL_FW/Headers/"
 
-cat > "$HEADERS_DIR/module.modulemap" <<'MODULEMAP'
-module CIDAX {
+cat > "$UNIVERSAL_FW/Modules/module.modulemap" <<'MODULEMAP'
+framework module CIDAX {
     header "idax_shim.h"
     export *
 }
 MODULEMAP
-echo "    Headers ready at $HEADERS_DIR"
 
-# ── Step 6: Create XCFramework ─────────────────────────────────────────────
+# Info.plist (required for framework bundles)
+cat > "$UNIVERSAL_FW/Info.plist" <<'PLIST'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleName</key>
+    <string>CIDAX</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.idax.CIDAX</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>CFBundlePackageType</key>
+    <string>FMWK</string>
+    <key>CFBundleExecutable</key>
+    <string>CIDAX</string>
+    <key>MinimumOSVersion</key>
+    <string>13.0</string>
+</dict>
+</plist>
+PLIST
+echo "    Framework ready at $UNIVERSAL_FW"
+
+# ── Step 7: Create XCFramework ─────────────────────────────────────────────
 echo "==> Creating XCFramework..."
 mkdir -p "$OUTPUT_DIR"
 
@@ -102,29 +146,32 @@ mkdir -p "$OUTPUT_DIR"
 rm -rf "$OUTPUT_DIR/CIDAX.xcframework"
 
 xcodebuild -create-xcframework \
-    -library "$STAGING/universal/libCIDAX.a" \
-    -headers "$HEADERS_DIR" \
+    -framework "$UNIVERSAL_FW" \
     -output "$OUTPUT_DIR/CIDAX.xcframework"
 
-# ── Step 7: Clean up staging ──────────────────────────────────────────────
+# ── Step 8: Clean up staging ──────────────────────────────────────────────
 rm -rf "$STAGING"
 
-# ── Step 8: Verify and print summary ──────────────────────────────────────
+# ── Step 9: Verify and print summary ──────────────────────────────────────
 echo ""
 echo "==> CIDAX.xcframework created successfully!"
 echo ""
 echo "--- Structure ---"
-ls -R "$OUTPUT_DIR/CIDAX.xcframework"
+find "$OUTPUT_DIR/CIDAX.xcframework" -type f | head -20
 echo ""
 
-# Find the library inside the xcframework
-XCFW_LIB="$(find "$OUTPUT_DIR/CIDAX.xcframework" -name 'libCIDAX.a' -print -quit)"
+# Find the dylib inside the xcframework
+XCFW_LIB="$(find "$OUTPUT_DIR/CIDAX.xcframework" -name 'CIDAX' -not -name '*.plist' -print -quit)"
 if [ -n "$XCFW_LIB" ]; then
     echo "--- Architecture info ---"
     lipo -info "$XCFW_LIB"
     echo ""
     echo "--- Stub symbol check ---"
     nm "$XCFW_LIB" | grep '_callui' || echo "WARNING: _callui stub not found!"
+    echo ""
+    echo "--- Undefined symbols (IDA SDK, expected) ---"
+    nm -u "$XCFW_LIB" | head -10
+    echo "    ... ($(nm -u "$XCFW_LIB" | wc -l | tr -d ' ') total undefined symbols)"
     echo ""
 fi
 
