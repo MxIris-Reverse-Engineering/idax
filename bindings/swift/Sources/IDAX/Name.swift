@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// Demangling output form.
 public enum DemangledForm: Int32, Sendable {

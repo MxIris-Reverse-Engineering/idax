@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// Operand type classification.
 public enum OperandType: Int32, Sendable {

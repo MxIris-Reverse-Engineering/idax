@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// Segment type classification.
 public enum SegmentType: Int32, Sendable {

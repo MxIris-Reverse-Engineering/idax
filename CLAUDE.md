@@ -62,12 +62,10 @@ npm run test:integration    # Integration tests (needs IDADIR)
 ### Swift Bindings
 
 ```bash
-cd bindings/swift
-
 # Pre-build C++ libraries (requires IDASDK)
-scripts/build-libs.sh
+bindings/swift/scripts/build-libs.sh
 
-# Build
+# Build (Package.swift is at the repo root)
 swift build
 
 # Test (unit only — no IDA runtime needed)
@@ -104,7 +102,7 @@ All fallible operations return `ida::Result<T>` (`std::expected<T, ida::Error>`)
 
 - **Rust** (`bindings/rust/`): Cargo workspace with `idax-sys` (raw FFI via C shim + bindgen) and `idax` (safe idiomatic layer). The C shim (`idax-sys/shim/`) uses thread-local error state. `build.rs` invokes CMake to build `libidax.a`, then `cc` for the shim, then `bindgen`.
 - **Node.js** (`bindings/node/`): Native addon via `cmake-js` + `nan`. 20 C++ bind files in `src/`, JS wrapper in `lib/index.js` with TypeScript declarations. Addresses are `BigInt`, errors throw `IdaxError`.
-- **Swift** (`bindings/swift/`): SPM package with two targets — `CIDA` (raw C shim module) and `IDA` (safe Swift wrapper). Uses Swift 6.0 typed throws (`throws(IDAError)`). 20 namespace files mirror the C++ library. Pre-built native libraries linked via `unsafeFlags`.
+- **Swift** (`bindings/swift/`): SPM package (Package.swift at repo root) with two targets — `CIDAX` (raw C shim module) and `IDAX` (safe Swift wrapper). Uses Swift 6.0 typed throws (`throws(IDAError)`). 20 namespace files mirror the C++ library. Pre-built native libraries linked via `unsafeFlags`.
 
 ### Testing Layers
 

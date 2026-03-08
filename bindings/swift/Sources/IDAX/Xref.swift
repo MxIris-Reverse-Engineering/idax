@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 import Darwin
 
 /// Cross-reference type classification matching C++ `ida::xref::ReferenceType`.

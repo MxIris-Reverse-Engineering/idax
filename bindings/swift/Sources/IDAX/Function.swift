@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 import Darwin
 
 /// Function chunk descriptor.

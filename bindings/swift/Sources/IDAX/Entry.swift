@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// Program entry point descriptor.
 public struct EntryPoint: Sendable {

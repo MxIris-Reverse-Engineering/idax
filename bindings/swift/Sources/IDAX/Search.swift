@@ -1,4 +1,4 @@
-internal import CIDA
+internal import CIDAX
 
 /// Text, binary, and immediate value search.
 ///

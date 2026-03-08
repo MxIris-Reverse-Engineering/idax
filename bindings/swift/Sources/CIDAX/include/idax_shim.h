@@ -21,6 +21,25 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Bounds-safety and lifetime annotations for Swift C interop (SE-0447).
+ * __counted_by tells the Swift importer the pointer spans `N` elements;
+ * __noescape marks pointers that do not outlive the call.
+ * Together they cause the Swift compiler to generate safe Span<T> overloads
+ * (requires -enable-experimental-feature SafeInteropWrappers). */
+#if __has_include(<ptrcheck.h>)
+#  include <ptrcheck.h>
+#endif
+#ifndef __counted_by
+#  define __counted_by(N)
+#endif
+#ifndef __noescape
+#  if __has_attribute(noescape)
+#    define __noescape __attribute__((noescape))
+#  else
+#    define __noescape
+#  endif
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -74,8 +93,8 @@ int idax_database_close(int save);
 int idax_database_file_to_database(const char* file_path, int64_t file_offset,
                                    uint64_t ea, uint64_t size,
                                    int patchable, int remote);
-int idax_database_memory_to_database(const uint8_t* bytes, size_t len,
-                                     uint64_t ea, int64_t file_offset);
+int idax_database_memory_to_database(const uint8_t* __counted_by(len) bytes __noescape,
+                                     size_t len, uint64_t ea, int64_t file_offset);
 
 typedef struct IdaxDatabaseCompilerInfo {
     uint32_t id;
@@ -453,13 +472,13 @@ int idax_data_write_byte(uint64_t ea, uint8_t value);
 int idax_data_write_word(uint64_t ea, uint16_t value);
 int idax_data_write_dword(uint64_t ea, uint32_t value);
 int idax_data_write_qword(uint64_t ea, uint64_t value);
-int idax_data_write_bytes(uint64_t ea, const uint8_t* data, size_t len);
+int idax_data_write_bytes(uint64_t ea, const uint8_t* __counted_by(len) data __noescape, size_t len);
 
 int idax_data_patch_byte(uint64_t ea, uint8_t value);
 int idax_data_patch_word(uint64_t ea, uint16_t value);
 int idax_data_patch_dword(uint64_t ea, uint32_t value);
 int idax_data_patch_qword(uint64_t ea, uint64_t value);
-int idax_data_patch_bytes(uint64_t ea, const uint8_t* data, size_t len);
+int idax_data_patch_bytes(uint64_t ea, const uint8_t* __counted_by(len) data __noescape, size_t len);
 
 int idax_data_revert_patch(uint64_t ea);
 int idax_data_revert_patches(uint64_t ea, uint64_t count, uint64_t* reverted);
@@ -567,9 +586,11 @@ int idax_comment_clear_anterior(uint64_t ea);
 int idax_comment_clear_posterior(uint64_t ea);
 int idax_comment_remove_anterior_line(uint64_t ea, int line_index);
 int idax_comment_remove_posterior_line(uint64_t ea, int line_index);
-int idax_comment_set_anterior_lines(uint64_t ea, const char* const* lines,
+int idax_comment_set_anterior_lines(uint64_t ea,
+                                    const char* const* __counted_by(count) lines __noescape,
                                     size_t count);
-int idax_comment_set_posterior_lines(uint64_t ea, const char* const* lines,
+int idax_comment_set_posterior_lines(uint64_t ea,
+                                     const char* const* __counted_by(count) lines __noescape,
                                      size_t count);
 int idax_comment_anterior_lines(uint64_t ea, char*** out, size_t* count);
 int idax_comment_posterior_lines(uint64_t ea, char*** out, size_t* count);
@@ -938,7 +959,8 @@ int idax_loader_encode_load_flags(const IdaxLoaderLoadFlags* flags, uint16_t* ou
 
 int idax_loader_file_to_database(void* li_handle, int64_t file_offset,
                                  uint64_t ea, uint64_t size, int patchable);
-int idax_loader_memory_to_database(const uint8_t* data, uint64_t ea, uint64_t size);
+int idax_loader_memory_to_database(const uint8_t* __counted_by(size) data __noescape,
+                                   uint64_t ea, uint64_t size);
 void idax_loader_abort_load(const char* message);
 
 int idax_loader_input_size(void* li_handle, int64_t* out);
@@ -1121,7 +1143,8 @@ int idax_debugger_has_breakpoint(uint64_t address, int* out);
 
 int idax_debugger_read_memory(uint64_t address, uint64_t size,
                               uint8_t** out, size_t* out_len);
-int idax_debugger_write_memory(uint64_t address, const uint8_t* data,
+int idax_debugger_write_memory(uint64_t address,
+                               const uint8_t* __counted_by(len) data __noescape,
                                size_t len);
 
 int idax_debugger_is_request_running(void);
@@ -1528,7 +1551,8 @@ int idax_storage_node_alt_remove(IdaxNodeHandle node, uint64_t index,
 int idax_storage_node_sup_get(IdaxNodeHandle node, uint64_t index,
                               uint8_t tag, uint8_t** out, size_t* out_len);
 int idax_storage_node_sup_set(IdaxNodeHandle node, uint64_t index,
-                              const uint8_t* data, size_t len, uint8_t tag);
+                              const uint8_t* __counted_by(len) data __noescape,
+                              size_t len, uint8_t tag);
 
 int idax_storage_node_hash_get(IdaxNodeHandle node, const char* key,
                                uint8_t tag, char** out);
@@ -1538,7 +1562,8 @@ int idax_storage_node_hash_set(IdaxNodeHandle node, const char* key,
 int idax_storage_node_blob_get(IdaxNodeHandle node, uint64_t index,
                                uint8_t tag, uint8_t** out, size_t* out_len);
 int idax_storage_node_blob_set(IdaxNodeHandle node, uint64_t index,
-                               const uint8_t* data, size_t len, uint8_t tag);
+                               const uint8_t* __counted_by(len) data __noescape,
+                               size_t len, uint8_t tag);
 int idax_storage_node_blob_remove(IdaxNodeHandle node, uint64_t index,
                                   uint8_t tag);
 int idax_storage_node_blob_size(IdaxNodeHandle node, uint64_t index,
@@ -1907,11 +1932,11 @@ typedef struct IdaxLuminaBatchResult {
 int idax_lumina_has_connection(int feature, int* out);
 int idax_lumina_close_connection(int feature);
 int idax_lumina_close_all_connections(void);
-int idax_lumina_pull(const uint64_t* addresses, size_t count,
-                     int auto_apply, int feature,
+int idax_lumina_pull(const uint64_t* __counted_by(count) addresses __noescape,
+                     size_t count, int auto_apply, int feature,
                      IdaxLuminaBatchResult* out);
-int idax_lumina_push(const uint64_t* addresses, size_t count,
-                     int push_mode, int feature,
+int idax_lumina_push(const uint64_t* __counted_by(count) addresses __noescape,
+                     size_t count, int push_mode, int feature,
                      IdaxLuminaBatchResult* out);
 
 #ifdef __cplusplus
