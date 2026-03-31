@@ -1602,6 +1602,52 @@ int idax_ctree_visit_ex(void* handle,
                          int post_order,
                          int* out_visited);
 
+/* MicrocodeContext mutation operations */
+
+typedef enum {
+    IdaxMicrocodeInsertPolicyAppend  = 0,
+    IdaxMicrocodeInsertPolicyPrepend = 1,
+    IdaxMicrocodeInsertPolicyReplace = 2
+} IdaxMicrocodeInsertPolicy;
+
+typedef struct {
+    int     kind;
+    int     location_kind;
+    int64_t data;
+    int     byte_width;
+} IdaxMicrocodeValue;
+
+int idax_microcode_context_remove_last_emitted(void* mctx);
+int idax_microcode_context_remove_at_index(void* mctx, int index);
+int idax_microcode_context_emit_noop(void* mctx, int policy);
+int idax_microcode_context_emit_instruction(void* mctx,
+    const IdaxMicrocodeInstruction* instr, int policy);
+int idax_microcode_context_load_operand_register(void* mctx,
+    int operand_index, int* out_reg);
+int idax_microcode_context_load_effective_address_register(void* mctx,
+    int operand_index, int* out_reg);
+int idax_microcode_context_allocate_temporary_register(void* mctx,
+    int byte_width, int* out_reg);
+int idax_microcode_context_store_operand_register(void* mctx,
+    int operand_index, int source_reg, int byte_width, int mark_udt);
+int idax_microcode_context_emit_move_register(void* mctx,
+    int src, int dst, int byte_width, int mark_udt, int policy);
+int idax_microcode_context_emit_load_memory_register(void* mctx,
+    int sel, int off, int dst, int byte_width, int off_byte_width,
+    int mark_udt, int policy);
+int idax_microcode_context_emit_store_memory_register(void* mctx,
+    int src, int sel, int off, int byte_width, int off_byte_width,
+    int mark_udt, int policy);
+int idax_microcode_context_emit_helper_call(void* mctx, const char* name);
+int idax_microcode_context_emit_helper_call_with_args(void* mctx,
+    const char* name, const IdaxMicrocodeValue* args, size_t arg_count);
+int idax_microcode_context_emit_helper_call_to_register(void* mctx,
+    const char* name, const IdaxMicrocodeValue* args, size_t arg_count,
+    int dst_reg, int dst_byte_width, int dst_unsigned);
+int idax_microcode_context_emit_helper_call_to_operand(void* mctx,
+    const char* name, const IdaxMicrocodeValue* args, size_t arg_count,
+    int dst_operand_index, int dst_byte_width, int dst_unsigned);
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * Storage (ida::storage)
  * ═══════════════════════════════════════════════════════════════════════════ */
