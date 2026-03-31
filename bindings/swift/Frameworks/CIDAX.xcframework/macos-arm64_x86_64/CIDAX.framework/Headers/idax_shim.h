@@ -157,6 +157,14 @@ int idax_database_is_big_endian(int* out);
 int idax_database_abi_name(char** out);
 int idax_database_address_span(uint64_t* out);
 
+typedef struct {
+    int  quiet;               /* default 0 — suppress idalib progress output */
+    int  disable_user_plugins; /* default 0 — set 1 to skip user plugin loading */
+} IdaxRuntimeOptions;
+
+int idax_database_init_with_options(const IdaxRuntimeOptions* options);
+int idax_database_open_with_intent(const char* path, int intent, int mode);
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * Address (ida::address)
  * ═══════════════════════════════════════════════════════════════════════════ */
