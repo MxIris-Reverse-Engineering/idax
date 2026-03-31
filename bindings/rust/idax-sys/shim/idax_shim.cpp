@@ -6079,6 +6079,265 @@ int idax_decompiler_microcode_context_last_emitted_instruction(const void* mctx,
     return 0;
 }
 
+// ─── MicrocodeContext mutation helpers ──────────────────────────────────────
+
+static ida::decompiler::MicrocodeContext* as_mutable_microcode_context(void* raw) {
+    return static_cast<ida::decompiler::MicrocodeContext*>(raw);
+}
+
+// Convert a C IdaxMicrocodeInstruction back to the C++ MicrocodeInstruction.
+// Only the fields stored in IdaxMicrocodeOperand are round-tripped; helper_name
+// and nested_instruction are not needed for the mutation path.
+static ida::decompiler::MicrocodeOperand make_cpp_operand(const IdaxMicrocodeOperand& c) {
+    ida::decompiler::MicrocodeOperand operand;
+    operand.kind                  = static_cast<ida::decompiler::MicrocodeOperandKind>(c.kind);
+    operand.register_id           = c.register_id;
+    operand.local_variable_index  = c.local_variable_index;
+    operand.local_variable_offset = c.local_variable_offset;
+    operand.second_register_id    = c.second_register_id;
+    operand.global_address        = c.global_address;
+    operand.stack_offset          = c.stack_offset;
+    if (c.helper_name != nullptr)
+        operand.helper_name       = c.helper_name;
+    operand.block_index           = c.block_index;
+    operand.unsigned_immediate    = c.unsigned_immediate;
+    operand.signed_immediate      = c.signed_immediate;
+    operand.byte_width            = c.byte_width;
+    operand.mark_user_defined_type = c.mark_user_defined_type != 0;
+    return operand;
+}
+
+static ida::decompiler::MicrocodeInstruction make_cpp_instruction(
+    const IdaxMicrocodeInstruction& c)
+{
+    ida::decompiler::MicrocodeInstruction instruction;
+    instruction.opcode                    = static_cast<ida::decompiler::MicrocodeOpcode>(c.opcode);
+    instruction.left                      = make_cpp_operand(c.left);
+    instruction.right                     = make_cpp_operand(c.right);
+    instruction.destination               = make_cpp_operand(c.destination);
+    instruction.floating_point_instruction = c.floating_point_instruction != 0;
+    return instruction;
+}
+
+// Build a std::vector<MicrocodeValue> from the flat IdaxMicrocodeValue array.
+// The IdaxMicrocodeValue carries only kind/location_kind/data/byte_width so
+// that the shim stays dependency-free from the full MicrocodeValue complexity.
+// The `data` field is interpreted as an integer payload (register id, immediate,
+// local-variable index, etc.) according to `kind`.
+static std::vector<ida::decompiler::MicrocodeValue> make_cpp_microcode_values(
+    const IdaxMicrocodeValue* args, size_t arg_count)
+{
+    std::vector<ida::decompiler::MicrocodeValue> values;
+    values.reserve(arg_count);
+    for (size_t value_index = 0; value_index < arg_count; ++value_index) {
+        const IdaxMicrocodeValue& source = args[value_index];
+        ida::decompiler::MicrocodeValue value;
+        value.kind       = static_cast<ida::decompiler::MicrocodeValueKind>(source.kind);
+        value.byte_width = source.byte_width;
+
+        using Kind = ida::decompiler::MicrocodeValueKind;
+        switch (value.kind) {
+            case Kind::Register:
+                value.register_id = static_cast<int>(source.data);
+                break;
+            case Kind::LocalVariable:
+                value.local_variable_index = static_cast<int>(source.data);
+                break;
+            case Kind::GlobalAddress:
+                value.global_address = static_cast<ida::Address>(source.data);
+                break;
+            case Kind::StackVariable:
+                value.stack_offset = source.data;
+                break;
+            case Kind::UnsignedImmediate:
+                value.unsigned_immediate = static_cast<std::uint64_t>(source.data);
+                break;
+            case Kind::SignedImmediate:
+                value.signed_immediate = source.data;
+                break;
+            default:
+                // For complex kinds not supported by the simplified shim,
+                // store data in signed_immediate as a best-effort passthrough.
+                value.signed_immediate = source.data;
+                break;
+        }
+        values.push_back(std::move(value));
+    }
+    return values;
+}
+
+// ─── MicrocodeContext mutation implementations ────────────────────────────────
+
+int idax_microcode_context_remove_last_emitted(void* mctx) {
+    if (mctx == nullptr)
+        return fail(ida::Error::validation("microcode context is null"));
+    RETURN_STATUS(as_mutable_microcode_context(mctx)->remove_last_emitted_instruction());
+}
+
+int idax_microcode_context_remove_at_index(void* mctx, int index) {
+    if (mctx == nullptr)
+        return fail(ida::Error::validation("microcode context is null"));
+    RETURN_STATUS(as_mutable_microcode_context(mctx)->remove_instruction_at_index(index));
+}
+
+int idax_microcode_context_emit_noop(void* mctx, int policy) {
+    if (mctx == nullptr)
+        return fail(ida::Error::validation("microcode context is null"));
+    auto* context = as_mutable_microcode_context(mctx);
+    if (policy < 0) {
+        RETURN_STATUS(context->emit_noop());
+    }
+    RETURN_STATUS(context->emit_noop_with_policy(
+        static_cast<ida::decompiler::MicrocodeInsertPolicy>(policy)));
+}
+
+int idax_microcode_context_emit_instruction(void* mctx,
+    const IdaxMicrocodeInstruction* instr, int policy)
+{
+    if (mctx == nullptr || instr == nullptr)
+        return fail(ida::Error::validation("microcode context or instruction is null"));
+    auto cpp_instruction = make_cpp_instruction(*instr);
+    auto* context = as_mutable_microcode_context(mctx);
+    if (policy < 0) {
+        RETURN_STATUS(context->emit_instruction(cpp_instruction));
+    }
+    RETURN_STATUS(context->emit_instruction_with_policy(
+        cpp_instruction,
+        static_cast<ida::decompiler::MicrocodeInsertPolicy>(policy)));
+}
+
+int idax_microcode_context_load_operand_register(void* mctx,
+    int operand_index, int* out_reg)
+{
+    clear_error();
+    if (mctx == nullptr || out_reg == nullptr)
+        return fail(ida::Error::validation("microcode context or output is null"));
+    auto result = as_mutable_microcode_context(mctx)->load_operand_register(operand_index);
+    if (!result) return fail(result.error());
+    *out_reg = *result;
+    return 0;
+}
+
+int idax_microcode_context_load_effective_address_register(void* mctx,
+    int operand_index, int* out_reg)
+{
+    clear_error();
+    if (mctx == nullptr || out_reg == nullptr)
+        return fail(ida::Error::validation("microcode context or output is null"));
+    auto result = as_mutable_microcode_context(mctx)->load_effective_address_register(operand_index);
+    if (!result) return fail(result.error());
+    *out_reg = *result;
+    return 0;
+}
+
+int idax_microcode_context_allocate_temporary_register(void* mctx,
+    int byte_width, int* out_reg)
+{
+    clear_error();
+    if (mctx == nullptr || out_reg == nullptr)
+        return fail(ida::Error::validation("microcode context or output is null"));
+    auto result = as_mutable_microcode_context(mctx)->allocate_temporary_register(byte_width);
+    if (!result) return fail(result.error());
+    *out_reg = *result;
+    return 0;
+}
+
+int idax_microcode_context_store_operand_register(void* mctx,
+    int operand_index, int source_reg, int byte_width, int mark_udt)
+{
+    if (mctx == nullptr)
+        return fail(ida::Error::validation("microcode context is null"));
+    RETURN_STATUS(as_mutable_microcode_context(mctx)->store_operand_register(
+        operand_index, source_reg, byte_width, mark_udt != 0));
+}
+
+int idax_microcode_context_emit_move_register(void* mctx,
+    int src, int dst, int byte_width, int mark_udt, int policy)
+{
+    if (mctx == nullptr)
+        return fail(ida::Error::validation("microcode context is null"));
+    auto* context = as_mutable_microcode_context(mctx);
+    if (policy < 0) {
+        RETURN_STATUS(context->emit_move_register(src, dst, byte_width, mark_udt != 0));
+    }
+    RETURN_STATUS(context->emit_move_register_with_policy(
+        src, dst, byte_width,
+        static_cast<ida::decompiler::MicrocodeInsertPolicy>(policy),
+        mark_udt != 0));
+}
+
+int idax_microcode_context_emit_load_memory_register(void* mctx,
+    int sel, int off, int dst, int byte_width, int off_byte_width,
+    int mark_udt, int policy)
+{
+    if (mctx == nullptr)
+        return fail(ida::Error::validation("microcode context is null"));
+    auto* context = as_mutable_microcode_context(mctx);
+    if (policy < 0) {
+        RETURN_STATUS(context->emit_load_memory_register(
+            sel, off, dst, byte_width, off_byte_width, mark_udt != 0));
+    }
+    RETURN_STATUS(context->emit_load_memory_register_with_policy(
+        sel, off, dst, byte_width, off_byte_width,
+        static_cast<ida::decompiler::MicrocodeInsertPolicy>(policy),
+        mark_udt != 0));
+}
+
+int idax_microcode_context_emit_store_memory_register(void* mctx,
+    int src, int sel, int off, int byte_width, int off_byte_width,
+    int mark_udt, int policy)
+{
+    if (mctx == nullptr)
+        return fail(ida::Error::validation("microcode context is null"));
+    auto* context = as_mutable_microcode_context(mctx);
+    if (policy < 0) {
+        RETURN_STATUS(context->emit_store_memory_register(
+            src, sel, off, byte_width, off_byte_width, mark_udt != 0));
+    }
+    RETURN_STATUS(context->emit_store_memory_register_with_policy(
+        src, sel, off, byte_width, off_byte_width,
+        static_cast<ida::decompiler::MicrocodeInsertPolicy>(policy),
+        mark_udt != 0));
+}
+
+int idax_microcode_context_emit_helper_call(void* mctx, const char* name) {
+    if (mctx == nullptr || name == nullptr)
+        return fail(ida::Error::validation("microcode context or name is null"));
+    RETURN_STATUS(as_mutable_microcode_context(mctx)->emit_helper_call(name));
+}
+
+int idax_microcode_context_emit_helper_call_with_args(void* mctx,
+    const char* name, const IdaxMicrocodeValue* args, size_t arg_count)
+{
+    if (mctx == nullptr || name == nullptr)
+        return fail(ida::Error::validation("microcode context or name is null"));
+    auto cpp_args = make_cpp_microcode_values(args, arg_count);
+    RETURN_STATUS(as_mutable_microcode_context(mctx)->emit_helper_call_with_arguments(
+        name, cpp_args));
+}
+
+int idax_microcode_context_emit_helper_call_to_register(void* mctx,
+    const char* name, const IdaxMicrocodeValue* args, size_t arg_count,
+    int dst_reg, int dst_byte_width, int dst_unsigned)
+{
+    if (mctx == nullptr || name == nullptr)
+        return fail(ida::Error::validation("microcode context or name is null"));
+    auto cpp_args = make_cpp_microcode_values(args, arg_count);
+    RETURN_STATUS(as_mutable_microcode_context(mctx)->emit_helper_call_with_arguments_to_register(
+        name, cpp_args, dst_reg, dst_byte_width, dst_unsigned != 0));
+}
+
+int idax_microcode_context_emit_helper_call_to_operand(void* mctx,
+    const char* name, const IdaxMicrocodeValue* args, size_t arg_count,
+    int dst_operand_index, int dst_byte_width, int dst_unsigned)
+{
+    if (mctx == nullptr || name == nullptr)
+        return fail(ida::Error::validation("microcode context or name is null"));
+    auto cpp_args = make_cpp_microcode_values(args, arg_count);
+    RETURN_STATUS(as_mutable_microcode_context(mctx)->emit_helper_call_with_arguments_to_operand(
+        name, cpp_args, dst_operand_index, dst_byte_width, dst_unsigned != 0));
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Storage
 // ═══════════════════════════════════════════════════════════════════════════
