@@ -778,6 +778,22 @@ int idax_path_is_directory(const char* path, int* out) {
     }
     *out = ida::path::is_directory(path == nullptr ? "" : path) ? 1 : 0;
     return 0;
+
+int idax_database_init_with_options(const IdaxRuntimeOptions* options) {
+    clear_error();
+    ida::database::RuntimeOptions opts;
+    if (options) {
+        opts.quiet = (options->quiet != 0);
+        opts.plugin_policy.disable_user_plugins = (options->disable_user_plugins != 0);
+    }
+    RETURN_STATUS(ida::database::init(opts));
+}
+
+int idax_database_open_with_intent(const char* path, int intent, int mode) {
+    clear_error();
+    auto load_intent = static_cast<ida::database::LoadIntent>(intent);
+    auto open_mode   = static_cast<ida::database::OpenMode>(mode);
+    RETURN_STATUS(ida::database::open(path, load_intent, open_mode));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
