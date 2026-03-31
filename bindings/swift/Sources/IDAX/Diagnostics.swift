@@ -34,4 +34,24 @@ public enum Diagnostics {
         try checkStatus(idax_diagnostics_performance_counters(&raw), "diagnostics.performanceCounters")
         return PerformanceCounters(logMessages: raw.log_messages, invariantFailures: raw.invariant_failures)
     }
+
+    /// Append context to an error's message.
+    public static func enrich(_ error: IDAError, context: String) -> IDAError {
+        let enrichedMessage: String
+        if error.message.isEmpty {
+            enrichedMessage = context
+        } else {
+            enrichedMessage = error.message + "; " + context
+        }
+        return IDAError(category: error.category, code: error.code,
+                        message: enrichedMessage)
+    }
+
+    /// Assert an invariant, throwing if the condition is false.
+    public static func assertInvariant(_ condition: Bool, _ message: String) throws(IDAError) {
+        guard condition else {
+            throw IDAError(category: .internal, code: 0,
+                           message: "invariant violation: \(message)")
+        }
+    }
 }
