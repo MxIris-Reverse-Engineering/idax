@@ -1,5 +1,66 @@
 internal import CIDAX
 
+// MARK: - Database Option Types
+
+/// How to open a database file.
+public enum OpenMode: Int32, Sendable {
+    case analyze     = 0
+    case skipAnalysis = 1
+}
+
+/// What kind of file to load.
+public enum LoadIntent: Int32, Sendable {
+    case autoDetect = 0
+    case binary     = 1
+    case nonBinary  = 2
+}
+
+/// Options for initializing the IDA runtime.
+public struct RuntimeOptions: Sendable {
+    /// Suppress idalib progress output (default: false).
+    public var quiet: Bool
+    /// Prevent loading of user plugins from IDAUSR (default: false).
+    public var disableUserPlugins: Bool
+
+    public init(quiet: Bool = false,
+                disableUserPlugins: Bool = false) {
+        self.quiet = quiet
+        self.disableUserPlugins = disableUserPlugins
+    }
+}
+
+// MARK: - Core Option Types
+
+/// Common operation policy flags.
+public struct OperationOptions: Sendable {
+    public var strictValidation: Bool
+    public var allowPartialResults: Bool
+    public var cancelOnUserBreak: Bool
+    public var quiet: Bool
+
+    public init(strictValidation: Bool = true,
+                allowPartialResults: Bool = false,
+                cancelOnUserBreak: Bool = true,
+                quiet: Bool = true) {
+        self.strictValidation = strictValidation
+        self.allowPartialResults = allowPartialResults
+        self.cancelOnUserBreak = cancelOnUserBreak
+        self.quiet = quiet
+    }
+}
+
+/// Generic wait/poll policy.
+public struct WaitOptions: Sendable {
+    public var timeoutMilliseconds: UInt32
+    public var pollIntervalMilliseconds: UInt32
+
+    public init(timeoutMilliseconds: UInt32 = 0,
+                pollIntervalMilliseconds: UInt32 = 10) {
+        self.timeoutMilliseconds = timeoutMilliseconds
+        self.pollIntervalMilliseconds = pollIntervalMilliseconds
+    }
+}
+
 /// Compiler metadata returned by `Database.compilerInfo()`.
 public struct CompilerInfo: Sendable {
     public let id: UInt32
@@ -127,11 +188,29 @@ public enum Database {
         idax_sync_ida_globals()
     }
 
+    /// Initialize the IDA runtime with custom options.
+    public static func initialize(options: RuntimeOptions) throws(IDAError) {
+        var raw = IdaxRuntimeOptions()
+        raw.quiet = options.quiet ? 1 : 0
+        raw.disable_user_plugins = options.disableUserPlugins ? 1 : 0
+        try checkStatus(idax_database_init_with_options(&raw), "database.initWithOptions")
+        idax_sync_ida_globals()
+    }
+
     public static func open(_ path: String, autoAnalysis: Bool = true) throws(IDAError) {
         try checkStatus(
             path.withCString { idax_database_open($0, autoAnalysis ? 1 : 0) },
             "database.open"
         )
+    }
+
+    /// Open a database with explicit intent and mode.
+    public static func open(_ path: String, intent: LoadIntent = .autoDetect,
+                            mode: OpenMode = .analyze) throws(IDAError) {
+        let result = path.withCString { pathPointer in
+            idax_database_open_with_intent(pathPointer, intent.rawValue, mode.rawValue)
+        }
+        try checkStatus(result, "database.openWithIntent")
     }
 
     public static func save() throws(IDAError) {

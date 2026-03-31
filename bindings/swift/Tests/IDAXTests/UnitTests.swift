@@ -526,6 +526,62 @@ struct DecompilerViewTests {
     }
 }
 
+// MARK: - OpenMode
+
+@Suite("IDA OpenMode")
+struct OpenModeTests {
+    @Test func rawValues() {
+        #expect(OpenMode.analyze.rawValue == 0)
+        #expect(OpenMode.skipAnalysis.rawValue == 1)
+    }
+}
+
+// MARK: - LoadIntent
+
+@Suite("IDA LoadIntent")
+struct LoadIntentTests {
+    @Test func rawValues() {
+        #expect(LoadIntent.autoDetect.rawValue == 0)
+        #expect(LoadIntent.binary.rawValue == 1)
+        #expect(LoadIntent.nonBinary.rawValue == 2)
+    }
+}
+
+// MARK: - RuntimeOptions
+
+@Suite("IDA RuntimeOptions")
+struct RuntimeOptionsTests {
+    @Test func defaults() {
+        let options = RuntimeOptions()
+        #expect(!options.quiet)
+        #expect(!options.disableUserPlugins)
+    }
+}
+
+// MARK: - OperationOptions
+
+@Suite("IDA OperationOptions")
+struct OperationOptionsTests {
+    @Test func defaults() {
+        let options = OperationOptions()
+        #expect(options.strictValidation)
+        #expect(!options.allowPartialResults)
+        #expect(options.cancelOnUserBreak)
+        #expect(options.quiet)
+    }
+}
+
+// MARK: - WaitOptions
+
+@Suite("IDA WaitOptions")
+struct WaitOptionsTests {
+    @Test func defaults() {
+        let options = WaitOptions()
+        #expect(options.timeoutMilliseconds == 0)
+        #expect(options.pollIntervalMilliseconds == 10)
+    }
+}
+
 // MARK: - Runtime Availability
 
 @Suite("IDA Runtime")
