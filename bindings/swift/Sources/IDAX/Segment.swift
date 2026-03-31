@@ -67,6 +67,24 @@ public struct Segment: Sendable {
         return result
     }
 
+    /// First segment in database order.
+    public static var first: Segment {
+        get throws(IDAError) {
+            try byIndex(0)
+        }
+    }
+
+    /// Last segment in database order.
+    public static var last: Segment {
+        get throws(IDAError) {
+            let totalCount = try count()
+            guard totalCount > 0 else {
+                throw IDAError(category: .notFound, code: 0, message: "no segments in database")
+            }
+            return try byIndex(totalCount - 1)
+        }
+    }
+
     // MARK: - Mutation
 
     public static func create(
