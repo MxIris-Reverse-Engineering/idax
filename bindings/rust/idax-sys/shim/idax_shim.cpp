@@ -8160,3 +8160,618 @@ int idax_lumina_push(const uint64_t* addresses, size_t count,
     out->failed    = r->failed;
     return 0;
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Processor
+// ═══════════════════════════════════════════════════════════════════════════
+
+namespace {
+
+// ── Helpers for populating / freeing C structs ─────────────────────────
+
+void fill_processor_info(IdaxProcessorInfo* out,
+                         const ida::processor::ProcessorInfo& info) {
+    std::memset(out, 0, sizeof(*out));
+    out->id = info.id;
+
+    // Short names
+    out->short_name_count = info.short_names.size();
+    if (!info.short_names.empty()) {
+        out->short_names = static_cast<char**>(
+            std::malloc(info.short_names.size() * sizeof(char*)));
+        for (size_t i = 0; i < info.short_names.size(); ++i)
+            out->short_names[i] = dup_string(info.short_names[i]);
+    }
+
+    // Long names
+    out->long_name_count = info.long_names.size();
+    if (!info.long_names.empty()) {
+        out->long_names = static_cast<char**>(
+            std::malloc(info.long_names.size() * sizeof(char*)));
+        for (size_t i = 0; i < info.long_names.size(); ++i)
+            out->long_names[i] = dup_string(info.long_names[i]);
+    }
+
+    out->flags  = info.flags;
+    out->flags2 = info.flags2;
+    out->code_bits_per_byte = info.code_bits_per_byte;
+    out->data_bits_per_byte = info.data_bits_per_byte;
+
+    // Registers
+    out->register_count = info.registers.size();
+    if (!info.registers.empty()) {
+        out->registers = static_cast<IdaxRegisterInfo*>(
+            std::malloc(info.registers.size() * sizeof(IdaxRegisterInfo)));
+        for (size_t i = 0; i < info.registers.size(); ++i) {
+            out->registers[i].name = dup_string(info.registers[i].name);
+            out->registers[i].read_only = info.registers[i].read_only ? 1 : 0;
+        }
+    }
+    out->code_segment_register  = info.code_segment_register;
+    out->data_segment_register  = info.data_segment_register;
+    out->first_segment_register = info.first_segment_register;
+    out->last_segment_register  = info.last_segment_register;
+    out->segment_register_size  = info.segment_register_size;
+
+    // Instructions
+    out->instruction_count = info.instructions.size();
+    if (!info.instructions.empty()) {
+        out->instructions = static_cast<IdaxInstructionDescriptor*>(
+            std::malloc(info.instructions.size() * sizeof(IdaxInstructionDescriptor)));
+        for (size_t i = 0; i < info.instructions.size(); ++i) {
+            out->instructions[i].mnemonic = dup_string(info.instructions[i].mnemonic);
+            out->instructions[i].feature_flags = info.instructions[i].feature_flags;
+            out->instructions[i].operand_count = info.instructions[i].operand_count;
+            out->instructions[i].description = dup_string(info.instructions[i].description);
+            out->instructions[i].privileged = info.instructions[i].privileged ? 1 : 0;
+        }
+    }
+    out->return_icode = info.return_icode;
+
+    // Assemblers
+    out->assembler_count = info.assemblers.size();
+    if (!info.assemblers.empty()) {
+        out->assemblers = static_cast<IdaxAssemblerInfo*>(
+            std::malloc(info.assemblers.size() * sizeof(IdaxAssemblerInfo)));
+        for (size_t i = 0; i < info.assemblers.size(); ++i) {
+            auto& src = info.assemblers[i];
+            auto& dst = out->assemblers[i];
+            dst.name              = dup_string(src.name);
+            dst.comment_prefix    = dup_string(src.comment_prefix);
+            dst.origin            = dup_string(src.origin);
+            dst.end_directive     = dup_string(src.end_directive);
+            dst.string_delim      = src.string_delim;
+            dst.char_delim        = src.char_delim;
+            dst.byte_directive    = dup_string(src.byte_directive);
+            dst.word_directive    = dup_string(src.word_directive);
+            dst.dword_directive   = dup_string(src.dword_directive);
+            dst.qword_directive   = dup_string(src.qword_directive);
+            dst.oword_directive   = dup_string(src.oword_directive);
+            dst.float_directive   = dup_string(src.float_directive);
+            dst.double_directive  = dup_string(src.double_directive);
+            dst.tbyte_directive   = dup_string(src.tbyte_directive);
+            dst.align_directive   = dup_string(src.align_directive);
+            dst.include_directive = dup_string(src.include_directive);
+            dst.public_directive  = dup_string(src.public_directive);
+            dst.weak_directive    = dup_string(src.weak_directive);
+            dst.external_directive = dup_string(src.external_directive);
+            dst.current_ip_symbol  = dup_string(src.current_ip_symbol);
+            dst.uppercase_mnemonics          = src.uppercase_mnemonics ? 1 : 0;
+            dst.uppercase_registers          = src.uppercase_registers ? 1 : 0;
+            dst.requires_colon_after_labels  = src.requires_colon_after_labels ? 1 : 0;
+            dst.supports_quoted_names        = src.supports_quoted_names ? 1 : 0;
+        }
+    }
+
+    out->default_bitness = info.default_bitness;
+}
+
+void fill_switch_description(IdaxSwitchDescription* out,
+                             const ida::processor::SwitchDescription& desc) {
+    std::memset(out, 0, sizeof(*out));
+    out->kind                    = static_cast<int>(desc.kind);
+    out->jump_table              = desc.jump_table;
+    out->values_table            = desc.values_table;
+    out->default_target          = desc.default_target;
+    out->idiom_start             = desc.idiom_start;
+    out->element_base            = desc.element_base;
+    out->low_case_value          = desc.low_case_value;
+    out->indirect_low_case_value = desc.indirect_low_case_value;
+    out->case_count              = desc.case_count;
+    out->jump_table_entry_count  = desc.jump_table_entry_count;
+    out->jump_element_size       = desc.jump_element_size;
+    out->value_element_size      = desc.value_element_size;
+    out->shift                   = desc.shift;
+    out->expression_register     = desc.expression_register;
+    out->expression_data_type    = desc.expression_data_type;
+    out->has_default             = desc.has_default ? 1 : 0;
+    out->default_in_table        = desc.default_in_table ? 1 : 0;
+    out->values_signed           = desc.values_signed ? 1 : 0;
+    out->subtract_values         = desc.subtract_values ? 1 : 0;
+    out->self_relative           = desc.self_relative ? 1 : 0;
+    out->inverted                = desc.inverted ? 1 : 0;
+    out->user_defined            = desc.user_defined ? 1 : 0;
+}
+
+ida::processor::SwitchDescription to_cpp_switch_description(
+        const IdaxSwitchDescription* desc) {
+    ida::processor::SwitchDescription result;
+    result.kind                    = static_cast<ida::processor::SwitchTableKind>(desc->kind);
+    result.jump_table              = desc->jump_table;
+    result.values_table            = desc->values_table;
+    result.default_target          = desc->default_target;
+    result.idiom_start             = desc->idiom_start;
+    result.element_base            = desc->element_base;
+    result.low_case_value          = desc->low_case_value;
+    result.indirect_low_case_value = desc->indirect_low_case_value;
+    result.case_count              = desc->case_count;
+    result.jump_table_entry_count  = desc->jump_table_entry_count;
+    result.jump_element_size       = desc->jump_element_size;
+    result.value_element_size      = desc->value_element_size;
+    result.shift                   = desc->shift;
+    result.expression_register     = desc->expression_register;
+    result.expression_data_type    = desc->expression_data_type;
+    result.has_default             = desc->has_default != 0;
+    result.default_in_table        = desc->default_in_table != 0;
+    result.values_signed           = desc->values_signed != 0;
+    result.subtract_values         = desc->subtract_values != 0;
+    result.self_relative           = desc->self_relative != 0;
+    result.inverted                = desc->inverted != 0;
+    result.user_defined            = desc->user_defined != 0;
+    return result;
+}
+
+// ── ProcessorBridge: subclasses Processor, delegates to C callbacks ────
+
+struct ProcessorBridge final : ida::processor::Processor {
+    IdaxProcessorCallbacks callbacks;
+
+    explicit ProcessorBridge(const IdaxProcessorCallbacks& cbs) : callbacks(cbs) {}
+
+    // ── Required overrides ─────────────────────────────────────────────
+
+    ida::processor::ProcessorInfo info() const override {
+        IdaxProcessorInfo raw{};
+        callbacks.info(callbacks.context, &raw);
+
+        ida::processor::ProcessorInfo result;
+        result.id    = raw.id;
+        result.flags = raw.flags;
+        result.flags2 = raw.flags2;
+        result.code_bits_per_byte = raw.code_bits_per_byte;
+        result.data_bits_per_byte = raw.data_bits_per_byte;
+        result.code_segment_register  = raw.code_segment_register;
+        result.data_segment_register  = raw.data_segment_register;
+        result.first_segment_register = raw.first_segment_register;
+        result.last_segment_register  = raw.last_segment_register;
+        result.segment_register_size  = raw.segment_register_size;
+        result.return_icode = raw.return_icode;
+        result.default_bitness = raw.default_bitness;
+
+        for (size_t i = 0; i < raw.short_name_count; ++i) {
+            if (raw.short_names[i])
+                result.short_names.emplace_back(raw.short_names[i]);
+        }
+        for (size_t i = 0; i < raw.long_name_count; ++i) {
+            if (raw.long_names[i])
+                result.long_names.emplace_back(raw.long_names[i]);
+        }
+        for (size_t i = 0; i < raw.register_count; ++i) {
+            result.registers.push_back({
+                raw.registers[i].name ? std::string(raw.registers[i].name) : std::string(),
+                raw.registers[i].read_only != 0
+            });
+        }
+        for (size_t i = 0; i < raw.instruction_count; ++i) {
+            auto& src = raw.instructions[i];
+            ida::processor::InstructionDescriptor desc;
+            desc.mnemonic      = src.mnemonic ? std::string(src.mnemonic) : std::string();
+            desc.feature_flags = src.feature_flags;
+            desc.operand_count = src.operand_count;
+            desc.description   = src.description ? std::string(src.description) : std::string();
+            desc.privileged    = src.privileged != 0;
+            result.instructions.push_back(std::move(desc));
+        }
+        for (size_t i = 0; i < raw.assembler_count; ++i) {
+            auto& src = raw.assemblers[i];
+            ida::processor::AssemblerInfo asm_info;
+            asm_info.name              = src.name ? std::string(src.name) : std::string();
+            asm_info.comment_prefix    = src.comment_prefix ? std::string(src.comment_prefix) : std::string();
+            asm_info.origin            = src.origin ? std::string(src.origin) : std::string();
+            asm_info.end_directive     = src.end_directive ? std::string(src.end_directive) : std::string();
+            asm_info.string_delim      = src.string_delim;
+            asm_info.char_delim        = src.char_delim;
+            asm_info.byte_directive    = src.byte_directive ? std::string(src.byte_directive) : std::string();
+            asm_info.word_directive    = src.word_directive ? std::string(src.word_directive) : std::string();
+            asm_info.dword_directive   = src.dword_directive ? std::string(src.dword_directive) : std::string();
+            asm_info.qword_directive   = src.qword_directive ? std::string(src.qword_directive) : std::string();
+            asm_info.oword_directive   = src.oword_directive ? std::string(src.oword_directive) : std::string();
+            asm_info.float_directive   = src.float_directive ? std::string(src.float_directive) : std::string();
+            asm_info.double_directive  = src.double_directive ? std::string(src.double_directive) : std::string();
+            asm_info.tbyte_directive   = src.tbyte_directive ? std::string(src.tbyte_directive) : std::string();
+            asm_info.align_directive   = src.align_directive ? std::string(src.align_directive) : std::string();
+            asm_info.include_directive = src.include_directive ? std::string(src.include_directive) : std::string();
+            asm_info.public_directive  = src.public_directive ? std::string(src.public_directive) : std::string();
+            asm_info.weak_directive    = src.weak_directive ? std::string(src.weak_directive) : std::string();
+            asm_info.external_directive = src.external_directive ? std::string(src.external_directive) : std::string();
+            asm_info.current_ip_symbol  = src.current_ip_symbol ? std::string(src.current_ip_symbol) : std::string();
+            asm_info.uppercase_mnemonics         = src.uppercase_mnemonics != 0;
+            asm_info.uppercase_registers         = src.uppercase_registers != 0;
+            asm_info.requires_colon_after_labels = src.requires_colon_after_labels != 0;
+            asm_info.supports_quoted_names       = src.supports_quoted_names != 0;
+            result.assemblers.push_back(std::move(asm_info));
+        }
+
+        idax_processor_info_free(&raw);
+        return result;
+    }
+
+    ida::Result<int> analyze(ida::Address address) override {
+        int size = 0;
+        int ret = callbacks.analyze(callbacks.context, address, &size);
+        if (ret != 0) {
+            return std::unexpected(ida::Error::sdk_failure("analyze callback failed"));
+        }
+        return size;
+    }
+
+    ida::processor::EmulateResult emulate(ida::Address address) override {
+        int ret = callbacks.emulate(callbacks.context, address);
+        return static_cast<ida::processor::EmulateResult>(ret);
+    }
+
+    void output_instruction(ida::Address address) override {
+        callbacks.output_instruction(callbacks.context, address);
+    }
+
+    ida::processor::OutputOperandResult output_operand(ida::Address address,
+                                                       int operand_index) override {
+        int ret = callbacks.output_operand(callbacks.context, address, operand_index);
+        return static_cast<ida::processor::OutputOperandResult>(ret);
+    }
+
+    // ── Optional overrides ─────────────────────────────────────────────
+
+    void on_new_file(std::string_view filename) override {
+        if (callbacks.on_new_file)
+            callbacks.on_new_file(callbacks.context, std::string(filename).c_str());
+    }
+
+    void on_old_file(std::string_view filename) override {
+        if (callbacks.on_old_file)
+            callbacks.on_old_file(callbacks.context, std::string(filename).c_str());
+    }
+
+    int is_call(ida::Address address) override {
+        if (!callbacks.is_call) return 0;
+        return callbacks.is_call(callbacks.context, address);
+    }
+
+    int is_return(ida::Address address) override {
+        if (!callbacks.is_return) return 0;
+        return callbacks.is_return(callbacks.context, address);
+    }
+
+    int may_be_function(ida::Address address) override {
+        if (!callbacks.may_be_function) return 0;
+        return callbacks.may_be_function(callbacks.context, address);
+    }
+
+    int is_sane_instruction(ida::Address address, bool no_code_references) override {
+        if (!callbacks.is_sane_instruction) return 0;
+        return callbacks.is_sane_instruction(callbacks.context, address,
+                                             no_code_references ? 1 : 0);
+    }
+
+    int is_indirect_jump(ida::Address address) override {
+        if (!callbacks.is_indirect_jump) return 0;
+        return callbacks.is_indirect_jump(callbacks.context, address);
+    }
+
+    int is_basic_block_end(ida::Address address,
+                           bool call_instruction_stops_block) override {
+        if (!callbacks.is_basic_block_end) return 0;
+        return callbacks.is_basic_block_end(callbacks.context, address,
+                                            call_instruction_stops_block ? 1 : 0);
+    }
+
+    bool create_function_frame(ida::Address function_start) override {
+        if (!callbacks.create_function_frame) return false;
+        return callbacks.create_function_frame(callbacks.context, function_start) != 0;
+    }
+
+    int adjust_function_bounds(ida::Address function_start,
+                               ida::Address max_function_end,
+                               int suggested_result) override {
+        if (!callbacks.adjust_function_bounds) return suggested_result;
+        return callbacks.adjust_function_bounds(callbacks.context, function_start,
+                                                max_function_end, suggested_result);
+    }
+
+    int analyze_function_prolog(ida::Address function_start) override {
+        if (!callbacks.analyze_function_prolog) return 0;
+        return callbacks.analyze_function_prolog(callbacks.context, function_start);
+    }
+
+    int calculate_stack_pointer_delta(ida::Address address,
+                                      std::int64_t& out_delta) override {
+        if (!callbacks.calculate_stack_pointer_delta) {
+            out_delta = 0;
+            return 0;
+        }
+        return callbacks.calculate_stack_pointer_delta(callbacks.context, address,
+                                                       &out_delta);
+    }
+
+    int get_return_address_size(ida::Address function_start) override {
+        if (!callbacks.get_return_address_size) return 0;
+        return callbacks.get_return_address_size(callbacks.context, function_start);
+    }
+
+    int detect_switch(ida::Address address,
+                      ida::processor::SwitchDescription& out_switch) override {
+        if (!callbacks.detect_switch) return 0;
+        IdaxSwitchDescription raw{};
+        int ret = callbacks.detect_switch(callbacks.context, address, &raw);
+        if (ret > 0) {
+            out_switch = to_cpp_switch_description(&raw);
+        }
+        return ret;
+    }
+
+    int calculate_switch_cases(ida::Address address,
+                               const ida::processor::SwitchDescription& switch_description,
+                               std::vector<ida::processor::SwitchCase>& out_cases) override {
+        if (!callbacks.calculate_switch_cases) return 0;
+        IdaxSwitchDescription raw_switch{};
+        fill_switch_description(&raw_switch, switch_description);
+
+        IdaxSwitchCase* raw_cases = nullptr;
+        size_t raw_case_count = 0;
+        int ret = callbacks.calculate_switch_cases(callbacks.context, address,
+                                                   &raw_switch, &raw_cases,
+                                                   &raw_case_count);
+        if (ret > 0 && raw_cases != nullptr) {
+            for (size_t i = 0; i < raw_case_count; ++i) {
+                ida::processor::SwitchCase sc;
+                sc.target = raw_cases[i].target;
+                if (raw_cases[i].values && raw_cases[i].value_count > 0) {
+                    sc.values.assign(raw_cases[i].values,
+                                     raw_cases[i].values + raw_cases[i].value_count);
+                }
+                out_cases.push_back(std::move(sc));
+            }
+            idax_switch_cases_free(raw_cases, raw_case_count);
+        }
+        return ret;
+    }
+
+    int create_switch_references(ida::Address address,
+                                 const ida::processor::SwitchDescription& switch_description) override {
+        if (!callbacks.create_switch_references) return 0;
+        IdaxSwitchDescription raw{};
+        fill_switch_description(&raw, switch_description);
+        return callbacks.create_switch_references(callbacks.context, address, &raw);
+    }
+
+    ida::processor::OutputInstructionResult output_mnemonic_with_context(
+            ida::Address address,
+            ida::processor::OutputContext& output) override {
+        if (!callbacks.output_mnemonic_with_context)
+            return ida::processor::OutputInstructionResult::NotImplemented;
+        int ret = callbacks.output_mnemonic_with_context(callbacks.context, address, &output);
+        return static_cast<ida::processor::OutputInstructionResult>(ret);
+    }
+
+    ida::processor::OutputInstructionResult output_instruction_with_context(
+            ida::Address address,
+            ida::processor::OutputContext& output) override {
+        if (!callbacks.output_instruction_with_context) {
+            return Processor::output_instruction_with_context(address, output);
+        }
+        int ret = callbacks.output_instruction_with_context(callbacks.context, address, &output);
+        return static_cast<ida::processor::OutputInstructionResult>(ret);
+    }
+
+    ida::processor::OutputOperandResult output_operand_with_context(
+            ida::Address address,
+            int operand_index,
+            ida::processor::OutputContext& output) override {
+        if (!callbacks.output_operand_with_context) {
+            return output_operand(address, operand_index);
+        }
+        int ret = callbacks.output_operand_with_context(callbacks.context, address,
+                                                        operand_index, &output);
+        return static_cast<ida::processor::OutputOperandResult>(ret);
+    }
+};
+
+} // anonymous namespace
+
+// ── Free helpers ───────────────────────────────────────────────────────
+
+void idax_processor_info_free(IdaxProcessorInfo* info) {
+    if (!info) return;
+
+    for (size_t i = 0; i < info->short_name_count; ++i)
+        std::free(info->short_names[i]);
+    std::free(info->short_names);
+
+    for (size_t i = 0; i < info->long_name_count; ++i)
+        std::free(info->long_names[i]);
+    std::free(info->long_names);
+
+    for (size_t i = 0; i < info->register_count; ++i)
+        std::free(info->registers[i].name);
+    std::free(info->registers);
+
+    for (size_t i = 0; i < info->instruction_count; ++i) {
+        std::free(info->instructions[i].mnemonic);
+        std::free(info->instructions[i].description);
+    }
+    std::free(info->instructions);
+
+    for (size_t i = 0; i < info->assembler_count; ++i) {
+        auto& a = info->assemblers[i];
+        std::free(a.name);
+        std::free(a.comment_prefix);
+        std::free(a.origin);
+        std::free(a.end_directive);
+        std::free(a.byte_directive);
+        std::free(a.word_directive);
+        std::free(a.dword_directive);
+        std::free(a.qword_directive);
+        std::free(a.oword_directive);
+        std::free(a.float_directive);
+        std::free(a.double_directive);
+        std::free(a.tbyte_directive);
+        std::free(a.align_directive);
+        std::free(a.include_directive);
+        std::free(a.public_directive);
+        std::free(a.weak_directive);
+        std::free(a.external_directive);
+        std::free(a.current_ip_symbol);
+    }
+    std::free(info->assemblers);
+
+    std::memset(info, 0, sizeof(*info));
+}
+
+void idax_switch_description_free(IdaxSwitchDescription* desc) {
+    if (desc)
+        std::memset(desc, 0, sizeof(*desc));
+}
+
+void idax_switch_cases_free(IdaxSwitchCase* cases, size_t count) {
+    if (!cases) return;
+    for (size_t i = 0; i < count; ++i)
+        std::free(cases[i].values);
+    std::free(cases);
+}
+
+// ── Registration ───────────────────────────────────────────────────────
+
+int idax_processor_register(const IdaxProcessorCallbacks* callbacks,
+                            IdaxProcessorHandle* out_handle) {
+    clear_error();
+    if (!callbacks || !out_handle)
+        return fail(ida::Error::validation("callbacks/out_handle is null"));
+    if (!callbacks->info || !callbacks->analyze || !callbacks->emulate
+        || !callbacks->output_instruction || !callbacks->output_operand)
+        return fail(ida::Error::validation("required processor callbacks must not be null"));
+
+    auto* bridge = new ProcessorBridge(*callbacks);
+    *out_handle = bridge;
+    return 0;
+}
+
+void idax_processor_unregister(IdaxProcessorHandle handle) {
+    if (handle)
+        delete static_cast<ProcessorBridge*>(handle);
+}
+
+// ── OutputContext functions ─────────────────────────────────────────────
+
+void idax_output_context_mnemonic(void* ctx, const char* text) {
+    if (ctx && text)
+        static_cast<ida::processor::OutputContext*>(ctx)->mnemonic(text);
+}
+
+void idax_output_context_register_name(void* ctx, const char* text) {
+    if (ctx && text)
+        static_cast<ida::processor::OutputContext*>(ctx)->register_name(text);
+}
+
+void idax_output_context_symbol(void* ctx, const char* text) {
+    if (ctx && text)
+        static_cast<ida::processor::OutputContext*>(ctx)->symbol(text);
+}
+
+void idax_output_context_keyword(void* ctx, const char* text) {
+    if (ctx && text)
+        static_cast<ida::processor::OutputContext*>(ctx)->keyword(text);
+}
+
+void idax_output_context_comment(void* ctx, const char* text) {
+    if (ctx && text)
+        static_cast<ida::processor::OutputContext*>(ctx)->comment(text);
+}
+
+void idax_output_context_number(void* ctx, const char* text) {
+    if (ctx && text)
+        static_cast<ida::processor::OutputContext*>(ctx)->number(text);
+}
+
+void idax_output_context_operator_symbol(void* ctx, const char* text) {
+    if (ctx && text)
+        static_cast<ida::processor::OutputContext*>(ctx)->operator_symbol(text);
+}
+
+void idax_output_context_punctuation(void* ctx, const char* text) {
+    if (ctx && text)
+        static_cast<ida::processor::OutputContext*>(ctx)->punctuation(text);
+}
+
+void idax_output_context_whitespace(void* ctx, const char* text) {
+    if (ctx)
+        static_cast<ida::processor::OutputContext*>(ctx)->whitespace(
+            text ? text : " ");
+}
+
+void idax_output_context_string_literal(void* ctx, const char* text, char quote) {
+    if (ctx && text)
+        static_cast<ida::processor::OutputContext*>(ctx)->string_literal(text, quote);
+}
+
+void idax_output_context_immediate(void* ctx, int64_t value, int radix) {
+    if (ctx)
+        static_cast<ida::processor::OutputContext*>(ctx)->immediate(value, radix);
+}
+
+void idax_output_context_address(void* ctx, uint64_t address) {
+    if (ctx)
+        static_cast<ida::processor::OutputContext*>(ctx)->address(address);
+}
+
+void idax_output_context_character(void* ctx, char ch) {
+    if (ctx)
+        static_cast<ida::processor::OutputContext*>(ctx)->character(ch);
+}
+
+void idax_output_context_space(void* ctx) {
+    if (ctx)
+        static_cast<ida::processor::OutputContext*>(ctx)->space();
+}
+
+void idax_output_context_comma(void* ctx) {
+    if (ctx)
+        static_cast<ida::processor::OutputContext*>(ctx)->comma();
+}
+
+void idax_output_context_clear(void* ctx) {
+    if (ctx)
+        static_cast<ida::processor::OutputContext*>(ctx)->clear();
+}
+
+int idax_output_context_is_empty(void* ctx) {
+    if (!ctx) return 1;
+    return static_cast<ida::processor::OutputContext*>(ctx)->empty() ? 1 : 0;
+}
+
+int idax_output_context_text(void* ctx, char** out) {
+    if (!ctx || !out) return -1;
+    auto& text = static_cast<ida::processor::OutputContext*>(ctx)->text();
+    *out = dup_string(text);
+    return 0;
+}
+
+void idax_output_context_append(void* ctx, const char* text) {
+    if (ctx && text)
+        static_cast<ida::processor::OutputContext*>(ctx)->append(text);
+}
+
+void idax_output_context_token(void* ctx, int kind, const char* text) {
+    if (ctx && text)
+        static_cast<ida::processor::OutputContext*>(ctx)->token(
+            static_cast<ida::processor::OutputTokenKind>(kind), text);
+}
