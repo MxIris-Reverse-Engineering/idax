@@ -27,6 +27,38 @@ public struct CrossReference: Sendable {
     public let isUserDefined: Bool
 }
 
+extension CrossReference {
+    /// True if this is a call reference (near or far).
+    public var isCall: Bool {
+        isCode && (type == .callNear || type == .callFar)
+    }
+
+    /// True if this is a jump reference (near or far).
+    public var isJump: Bool {
+        isCode && (type == .jumpNear || type == .jumpFar)
+    }
+
+    /// True if this is an ordinary code flow reference.
+    public var isFlow: Bool {
+        isCode && type == .flow
+    }
+
+    /// True if this is any kind of data reference.
+    public var isDataReference: Bool {
+        !isCode
+    }
+
+    /// True if this is a data read reference.
+    public var isDataRead: Bool {
+        !isCode && type == .read
+    }
+
+    /// True if this is a data write reference.
+    public var isDataWrite: Bool {
+        !isCode && type == .write
+    }
+}
+
 /// Cross-reference enumeration and mutation.
 ///
 /// Mirrors C++ `ida::xref`.
