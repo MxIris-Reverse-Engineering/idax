@@ -31,6 +31,90 @@ public struct Snapshot: Sendable {
     public let children: [Snapshot]
 }
 
+/// Processor architecture identifier stored in the IDA database.
+///
+/// Mirrors C++ `ida::database::ProcessorID` (values 0–77).
+public enum ProcessorID: Int32, Sendable {
+    case intelX86 = 0
+    case z80 = 1
+    case intelI860 = 2
+    case intel8051 = 3
+    case tms320c5x = 4
+    case mos6502 = 5
+    case pdp11 = 6
+    case motorola68k = 7
+    case javaVM = 8
+    case motorola6800 = 9
+    case st7 = 10
+    case motorola68hc12 = 11
+    case mips = 12
+    case arm = 13
+    case tms320c6x = 14
+    case powerPC = 15
+    case intel80196 = 16
+    case z8 = 17
+    case superH = 18
+    case dotNet = 19
+    case avr = 20
+    case h8 = 21
+    case pic = 22
+    case sparc = 23
+    case alpha = 24
+    case hppa = 25
+    case h8500 = 26
+    case triCore = 27
+    case dsp56k = 28
+    case c166 = 29
+    case st20 = 30
+    case ia64 = 31
+    case intelI960 = 32
+    case f2mc16 = 33
+    case tms320c54x = 34
+    case tms320c55x = 35
+    case trimedia = 36
+    case m32r = 37
+    case nec78k0 = 38
+    case nec78k0s = 39
+    case mitsubishiM740 = 40
+    case mitsubishiM7700 = 41
+    case st9 = 42
+    case fujitsuFR = 43
+    case motorola68hc16 = 44
+    case mitsubishiM7900 = 45
+    case tms320c3 = 46
+    case kr1878 = 47
+    case adsp218x = 48
+    case oakDSP = 49
+    case tlcs900 = 50
+    case rockwellC39 = 51
+    case cr16 = 52
+    case mn10200 = 53
+    case tms320c1x = 54
+    case necV850x = 55
+    case scriptAdapter = 56
+    case efiBytecode = 57
+    case msp430 = 58
+    case spu = 59
+    case dalvik = 60
+    case wdc65c816 = 61
+    case m16c = 62
+    case arc = 63
+    case unsp = 64
+    case tms320c28x = 65
+    case dsp96000 = 66
+    case spc700 = 67
+    case adsp2106x = 68
+    case pic16 = 69
+    case s390 = 70
+    case xtensa = 71
+    case riscV = 72
+    case rl78 = 73
+    case rx = 74
+    case wasm = 75
+    case nds32 = 76
+    case mcore = 77
+}
+
 /// Database lifecycle and metadata operations.
 ///
 /// Mirrors C++ `ida::database`.
@@ -114,6 +198,23 @@ public enum Database {
 
     public static func processorID() throws(IDAError) -> Int32 {
         try withOutput("database.processorID", Int32(0)) { idax_database_processor_id($0) }
+    }
+
+    public static var processor: ProcessorID {
+        get throws(IDAError) {
+            let rawID = try processorID()
+            guard let id = ProcessorID(rawValue: rawID) else {
+                throw IDAError(category: .unsupported, code: rawID,
+                               message: "unknown processor ID: \(rawID)")
+            }
+            return id
+        }
+    }
+
+    public static var addressBounds: (start: Address, end: Address) {
+        get throws(IDAError) {
+            (try minAddress(), try maxAddress())
+        }
     }
 
     // MARK: - Binary Loading
