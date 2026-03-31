@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import IDAX
 
 // MARK: - Error Model
@@ -359,6 +360,172 @@ struct LocalVariableTests {
     }
 }
 
+// MARK: - CallingConvention
+
+@Suite("IDA CallingConvention")
+struct CallingConventionTests {
+    @Test func rawValues() {
+        #expect(CallingConvention.unknown.rawValue == 0)
+        #expect(CallingConvention.cdecl.rawValue == 1)
+        #expect(CallingConvention.stdcall.rawValue == 2)
+        #expect(CallingConvention.pascal.rawValue == 3)
+        #expect(CallingConvention.fastcall.rawValue == 4)
+        #expect(CallingConvention.thiscall.rawValue == 5)
+        #expect(CallingConvention.swift.rawValue == 6)
+        #expect(CallingConvention.golang.rawValue == 7)
+        #expect(CallingConvention.userDefined.rawValue == 8)
+    }
+
+    @Test func unknownRawValueReturnsNil() {
+        #expect(CallingConvention(rawValue: -1) == nil)
+        #expect(CallingConvention(rawValue: 9) == nil)
+    }
+}
+
+// MARK: - Color
+
+@Suite("IDA Color")
+struct ColorTests {
+    @Test func representativeRawValues() {
+        #expect(Color.default.rawValue == 0x01)
+        #expect(Color.instruction.rawValue == 0x05)
+        #expect(Color.number.rawValue == 0x0C)
+        #expect(Color.keyword.rawValue == 0x20)
+        #expect(Color.collapsed.rawValue == 0x27)
+    }
+
+    @Test func unknownRawValueReturnsNil() {
+        #expect(Color(rawValue: 0x00) == nil)
+        #expect(Color(rawValue: 0x28) == nil)
+    }
+
+    @Test func tagConstants() {
+        #expect(Color.tagOn == 0x01)
+        #expect(Color.tagOff == 0x02)
+        #expect(Color.tagEscape == 0x03)
+        #expect(Color.tagInverse == 0x04)
+        #expect(Color.addressTag == 0x28)
+        #expect(Color.addressTagSize == 16)
+    }
+}
+
+// MARK: - ProcessorID
+
+@Suite("IDA ProcessorID")
+struct ProcessorIDTests {
+    @Test func representativeRawValues() {
+        #expect(ProcessorID.intelX86.rawValue == 0)
+        #expect(ProcessorID.arm.rawValue == 13)
+        #expect(ProcessorID.mips.rawValue == 12)
+        #expect(ProcessorID.riscV.rawValue == 72)
+        #expect(ProcessorID.wasm.rawValue == 75)
+        #expect(ProcessorID.mcore.rawValue == 77)
+    }
+
+    @Test func unknownRawValueReturnsNil() {
+        #expect(ProcessorID(rawValue: -1) == nil)
+        #expect(ProcessorID(rawValue: 78) == nil)
+    }
+}
+
+// MARK: - GraphLayout
+
+@Suite("IDA GraphLayout")
+struct GraphLayoutTests {
+    @Test func allRawValues() {
+        #expect(GraphLayout.none.rawValue == 0)
+        #expect(GraphLayout.digraph.rawValue == 1)
+        #expect(GraphLayout.tree.rawValue == 2)
+        #expect(GraphLayout.circle.rawValue == 3)
+        #expect(GraphLayout.polarTree.rawValue == 4)
+        #expect(GraphLayout.orthogonal.rawValue == 5)
+        #expect(GraphLayout.radialTree.rawValue == 6)
+    }
+}
+
+// MARK: - CrossReference Predicates
+
+@Suite("IDA CrossReference Predicates")
+struct CrossReferencePredicateTests {
+    @Test func isCall() {
+        let callNear = CrossReference(from: 0, to: 1, isCode: true,
+                                      type: .callNear, isUserDefined: false)
+        let callFar = CrossReference(from: 0, to: 1, isCode: true,
+                                     type: .callFar, isUserDefined: false)
+        let jump = CrossReference(from: 0, to: 1, isCode: true,
+                                  type: .jumpNear, isUserDefined: false)
+        #expect(callNear.isCall)
+        #expect(callFar.isCall)
+        #expect(!jump.isCall)
+    }
+
+    @Test func isJump() {
+        let jumpNear = CrossReference(from: 0, to: 1, isCode: true,
+                                      type: .jumpNear, isUserDefined: false)
+        let jumpFar = CrossReference(from: 0, to: 1, isCode: true,
+                                     type: .jumpFar, isUserDefined: false)
+        #expect(jumpNear.isJump)
+        #expect(jumpFar.isJump)
+    }
+
+    @Test func isFlow() {
+        let flow = CrossReference(from: 0, to: 1, isCode: true,
+                                  type: .flow, isUserDefined: false)
+        #expect(flow.isFlow)
+    }
+
+    @Test func dataPredicates() {
+        let read = CrossReference(from: 0, to: 1, isCode: false,
+                                  type: .read, isUserDefined: false)
+        let write = CrossReference(from: 0, to: 1, isCode: false,
+                                   type: .write, isUserDefined: false)
+        #expect(read.isDataReference)
+        #expect(read.isDataRead)
+        #expect(!read.isDataWrite)
+        #expect(write.isDataWrite)
+        #expect(!write.isDataRead)
+    }
+}
+
+// MARK: - Diagnostics Convenience
+
+@Suite("IDA Diagnostics Convenience")
+struct DiagnosticsConvenienceTests {
+    @Test func enrichAppendsContext() {
+        let original = IDAError(category: .notFound, code: 1, message: "symbol missing")
+        let enriched = Diagnostics.enrich(original, context: "in function foo")
+        #expect(enriched.message == "symbol missing; in function foo")
+        #expect(enriched.category == .notFound)
+        #expect(enriched.code == 1)
+    }
+
+    @Test func enrichEmptyMessage() {
+        let original = IDAError(category: .internal, code: 0, message: "")
+        let enriched = Diagnostics.enrich(original, context: "context only")
+        #expect(enriched.message == "context only")
+    }
+
+    @Test func assertInvariantPasses() throws {
+        try Diagnostics.assertInvariant(true, "should pass")
+    }
+
+    @Test func assertInvariantFails() {
+        #expect(throws: IDAError.self) {
+            try Diagnostics.assertInvariant(false, "expected failure")
+        }
+    }
+}
+
+// MARK: - DecompilerView
+
+@Suite("IDA DecompilerView")
+struct DecompilerViewTests {
+    @Test func construction() {
+        let view = DecompilerView(functionAddress: 0x401000)
+        #expect(view.functionAddress == 0x401000)
+    }
+}
+
 // MARK: - Runtime Availability
 
 @Suite("IDA Runtime")
@@ -377,22 +544,25 @@ struct RuntimeTests {
     }
 
     @Test func test() async throws {
-        let dbPath = "/Volumes/RE/Xcode/26.2/SharedFrameworks/DVTExplorableKit.framework/Versions/A/DVTExplorableKit.i64"
+        guard let databasePath = ProcessInfo.processInfo.environment["IDAX_TEST_DATABASE"] else {
+            print("IDAX_TEST_DATABASE not set, skipping integration test")
+            return
+        }
 
         print("=== IDAX Swift Example ===")
         print("Runtime available: \(IDARuntime.isAvailable)")
 
         guard IDARuntime.isAvailable else {
             print("ERROR: IDA Pro runtime not found.")
-            return 
+            return
         }
 
         do {
             print("Initializing IDA...")
             try Database.initialize()
 
-            print("Opening: \(dbPath)")
-            try Database.open(dbPath, autoAnalysis: false)
+            print("Opening: \(databasePath)")
+            try Database.open(databasePath, autoAnalysis: false)
 
             print("--- Database Info ---")
             try print("  Input file:  \(Database.inputFilePath())")
