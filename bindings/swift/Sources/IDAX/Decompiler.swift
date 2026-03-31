@@ -275,6 +275,201 @@ public struct DecompiledFunction: ~Copyable, @unchecked Sendable {
         )
         return Int(visited)
     }
+
+    // MARK: - Retype / refresh
+
+    /// Retype a local variable by name using a C type declaration string.
+    ///
+    /// Call `refresh()` after success to update the pseudocode text.
+    public func retypeVariable(name variableName: String, typeDeclaration: String) throws(IDAError) {
+        try checkStatus(
+            variableName.withCString { namePtr in
+                typeDeclaration.withCString { declPtr in
+                    idax_decompiled_retype_variable(handle, namePtr, declPtr)
+                }
+            },
+            "decompiled.retypeVariable"
+        )
+    }
+
+    /// Retype a local variable by index using an existing `TypeHandle`.
+    ///
+    /// Call `refresh()` after success to update the pseudocode text.
+    public func retypeVariable(at variableIndex: Int, type typeHandle: borrowing TypeHandle) throws(IDAError) {
+        try checkStatus(
+            idax_decompiled_retype_variable_by_index(handle, variableIndex, typeHandle.handle),
+            "decompiled.retypeVariableByIndex"
+        )
+    }
+
+    /// Refresh the pseudocode view to reflect any changes made to the decompiled function.
+    public func refresh() throws(IDAError) {
+        try checkStatus(idax_decompiled_refresh(handle), "decompiled.refresh")
+    }
+
+    // MARK: - Orphan comments
+
+    /// Returns `true` if the decompiled function has orphan comments (comments no longer
+    /// attached to any address in the current pseudocode).
+    public var hasOrphanComments: Bool {
+        get throws(IDAError) {
+            var outResult: Int32 = 0
+            try checkStatus(idax_decompiled_has_orphan_comments(handle, &outResult),
+                            "decompiled.hasOrphanComments")
+            return outResult != 0
+        }
+    }
+
+    /// Remove all orphan comments and return the number of comments removed.
+    @discardableResult
+    public func removeOrphanComments() throws(IDAError) -> Int {
+        var outRemovedCount: Int32 = 0
+        try checkStatus(idax_decompiled_remove_orphan_comments(handle, &outRemovedCount),
+                        "decompiled.removeOrphanComments")
+        return Int(outRemovedCount)
+    }
+
+    // MARK: - Address map / microcode lines
+
+    /// Returns the mapping between pseudocode line numbers and binary addresses.
+    public var addressMap: [AddressMapping] {
+        get throws(IDAError) {
+            var outLineNumbers: UnsafeMutablePointer<UInt64>? = nil
+            var outAddresses: UnsafeMutablePointer<UInt64>? = nil
+            var outCount: Int = 0
+            try checkStatus(
+                idax_decompiled_address_map(handle, &outLineNumbers, &outAddresses, &outCount),
+                "decompiled.addressMap"
+            )
+            defer { idax_decompiled_address_map_free(outLineNumbers, outAddresses) }
+            guard let lineNumbersPtr = outLineNumbers, let addressesPtr = outAddresses, outCount > 0 else {
+                return []
+            }
+            return (0..<outCount).map { index in
+                AddressMapping(
+                    lineNumber: Int(lineNumbersPtr[index]),
+                    address: addressesPtr[index]
+                )
+            }
+        }
+    }
+
+    /// Returns the microcode lines for the decompiled function.
+    ///
+    /// Only available after a successful decompilation with the decompiler plugin loaded.
+    public var microcodeLines: [String] {
+        get throws(IDAError) {
+            var outLines: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>? = nil
+            var outCount: Int = 0
+            try checkStatus(
+                idax_decompiled_microcode_lines(handle, &outLines, &outCount),
+                "decompiled.microcodeLines"
+            )
+            guard let linesPtr = outLines, outCount > 0 else { return [] }
+            defer {
+                for lineIndex in 0..<outCount {
+                    free(linesPtr[lineIndex])
+                }
+                free(linesPtr)
+            }
+            return (0..<outCount).map { lineIndex in
+                if let linePtr = linesPtr[lineIndex] { String(cString: linePtr) } else { "" }
+            }
+        }
+    }
+
+    // MARK: - Extended ctree visitor with leave callbacks
+
+    /// Visit the ctree with full handle access including leave (post-visit) callbacks.
+    ///
+    /// This is similar to `visitCtree` but also fires `expressionLeave` and `statementLeave`
+    /// when leaving each node. If no leave closures are provided, this falls back to
+    /// `idax_ctree_visit`.
+    ///
+    /// The closures receive non-owning handles valid only during the callback.
+    /// Return `.continue` to keep traversing, `.stop` to halt, `.skipChildren` to skip subtree.
+    public func visitCtreeEx(
+        postOrder: Bool = false,
+        expressionVisitor: ((CtreeExpression) -> CtreeVisitAction)? = nil,
+        statementVisitor: ((CtreeStatement) -> CtreeVisitAction)? = nil,
+        expressionLeave: ((CtreeExpression) -> CtreeVisitAction)? = nil,
+        statementLeave: ((CtreeStatement) -> CtreeVisitAction)? = nil
+    ) throws(IDAError) -> Int {
+        // Fall back to the simpler visit when no leave callbacks are needed.
+        if expressionLeave == nil && statementLeave == nil {
+            return try visitCtree(
+                postOrder: postOrder,
+                expressionVisitor: expressionVisitor,
+                statementVisitor: statementVisitor
+            )
+        }
+
+        final class VisitorExBox {
+            let exprVisitor: ((CtreeExpression) -> CtreeVisitAction)?
+            let stmtVisitor: ((CtreeStatement) -> CtreeVisitAction)?
+            let exprLeave: ((CtreeExpression) -> CtreeVisitAction)?
+            let stmtLeave: ((CtreeStatement) -> CtreeVisitAction)?
+            init(
+                _ exprVisitor: ((CtreeExpression) -> CtreeVisitAction)?,
+                _ stmtVisitor: ((CtreeStatement) -> CtreeVisitAction)?,
+                _ exprLeave: ((CtreeExpression) -> CtreeVisitAction)?,
+                _ stmtLeave: ((CtreeStatement) -> CtreeVisitAction)?
+            ) {
+                self.exprVisitor = exprVisitor
+                self.stmtVisitor = stmtVisitor
+                self.exprLeave = exprLeave
+                self.stmtLeave = stmtLeave
+            }
+        }
+        let box = VisitorExBox(expressionVisitor, statementVisitor, expressionLeave, statementLeave)
+        let ctx = Unmanaged.passRetained(box).toOpaque()
+        defer { Unmanaged<VisitorExBox>.fromOpaque(ctx).release() }
+
+        var visited: Int32 = 0
+
+        let visitExprCb: IdaxCtreeExprVisitor? = expressionVisitor != nil ? { ctx, expr in
+            guard let ctx, let expr else { return 0 }
+            let box = Unmanaged<VisitorExBox>.fromOpaque(ctx).takeUnretainedValue()
+            return box.exprVisitor!(CtreeExpression(expr)).rawValue
+        } : nil
+
+        let visitStmtCb: IdaxCtreeStmtVisitor? = statementVisitor != nil ? { ctx, stmt in
+            guard let ctx, let stmt else { return 0 }
+            let box = Unmanaged<VisitorExBox>.fromOpaque(ctx).takeUnretainedValue()
+            return box.stmtVisitor!(CtreeStatement(stmt)).rawValue
+        } : nil
+
+        let leaveExprCb: IdaxCtreeExprLeaveVisitor? = expressionLeave != nil ? { ctx, expr in
+            guard let ctx, let expr else { return 0 }
+            let box = Unmanaged<VisitorExBox>.fromOpaque(ctx).takeUnretainedValue()
+            return box.exprLeave!(CtreeExpression(expr)).rawValue
+        } : nil
+
+        let leaveStmtCb: IdaxCtreeStmtLeaveVisitor? = statementLeave != nil ? { ctx, stmt in
+            guard let ctx, let stmt else { return 0 }
+            let box = Unmanaged<VisitorExBox>.fromOpaque(ctx).takeUnretainedValue()
+            return box.stmtLeave!(CtreeStatement(stmt)).rawValue
+        } : nil
+
+        try checkStatus(
+            idax_ctree_visit_ex(
+                handle,
+                visitExprCb, visitStmtCb,
+                leaveExprCb, leaveStmtCb,
+                ctx,
+                postOrder ? 1 : 0,
+                &visited
+            ),
+            "decompiled.visitCtreeEx"
+        )
+        return Int(visited)
+    }
+}
+
+/// Mapping between a pseudocode line number and a database address.
+public struct AddressMapping: Sendable {
+    public let lineNumber: Int
+    public let address: Address
 }
 
 // MARK: - Ctree types
