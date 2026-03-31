@@ -1576,6 +1576,32 @@ int idax_decompiler_microcode_context_has_last_emitted_instruction(const void* m
 int idax_decompiler_microcode_context_last_emitted_instruction(const void* mctx,
                                                                IdaxMicrocodeInstruction* out);
 
+/* DecompiledFunction extended operations */
+int idax_decompiled_retype_variable(void* handle, const char* variable_name,
+                                     const char* type_declaration);
+int idax_decompiled_retype_variable_by_index(void* handle, size_t variable_index,
+                                              IdaxTypeHandle type_handle);
+int idax_decompiled_refresh(void* handle);
+int idax_decompiled_has_orphan_comments(void* handle, int* out_result);
+int idax_decompiled_remove_orphan_comments(void* handle, int* out_removed_count);
+int idax_decompiled_address_map(void* handle, uint64_t** out_line_numbers,
+                                 uint64_t** out_addresses, size_t* out_count);
+void idax_decompiled_address_map_free(uint64_t* line_numbers, uint64_t* addresses);
+int idax_decompiled_microcode_lines(void* handle, char*** out_lines, size_t* out_count);
+
+/* Extended ctree visitor with leave callbacks */
+typedef int (*IdaxCtreeExprLeaveVisitor)(void* context, const void* expr_handle);
+typedef int (*IdaxCtreeStmtLeaveVisitor)(void* context, const void* stmt_handle);
+
+int idax_ctree_visit_ex(void* handle,
+                         IdaxCtreeExprVisitor visit_expr,
+                         IdaxCtreeStmtVisitor visit_stmt,
+                         IdaxCtreeExprLeaveVisitor leave_expr,
+                         IdaxCtreeStmtLeaveVisitor leave_stmt,
+                         void* context,
+                         int post_order,
+                         int* out_visited);
+
 /* ═══════════════════════════════════════════════════════════════════════════
  * Storage (ida::storage)
  * ═══════════════════════════════════════════════════════════════════════════ */
