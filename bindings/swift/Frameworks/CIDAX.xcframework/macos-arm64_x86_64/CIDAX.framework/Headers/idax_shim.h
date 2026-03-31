@@ -984,13 +984,266 @@ int idax_loader_create_filename_comment(void);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Processor (ida::processor)
- *
- * Processor module support is primarily compile-time (macros/subclassing).
- * No runtime shim functions needed beyond what plugin/loader provide.
- * Placeholder for future runtime queries.
  * ═══════════════════════════════════════════════════════════════════════════ */
 
-/* Reserved for future runtime processor queries. */
+/* ── Bitmask constants ─────────────────────────────────────────────────── */
+
+#define IDAX_INSTRUCTION_FEATURE_NONE       0x00000
+#define IDAX_INSTRUCTION_FEATURE_STOP       0x00001
+#define IDAX_INSTRUCTION_FEATURE_CALL       0x00002
+#define IDAX_INSTRUCTION_FEATURE_CHANGE1    0x00004
+#define IDAX_INSTRUCTION_FEATURE_CHANGE2    0x00008
+#define IDAX_INSTRUCTION_FEATURE_CHANGE3    0x00010
+#define IDAX_INSTRUCTION_FEATURE_CHANGE4    0x00020
+#define IDAX_INSTRUCTION_FEATURE_CHANGE5    0x00040
+#define IDAX_INSTRUCTION_FEATURE_CHANGE6    0x00080
+#define IDAX_INSTRUCTION_FEATURE_USE1       0x00100
+#define IDAX_INSTRUCTION_FEATURE_USE2       0x00200
+#define IDAX_INSTRUCTION_FEATURE_USE3       0x00400
+#define IDAX_INSTRUCTION_FEATURE_USE4       0x00800
+#define IDAX_INSTRUCTION_FEATURE_USE5       0x01000
+#define IDAX_INSTRUCTION_FEATURE_USE6       0x02000
+#define IDAX_INSTRUCTION_FEATURE_JUMP       0x04000
+#define IDAX_INSTRUCTION_FEATURE_SHIFT      0x08000
+#define IDAX_INSTRUCTION_FEATURE_HIGH_LEVEL 0x10000
+
+#define IDAX_PROCESSOR_FLAG_NONE              0x000000
+#define IDAX_PROCESSOR_FLAG_SEGMENTS           0x000001
+#define IDAX_PROCESSOR_FLAG_USE32              0x000002
+#define IDAX_PROCESSOR_FLAG_USE64              0x000004
+#define IDAX_PROCESSOR_FLAG_DEFAULT_SEG32      0x000008
+#define IDAX_PROCESSOR_FLAG_DEFAULT_SEG64      0x000010
+#define IDAX_PROCESSOR_FLAG_TYPE_INFO          0x000020
+#define IDAX_PROCESSOR_FLAG_USE_ARG_TYPES      0x000040
+#define IDAX_PROCESSOR_FLAG_CONDITIONAL_INSNS  0x000080
+#define IDAX_PROCESSOR_FLAG_NO_SEG_MOVE        0x000100
+#define IDAX_PROCESSOR_FLAG_HEX_NUMBERS        0x000200
+#define IDAX_PROCESSOR_FLAG_DECIMAL_NUMBERS    0x000400
+#define IDAX_PROCESSOR_FLAG_OCTAL_NUMBERS      0x000800
+
+#define IDAX_EMULATE_RESULT_DELETE_INSN      (-1)
+#define IDAX_EMULATE_RESULT_NOT_IMPLEMENTED    0
+#define IDAX_EMULATE_RESULT_SUCCESS            1
+
+#define IDAX_OUTPUT_OPERAND_HIDDEN           (-1)
+#define IDAX_OUTPUT_OPERAND_NOT_IMPLEMENTED    0
+#define IDAX_OUTPUT_OPERAND_SUCCESS            1
+
+#define IDAX_OUTPUT_INSTRUCTION_NOT_IMPLEMENTED  0
+#define IDAX_OUTPUT_INSTRUCTION_SUCCESS          1
+
+#define IDAX_SWITCH_TABLE_DENSE     0
+#define IDAX_SWITCH_TABLE_SPARSE    1
+#define IDAX_SWITCH_TABLE_INDIRECT  2
+#define IDAX_SWITCH_TABLE_CUSTOM    3
+
+/* ── C structs ─────────────────────────────────────────────────────────── */
+
+typedef struct IdaxRegisterInfo {
+    char* name;         /**< malloc'd register name. */
+    int   read_only;    /**< 1=read-only, 0=read-write. */
+} IdaxRegisterInfo;
+
+typedef struct IdaxInstructionDescriptor {
+    char*    mnemonic;       /**< malloc'd mnemonic string. */
+    uint32_t feature_flags;  /**< OR-ed IDAX_INSTRUCTION_FEATURE_* values. */
+    uint8_t  operand_count;
+    char*    description;    /**< malloc'd description. */
+    int      privileged;     /**< 1=privileged instruction. */
+} IdaxInstructionDescriptor;
+
+typedef struct IdaxAssemblerInfo {
+    char* name;
+    char* comment_prefix;
+    char* origin;
+    char* end_directive;
+    char  string_delim;
+    char  char_delim;
+    char* byte_directive;
+    char* word_directive;
+    char* dword_directive;
+    char* qword_directive;
+    char* oword_directive;
+    char* float_directive;
+    char* double_directive;
+    char* tbyte_directive;
+    char* align_directive;
+    char* include_directive;
+    char* public_directive;
+    char* weak_directive;
+    char* external_directive;
+    char* current_ip_symbol;
+    int   uppercase_mnemonics;
+    int   uppercase_registers;
+    int   requires_colon_after_labels;
+    int   supports_quoted_names;
+} IdaxAssemblerInfo;
+
+typedef struct IdaxProcessorInfo {
+    int32_t  id;
+
+    char**   short_names;       /**< malloc'd array of malloc'd strings. */
+    size_t   short_name_count;
+    char**   long_names;        /**< malloc'd array of malloc'd strings. */
+    size_t   long_name_count;
+
+    uint32_t flags;             /**< OR-ed IDAX_PROCESSOR_FLAG_* values. */
+    uint32_t flags2;
+
+    int      code_bits_per_byte;
+    int      data_bits_per_byte;
+
+    IdaxRegisterInfo* registers;
+    size_t            register_count;
+    int               code_segment_register;
+    int               data_segment_register;
+    int               first_segment_register;
+    int               last_segment_register;
+    int               segment_register_size;
+
+    IdaxInstructionDescriptor* instructions;
+    size_t                     instruction_count;
+    int                        return_icode;
+
+    IdaxAssemblerInfo* assemblers;
+    size_t             assembler_count;
+
+    int default_bitness;
+} IdaxProcessorInfo;
+
+typedef struct IdaxSwitchCase {
+    int64_t* values;    /**< malloc'd array. */
+    size_t   value_count;
+    uint64_t target;
+} IdaxSwitchCase;
+
+typedef struct IdaxSwitchDescription {
+    int      kind;              /**< IDAX_SWITCH_TABLE_* */
+    uint64_t jump_table;
+    uint64_t values_table;
+    uint64_t default_target;
+    uint64_t idiom_start;
+    uint64_t element_base;
+    int64_t  low_case_value;
+    int64_t  indirect_low_case_value;
+    uint32_t case_count;
+    uint32_t jump_table_entry_count;
+    uint8_t  jump_element_size;
+    uint8_t  value_element_size;
+    uint8_t  shift;
+    int      expression_register;
+    uint8_t  expression_data_type;
+    int      has_default;
+    int      default_in_table;
+    int      values_signed;
+    int      subtract_values;
+    int      self_relative;
+    int      inverted;
+    int      user_defined;
+} IdaxSwitchDescription;
+
+/* ── Callback function pointers ────────────────────────────────────────── */
+
+/** Required callbacks — must NOT be NULL. */
+typedef void (*IdaxProcessorInfoCallback)(void* context, IdaxProcessorInfo* out);
+typedef int  (*IdaxProcessorAnalyzeCallback)(void* context, uint64_t address, int* out_size);
+typedef int  (*IdaxProcessorEmulateCallback)(void* context, uint64_t address);
+typedef void (*IdaxProcessorOutputInstructionCallback)(void* context, uint64_t address);
+typedef int  (*IdaxProcessorOutputOperandCallback)(void* context, uint64_t address, int operand_index);
+
+/** Optional callbacks — may be NULL for default behavior. */
+typedef void (*IdaxProcessorOnFileCallback)(void* context, const char* filename);
+typedef int  (*IdaxProcessorIntQueryCallback)(void* context, uint64_t address);
+typedef int  (*IdaxProcessorIsSaneCallback)(void* context, uint64_t address, int no_code_references);
+typedef int  (*IdaxProcessorIsBasicBlockEndCallback)(void* context, uint64_t address, int call_stops_block);
+typedef int  (*IdaxProcessorCreateFrameCallback)(void* context, uint64_t function_start);
+typedef int  (*IdaxProcessorAdjustBoundsCallback)(void* context, uint64_t function_start,
+                                                   uint64_t max_function_end, int suggested_result);
+typedef int  (*IdaxProcessorAnalyzePrologCallback)(void* context, uint64_t function_start);
+typedef int  (*IdaxProcessorStackDeltaCallback)(void* context, uint64_t address, int64_t* out_delta);
+typedef int  (*IdaxProcessorReturnSizeCallback)(void* context, uint64_t function_start);
+typedef int  (*IdaxProcessorDetectSwitchCallback)(void* context, uint64_t address,
+                                                   IdaxSwitchDescription* out_switch);
+typedef int  (*IdaxProcessorCalcSwitchCasesCallback)(void* context, uint64_t address,
+                                                      const IdaxSwitchDescription* switch_desc,
+                                                      IdaxSwitchCase** out_cases,
+                                                      size_t* out_case_count);
+typedef int  (*IdaxProcessorCreateSwitchRefsCallback)(void* context, uint64_t address,
+                                                       const IdaxSwitchDescription* switch_desc);
+typedef int  (*IdaxProcessorOutputWithContextCallback)(void* context, uint64_t address,
+                                                        void* output_context);
+typedef int  (*IdaxProcessorOutputOperandWithContextCallback)(void* context, uint64_t address,
+                                                               int operand_index,
+                                                               void* output_context);
+
+typedef struct IdaxProcessorCallbacks {
+    void* context;
+
+    /* Required */
+    IdaxProcessorInfoCallback                   info;
+    IdaxProcessorAnalyzeCallback                analyze;
+    IdaxProcessorEmulateCallback                emulate;
+    IdaxProcessorOutputInstructionCallback       output_instruction;
+    IdaxProcessorOutputOperandCallback           output_operand;
+
+    /* Optional (NULL = use default) */
+    IdaxProcessorOnFileCallback                  on_new_file;
+    IdaxProcessorOnFileCallback                  on_old_file;
+    IdaxProcessorIntQueryCallback                is_call;
+    IdaxProcessorIntQueryCallback                is_return;
+    IdaxProcessorIntQueryCallback                may_be_function;
+    IdaxProcessorIsSaneCallback                  is_sane_instruction;
+    IdaxProcessorIntQueryCallback                is_indirect_jump;
+    IdaxProcessorIsBasicBlockEndCallback          is_basic_block_end;
+    IdaxProcessorCreateFrameCallback             create_function_frame;
+    IdaxProcessorAdjustBoundsCallback            adjust_function_bounds;
+    IdaxProcessorAnalyzePrologCallback           analyze_function_prolog;
+    IdaxProcessorStackDeltaCallback              calculate_stack_pointer_delta;
+    IdaxProcessorReturnSizeCallback              get_return_address_size;
+    IdaxProcessorDetectSwitchCallback            detect_switch;
+    IdaxProcessorCalcSwitchCasesCallback         calculate_switch_cases;
+    IdaxProcessorCreateSwitchRefsCallback        create_switch_references;
+    IdaxProcessorOutputWithContextCallback       output_mnemonic_with_context;
+    IdaxProcessorOutputWithContextCallback       output_instruction_with_context;
+    IdaxProcessorOutputOperandWithContextCallback output_operand_with_context;
+} IdaxProcessorCallbacks;
+
+/* ── Registration ──────────────────────────────────────────────────────── */
+
+typedef void* IdaxProcessorHandle;
+
+int  idax_processor_register(const IdaxProcessorCallbacks* callbacks,
+                             IdaxProcessorHandle* out_handle);
+void idax_processor_unregister(IdaxProcessorHandle handle);
+
+/* ── Free helpers ──────────────────────────────────────────────────────── */
+
+void idax_processor_info_free(IdaxProcessorInfo* info);
+void idax_switch_description_free(IdaxSwitchDescription* desc);
+void idax_switch_cases_free(IdaxSwitchCase* cases, size_t count);
+
+/* ── OutputContext functions ───────────────────────────────────────────── */
+
+void idax_output_context_mnemonic(void* ctx, const char* text);
+void idax_output_context_register_name(void* ctx, const char* text);
+void idax_output_context_symbol(void* ctx, const char* text);
+void idax_output_context_keyword(void* ctx, const char* text);
+void idax_output_context_comment(void* ctx, const char* text);
+void idax_output_context_number(void* ctx, const char* text);
+void idax_output_context_operator_symbol(void* ctx, const char* text);
+void idax_output_context_punctuation(void* ctx, const char* text);
+void idax_output_context_whitespace(void* ctx, const char* text);
+void idax_output_context_string_literal(void* ctx, const char* text, char quote);
+void idax_output_context_immediate(void* ctx, int64_t value, int radix);
+void idax_output_context_address(void* ctx, uint64_t address);
+void idax_output_context_character(void* ctx, char ch);
+void idax_output_context_space(void* ctx);
+void idax_output_context_comma(void* ctx);
+void idax_output_context_clear(void* ctx);
+int  idax_output_context_is_empty(void* ctx);
+int  idax_output_context_text(void* ctx, char** out);
+void idax_output_context_append(void* ctx, const char* text);
+void idax_output_context_token(void* ctx, int kind, const char* text);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Debugger (ida::debugger)
