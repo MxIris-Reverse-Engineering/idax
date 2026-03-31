@@ -859,24 +859,6 @@ public enum Decompiler {
         )
     }
 
-    public static func currentView() throws(IDAError) -> Address {
-        try withOutput("decompiler.currentView", UInt64(0)) {
-            idax_decompiler_current_view($0)
-        }
-    }
-
-    public static func viewFromHost(_ viewHost: UnsafeMutableRawPointer) throws(IDAError) -> Address {
-        try withOutput("decompiler.viewFromHost", UInt64(0)) {
-            idax_decompiler_view_from_host(viewHost, $0)
-        }
-    }
-
-    public static func viewForFunction(at address: Address) throws(IDAError) -> Address {
-        try withOutput("decompiler.viewForFunction", UInt64(0)) {
-            idax_decompiler_view_for_function(address, $0)
-        }
-    }
-
     // MARK: - Item inspection
 
     public static func itemTypeName(_ itemType: Int) throws(IDAError) -> String {
@@ -1075,5 +1057,37 @@ public enum Decompiler {
         )
         defer { idax_microcode_instruction_free(&raw) }
         return makeMicrocodeInstruction(raw)
+    }
+}
+
+/// Lightweight handle to a decompiler pseudocode view.
+public struct DecompilerView: Sendable {
+    /// Address of the function being displayed.
+    public let functionAddress: Address
+
+    /// Get the decompiler view currently active in the UI.
+    public static var current: DecompilerView {
+        get throws(IDAError) {
+            let address = try withOutput("decompiler.currentView", UInt64(0)) {
+                idax_decompiler_current_view($0)
+            }
+            return DecompilerView(functionAddress: address)
+        }
+    }
+
+    /// Get a decompiler view from an opaque host pointer (e.g., from plugin context).
+    public static func fromHost(_ viewHost: UnsafeMutableRawPointer) throws(IDAError) -> DecompilerView {
+        let address = try withOutput("decompiler.viewFromHost", UInt64(0)) {
+            idax_decompiler_view_from_host(viewHost, $0)
+        }
+        return DecompilerView(functionAddress: address)
+    }
+
+    /// Get or create a decompiler view for a function.
+    public static func forFunction(at address: Address) throws(IDAError) -> DecompilerView {
+        let functionAddress = try withOutput("decompiler.viewForFunction", UInt64(0)) {
+            idax_decompiler_view_for_function(address, $0)
+        }
+        return DecompilerView(functionAddress: functionAddress)
     }
 }
