@@ -34,11 +34,16 @@ public struct BasicBlock: Sendable {
 }
 
 /// Graph layout algorithm.
+///
+/// Mirrors C++ `ida::graph::Layout`.
 public enum GraphLayout: Int32, Sendable {
-    case tree = 0
-    case orthogonal = 1
-    case radial = 2
-    case circular = 3
+    case none = 0
+    case digraph = 1
+    case tree = 2
+    case circle = 3
+    case polarTree = 4
+    case orthogonal = 5
+    case radialTree = 6
 }
 
 // MARK: - Graph (mutable, ~Copyable handle)
@@ -231,7 +236,7 @@ public struct Graph: ~Copyable, @unchecked Sendable {
         if ret < 0 {
             throw consumeLastError(fallback: "graph.currentLayout")
         }
-        return GraphLayout(rawValue: ret) ?? .tree
+        return GraphLayout(rawValue: ret) ?? .none
     }
 
     /// Recalculate the current layout.
