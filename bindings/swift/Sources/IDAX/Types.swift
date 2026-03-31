@@ -494,4 +494,18 @@ public struct TypeHandle: ~Copyable, @unchecked Sendable {
         )
         return out
     }
+
+    /// Ensure a named type exists in the local type library.
+    ///
+    /// Looks up the type by name first; if not found, imports it from the
+    /// specified source library (or the default library if empty), then
+    /// looks it up again.
+    public static func ensureNamedType(_ typeName: String,
+                                       source: String = "") throws(IDAError) -> TypeHandle {
+        if let existing = try? TypeHandle.byName(typeName) {
+            return existing
+        }
+        _ = try TypeHandle.importType(from: source, typeName: typeName)
+        return try TypeHandle.byName(typeName)
+    }
 }
