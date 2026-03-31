@@ -944,4 +944,62 @@ public struct WaitOptions: Sendable {
 - **ProcessorID raw values:** Must be verified against `include/ida/database.hpp` at implementation time. If the C++ enum uses non-sequential values, the Swift enum must match exactly.
 - **MicrocodeContext mutations:** These operate on live decompiler state. Incorrect use can corrupt the microcode. The Swift API should document this clearly.
 - **Processor module:** The most complex addition. The callback trampoline pattern is proven (used by Graph, Plugin, Event) but Processor has the most callbacks (~20 optional).
+
+---
+
+## Corrections (post-implementation findings)
+
+The following discrepancies were discovered during Step 1–5 implementation and have been corrected in the code. The spec text above reflects the original design intent; the corrections below describe what was actually built.
+
+### 1. CallingConvention (Step 1)
+
+The original spec listed `manual=6`, `spoiled=7`, `reserved=8`. The correct C++ values (verified against `include/ida/type.hpp`) are:
+
+| Case | Swift name | Raw value |
+|------|-----------|-----------|
+| swift | `swift` | 6 |
+| golang | `golang` | 7 |
+| userDefined | `userDefined` | 8 |
+
+### 2. GraphLayout (Step 1)
+
+The original spec listed a layout set based on dot-graph flags. The actual C++ enum in `include/ida/graph.hpp` uses:
+
+| Case | Raw value |
+|------|-----------|
+| none | 0 |
+| digraph | 1 |
+| tree | 2 |
+| circle | 3 |
+| polarTree | 4 |
+| orthogonal | 5 |
+| radialTree | 6 |
+
+### 3. ProcessorID (Step 1)
+
+The C++ enum `ida::database::ProcessorId` has 78 sequential cases (values 0–77), matching `PLFM_*` SDK constants exactly. All 78 are implemented in the Swift `ProcessorID` enum, with `.intelX86 = 0` through `.mcore = 77`.
+
+### 4. InstructionFeature and ProcessorFlag (Step 4)
+
+Both are `OptionSet` types, not `enum`. They map to C++ bitmask constants and allow bitwise combination. This was correctly implemented in the Swift layer.
+
+### 5. EmulateResult (Step 4)
+
+The C++ `EmulateResult` type includes a negative sentinel case (`-1`). The Swift wrapper exposes this as a failable pattern, returning `nil` on negative results rather than a typed error.
+
+### 6. RuntimeOptions (Step 5)
+
+The original spec proposed `IdaxRuntimeOptions` with `auto_load_plugins`, `load_previous_database`, and `screen_palette` fields. The actual C++ `ida::database::RuntimeOptions` struct has:
+- `quiet: bool` — suppress idalib progress output
+- `plugin_policy.disable_user_plugins: bool` — skip user plugin loading from IDAUSR
+
+The C shim struct was defined accordingly:
+```c
+typedef struct {
+    int  quiet;               /* default 0 */
+    int  disable_user_plugins; /* default 0 */
+} IdaxRuntimeOptions;
+```
+
+The Swift `RuntimeOptions` struct mirrors these two fields (`quiet`, `disableUserPlugins`). The spec's `screenPalette` and `loadPreviousDatabase` fields do not exist in the C++ API and were omitted.
 - **Breaking change:** Changing `callingConvention: Int` to `CallingConvention` and `colorString(_:color: UInt8)` to `Color` are source-breaking. This is acceptable on the current feature branch before any public release.
