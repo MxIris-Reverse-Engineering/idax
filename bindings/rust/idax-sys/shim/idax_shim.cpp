@@ -5365,6 +5365,145 @@ int idax_ctree_visit(IdaxDecompiledHandle handle,
     return 0;
 }
 
+// ── DecompiledFunction extended operations ──────────────────────────────
+
+int idax_decompiled_retype_variable(void* handle, const char* variable_name,
+                                     const char* type_declaration) {
+    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
+    auto type_result = ida::type::TypeInfo::from_declaration(type_declaration);
+    if (!type_result) return fail(type_result.error());
+    RETURN_STATUS(df->retype_variable(variable_name, *type_result));
+}
+
+int idax_decompiled_retype_variable_by_index(void* handle, size_t variable_index,
+                                              IdaxTypeHandle type_handle) {
+    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
+    auto* ti = static_cast<ida::type::TypeInfo*>(type_handle);
+    RETURN_STATUS(df->retype_variable(variable_index, *ti));
+}
+
+int idax_decompiled_refresh(void* handle) {
+    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
+    RETURN_STATUS(df->refresh());
+}
+
+int idax_decompiled_has_orphan_comments(void* handle, int* out_result) {
+    clear_error();
+    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
+    auto r = df->has_orphan_comments();
+    if (!r) return fail(r.error());
+    *out_result = *r ? 1 : 0;
+    return 0;
+}
+
+int idax_decompiled_remove_orphan_comments(void* handle, int* out_removed_count) {
+    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
+    RETURN_RESULT_VALUE(df->remove_orphan_comments());
+}
+
+int idax_decompiled_address_map(void* handle, uint64_t** out_line_numbers,
+                                 uint64_t** out_addresses, size_t* out_count) {
+    clear_error();
+    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
+    auto r = df->address_map();
+    if (!r) return fail(r.error());
+    auto& mappings = *r;
+    size_t count = mappings.size();
+    auto* lines = static_cast<uint64_t*>(malloc(count * sizeof(uint64_t)));
+    auto* addrs = static_cast<uint64_t*>(malloc(count * sizeof(uint64_t)));
+    if (!lines || !addrs) {
+        free(lines);
+        free(addrs);
+        return fail(ida::Error::internal("malloc failed"));
+    }
+    for (size_t i = 0; i < count; ++i) {
+        lines[i] = static_cast<uint64_t>(mappings[i].line_number);
+        addrs[i] = mappings[i].address;
+    }
+    *out_line_numbers = lines;
+    *out_addresses = addrs;
+    *out_count = count;
+    return 0;
+}
+
+void idax_decompiled_address_map_free(uint64_t* line_numbers, uint64_t* addresses) {
+    free(line_numbers);
+    free(addresses);
+}
+
+int idax_decompiled_microcode_lines(void* handle, char*** out_lines, size_t* out_count) {
+    clear_error();
+    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
+    auto r = df->microcode_lines();
+    if (!r) return fail(r.error());
+    auto& vec = *r;
+    size_t count = vec.size();
+    auto** arr = static_cast<char**>(malloc(count * sizeof(char*)));
+    if (!arr) return fail(ida::Error::internal("malloc failed"));
+    for (size_t i = 0; i < count; ++i) {
+        arr[i] = dup_string(vec[i]);
+    }
+    *out_lines = arr;
+    *out_count = count;
+    return 0;
+}
+
+int idax_ctree_visit_ex(void* handle,
+                         IdaxCtreeExprVisitor visit_expr,
+                         IdaxCtreeStmtVisitor visit_stmt,
+                         IdaxCtreeExprLeaveVisitor leave_expr,
+                         IdaxCtreeStmtLeaveVisitor leave_stmt,
+                         void* context,
+                         int post_order,
+                         int* out_visited) {
+    clear_error();
+    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
+    ida::decompiler::VisitOptions opts;
+    opts.post_order = (post_order != 0);
+
+    class VisitorEx : public ida::decompiler::CtreeVisitor {
+    public:
+        IdaxCtreeExprVisitor visit_expr_;
+        IdaxCtreeStmtVisitor visit_stmt_;
+        IdaxCtreeExprLeaveVisitor leave_expr_;
+        IdaxCtreeStmtLeaveVisitor leave_stmt_;
+        void* ctx_;
+
+        VisitorEx(IdaxCtreeExprVisitor ve, IdaxCtreeStmtVisitor vs,
+                  IdaxCtreeExprLeaveVisitor le, IdaxCtreeStmtLeaveVisitor ls,
+                  void* c)
+            : visit_expr_(ve), visit_stmt_(vs),
+              leave_expr_(le), leave_stmt_(ls), ctx_(c) {}
+
+        ida::decompiler::VisitAction visit_expression(
+                ida::decompiler::ExpressionView expr) override {
+            if (!visit_expr_) return ida::decompiler::VisitAction::Continue;
+            return visit_action_from_c_int(visit_expr_(ctx_, expr.raw_handle()));
+        }
+        ida::decompiler::VisitAction visit_statement(
+                ida::decompiler::StatementView stmt) override {
+            if (!visit_stmt_) return ida::decompiler::VisitAction::Continue;
+            return visit_action_from_c_int(visit_stmt_(ctx_, stmt.raw_handle()));
+        }
+        ida::decompiler::VisitAction leave_expression(
+                ida::decompiler::ExpressionView expr) override {
+            if (!leave_expr_) return ida::decompiler::VisitAction::Continue;
+            return visit_action_from_c_int(leave_expr_(ctx_, expr.raw_handle()));
+        }
+        ida::decompiler::VisitAction leave_statement(
+                ida::decompiler::StatementView stmt) override {
+            if (!leave_stmt_) return ida::decompiler::VisitAction::Continue;
+            return visit_action_from_c_int(leave_stmt_(ctx_, stmt.raw_handle()));
+        }
+    };
+
+    VisitorEx visitor(visit_expr, visit_stmt, leave_expr, leave_stmt, context);
+    auto result = df->visit(visitor, opts);
+    if (!result) return fail(result.error());
+    *out_visited = *result;
+    return 0;
+}
+
 // ── Expression query functions ──────────────────────────────────────────
 
 int idax_ctree_expr_type(IdaxCtreeExprHandle expr, int* out) {
