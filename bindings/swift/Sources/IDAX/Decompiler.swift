@@ -822,6 +822,377 @@ public struct MicrocodeInstruction: Sendable {
     public let floatingPointInstruction: Bool
 }
 
+/// Placement policy for emitted microcode instructions.
+///
+/// Maps to `ida::decompiler::MicrocodeInsertPolicy`.
+public enum MicrocodeInsertPolicy: Int32, Sendable {
+    /// Append at block tail (default behavior).
+    case append  = 0
+    /// Insert at block beginning.
+    case prepend = 1
+    /// Insert immediately before current block tail.
+    case replace = 2
+}
+
+/// Simplified typed value for microcode helper-call argument construction.
+///
+/// The `data` field is interpreted according to `kind`:
+/// - Register → register ID
+/// - LocalVariable → local-variable index
+/// - GlobalAddress → address
+/// - StackVariable → stack offset
+/// - UnsignedImmediate → unsigned integer value
+/// - SignedImmediate → signed integer value
+public struct MicrocodeValue: Sendable {
+    public var kind: Int32
+    public var locationKind: Int32
+    public var data: Int64
+    public var byteWidth: Int32
+
+    public init(kind: Int32 = 0, locationKind: Int32 = 0, data: Int64 = 0, byteWidth: Int32 = 0) {
+        self.kind = kind
+        self.locationKind = locationKind
+        self.data = data
+        self.byteWidth = byteWidth
+    }
+}
+
+/// Opaque mutable context passed to microcode filter callbacks during decompilation.
+///
+/// Wraps a `ida::decompiler::MicrocodeContext*` pointer that is only valid for the
+/// duration of the filter callback. Do not store this value beyond the callback.
+public struct MicrocodeContext: @unchecked Sendable {
+    let pointer: UnsafeMutableRawPointer
+
+    init(_ pointer: UnsafeMutableRawPointer) {
+        self.pointer = pointer
+    }
+
+    // MARK: - Read properties
+
+    /// Instruction address currently being lifted.
+    public var address: Address {
+        get throws(IDAError) {
+            try withOutput("microcodeContext.address", UInt64(0)) {
+                idax_decompiler_microcode_context_address(pointer, $0)
+            }
+        }
+    }
+
+    /// Processor-specific instruction type code.
+    public var instructionType: Int {
+        get throws(IDAError) {
+            var out: Int32 = 0
+            try checkStatus(
+                idax_decompiler_microcode_context_instruction_type(pointer, &out),
+                "microcodeContext.instructionType"
+            )
+            return Int(out)
+        }
+    }
+
+    /// Number of microcode instructions currently present in the active block.
+    public var blockInstructionCount: Int {
+        get throws(IDAError) {
+            var out: Int32 = 0
+            try checkStatus(
+                idax_decompiler_microcode_context_block_instruction_count(pointer, &out),
+                "microcodeContext.blockInstructionCount"
+            )
+            return Int(out)
+        }
+    }
+
+    /// Whether this context has tracked at least one emitted instruction.
+    public var hasLastEmittedInstruction: Bool {
+        get throws(IDAError) {
+            var out: Int32 = 0
+            try checkStatus(
+                idax_decompiler_microcode_context_has_last_emitted_instruction(pointer, &out),
+                "microcodeContext.hasLastEmittedInstruction"
+            )
+            return out != 0
+        }
+    }
+
+    // MARK: - Read methods
+
+    /// Return true when an instruction exists at the specified block index.
+    public func hasInstruction(at instructionIndex: Int) throws(IDAError) -> Bool {
+        var out: Int32 = 0
+        try checkStatus(
+            idax_decompiler_microcode_context_has_instruction_at_index(pointer, Int32(instructionIndex), &out),
+            "microcodeContext.hasInstruction"
+        )
+        return out != 0
+    }
+
+    /// Return the instruction currently being processed by the microcode lifter.
+    public func currentInstruction() throws(IDAError) -> Instruction {
+        var raw = IdaxInstruction()
+        try checkStatus(
+            idax_decompiler_microcode_context_instruction(pointer, &raw),
+            "microcodeContext.currentInstruction"
+        )
+        defer { idax_instruction_free(&raw) }
+        return Instruction(raw: raw)
+    }
+
+    /// Return the microcode instruction at the specified index in the active block.
+    public func instruction(at instructionIndex: Int) throws(IDAError) -> MicrocodeInstruction {
+        var raw = IdaxMicrocodeInstruction()
+        try checkStatus(
+            idax_decompiler_microcode_context_instruction_at_index(pointer, Int32(instructionIndex), &raw),
+            "microcodeContext.instructionAtIndex"
+        )
+        defer { idax_microcode_instruction_free(&raw) }
+        return makeMicrocodeInstruction(raw)
+    }
+
+    /// Return the most recently emitted microcode instruction tracked by this context.
+    public func lastEmittedInstruction() throws(IDAError) -> MicrocodeInstruction {
+        var raw = IdaxMicrocodeInstruction()
+        try checkStatus(
+            idax_decompiler_microcode_context_last_emitted_instruction(pointer, &raw),
+            "microcodeContext.lastEmittedInstruction"
+        )
+        defer { idax_microcode_instruction_free(&raw) }
+        return makeMicrocodeInstruction(raw)
+    }
+
+    // MARK: - Mutation methods
+
+    /// Remove the most recently emitted instruction tracked by this context.
+    public func removeLastEmittedInstruction() throws(IDAError) {
+        try checkStatus(
+            idax_microcode_context_remove_last_emitted(pointer),
+            "microcodeContext.removeLastEmittedInstruction"
+        )
+    }
+
+    /// Remove an instruction by its current zero-based index in the active block.
+    public func removeInstruction(at instructionIndex: Int) throws(IDAError) {
+        try checkStatus(
+            idax_microcode_context_remove_at_index(pointer, Int32(instructionIndex)),
+            "microcodeContext.removeInstruction"
+        )
+    }
+
+    /// Emit a no-op microcode instruction with optional placement policy.
+    ///
+    /// Pass `nil` for `policy` to use the default placement.
+    public func emitNoop(policy: MicrocodeInsertPolicy? = nil) throws(IDAError) {
+        try checkStatus(
+            idax_microcode_context_emit_noop(pointer, policy.map { Int32($0.rawValue) } ?? -1),
+            "microcodeContext.emitNoop"
+        )
+    }
+
+    /// Emit one microcode instruction with optional placement policy.
+    public func emitInstruction(_ instruction: MicrocodeInstruction, policy: MicrocodeInsertPolicy? = nil) throws(IDAError) {
+        var rawInstruction = makeRawMicrocodeInstruction(instruction)
+        defer { idax_microcode_instruction_free(&rawInstruction) }
+        try checkStatus(
+            idax_microcode_context_emit_instruction(
+                pointer,
+                &rawInstruction,
+                policy.map { Int32($0.rawValue) } ?? -1
+            ),
+            "microcodeContext.emitInstruction"
+        )
+    }
+
+    /// Load an instruction operand into a temporary register. Returns the register ID.
+    public func loadOperandRegister(operandIndex: Int) throws(IDAError) -> Int {
+        var outRegister: Int32 = 0
+        try checkStatus(
+            idax_microcode_context_load_operand_register(pointer, Int32(operandIndex), &outRegister),
+            "microcodeContext.loadOperandRegister"
+        )
+        return Int(outRegister)
+    }
+
+    /// Load the effective address of a memory operand into a temporary register. Returns the register ID.
+    public func loadEffectiveAddressRegister(operandIndex: Int) throws(IDAError) -> Int {
+        var outRegister: Int32 = 0
+        try checkStatus(
+            idax_microcode_context_load_effective_address_register(pointer, Int32(operandIndex), &outRegister),
+            "microcodeContext.loadEffectiveAddressRegister"
+        )
+        return Int(outRegister)
+    }
+
+    /// Allocate a temporary register in the current microcode context. Returns the register ID.
+    public func allocateTemporaryRegister(byteWidth: Int) throws(IDAError) -> Int {
+        var outRegister: Int32 = 0
+        try checkStatus(
+            idax_microcode_context_allocate_temporary_register(pointer, Int32(byteWidth), &outRegister),
+            "microcodeContext.allocateTemporaryRegister"
+        )
+        return Int(outRegister)
+    }
+
+    /// Store a register value back to an instruction operand.
+    public func storeOperandRegister(
+        operandIndex: Int,
+        source sourceRegister: Int,
+        byteWidth: Int,
+        markUserDefinedType: Bool = false
+    ) throws(IDAError) {
+        try checkStatus(
+            idax_microcode_context_store_operand_register(
+                pointer,
+                Int32(operandIndex),
+                Int32(sourceRegister),
+                Int32(byteWidth),
+                markUserDefinedType ? 1 : 0
+            ),
+            "microcodeContext.storeOperandRegister"
+        )
+    }
+
+    /// Emit register-to-register move with optional UDT marking and placement policy.
+    public func emitMoveRegister(
+        source sourceRegister: Int,
+        destination destinationRegister: Int,
+        byteWidth: Int,
+        markUserDefinedType: Bool = false,
+        policy: MicrocodeInsertPolicy? = nil
+    ) throws(IDAError) {
+        try checkStatus(
+            idax_microcode_context_emit_move_register(
+                pointer,
+                Int32(sourceRegister),
+                Int32(destinationRegister),
+                Int32(byteWidth),
+                markUserDefinedType ? 1 : 0,
+                policy.map { Int32($0.rawValue) } ?? -1
+            ),
+            "microcodeContext.emitMoveRegister"
+        )
+    }
+
+    /// Emit memory load (`m_ldx`) from selector+offset into destination register.
+    public func emitLoadMemoryRegister(
+        selectorRegister: Int,
+        offsetRegister: Int,
+        destinationRegister: Int,
+        byteWidth: Int,
+        offsetByteWidth: Int,
+        markUserDefinedType: Bool = false,
+        policy: MicrocodeInsertPolicy? = nil
+    ) throws(IDAError) {
+        try checkStatus(
+            idax_microcode_context_emit_load_memory_register(
+                pointer,
+                Int32(selectorRegister),
+                Int32(offsetRegister),
+                Int32(destinationRegister),
+                Int32(byteWidth),
+                Int32(offsetByteWidth),
+                markUserDefinedType ? 1 : 0,
+                policy.map { Int32($0.rawValue) } ?? -1
+            ),
+            "microcodeContext.emitLoadMemoryRegister"
+        )
+    }
+
+    /// Emit memory store (`m_stx`) from source register into selector+offset.
+    public func emitStoreMemoryRegister(
+        sourceRegister: Int,
+        selectorRegister: Int,
+        offsetRegister: Int,
+        byteWidth: Int,
+        offsetByteWidth: Int,
+        markUserDefinedType: Bool = false,
+        policy: MicrocodeInsertPolicy? = nil
+    ) throws(IDAError) {
+        try checkStatus(
+            idax_microcode_context_emit_store_memory_register(
+                pointer,
+                Int32(sourceRegister),
+                Int32(selectorRegister),
+                Int32(offsetRegister),
+                Int32(byteWidth),
+                Int32(offsetByteWidth),
+                markUserDefinedType ? 1 : 0,
+                policy.map { Int32($0.rawValue) } ?? -1
+            ),
+            "microcodeContext.emitStoreMemoryRegister"
+        )
+    }
+
+    /// Emit helper call with no explicit arguments.
+    public func emitHelperCall(name helperName: String) throws(IDAError) {
+        try checkStatus(
+            helperName.withCString { idax_microcode_context_emit_helper_call(pointer, $0) },
+            "microcodeContext.emitHelperCall"
+        )
+    }
+
+    /// Emit helper call with typed arguments and no return value capture.
+    public func emitHelperCall(name helperName: String, args: [MicrocodeValue]) throws(IDAError) {
+        let rawArgs = ContiguousArray(args.map { makeRawMicrocodeValue($0) })
+        var status: Int32 = 0
+        rawArgs.withUnsafeBufferPointer { argsBuffer in
+            helperName.withCString { namePtr in
+                status = idax_microcode_context_emit_helper_call_with_args(
+                    pointer, namePtr, argsBuffer.baseAddress, rawArgs.count
+                )
+            }
+        }
+        try checkStatus(status, "microcodeContext.emitHelperCallWithArgs")
+    }
+
+    /// Emit helper call with typed arguments and move the return value to a register.
+    public func emitHelperCall(
+        name helperName: String,
+        args: [MicrocodeValue],
+        destinationRegister: Int,
+        destinationByteWidth: Int,
+        destinationUnsigned: Bool = true
+    ) throws(IDAError) {
+        let rawArgs = ContiguousArray(args.map { makeRawMicrocodeValue($0) })
+        var status: Int32 = 0
+        rawArgs.withUnsafeBufferPointer { argsBuffer in
+            helperName.withCString { namePtr in
+                status = idax_microcode_context_emit_helper_call_to_register(
+                    pointer, namePtr,
+                    argsBuffer.baseAddress, rawArgs.count,
+                    Int32(destinationRegister),
+                    Int32(destinationByteWidth),
+                    destinationUnsigned ? 1 : 0
+                )
+            }
+        }
+        try checkStatus(status, "microcodeContext.emitHelperCallToRegister")
+    }
+
+    /// Emit helper call with typed arguments and store the return into an instruction operand.
+    public func emitHelperCall(
+        name helperName: String,
+        args: [MicrocodeValue],
+        destinationOperandIndex: Int,
+        destinationByteWidth: Int,
+        destinationUnsigned: Bool = true
+    ) throws(IDAError) {
+        let rawArgs = ContiguousArray(args.map { makeRawMicrocodeValue($0) })
+        var status: Int32 = 0
+        rawArgs.withUnsafeBufferPointer { argsBuffer in
+            helperName.withCString { namePtr in
+                status = idax_microcode_context_emit_helper_call_to_operand(
+                    pointer, namePtr,
+                    argsBuffer.baseAddress, rawArgs.count,
+                    Int32(destinationOperandIndex),
+                    Int32(destinationByteWidth),
+                    destinationUnsigned ? 1 : 0
+                )
+            }
+        }
+        try checkStatus(status, "microcodeContext.emitHelperCallToOperand")
+    }
+}
+
 /// Convert a C IdaxMicrocodeOperand to the Swift MicrocodeOperand value type.
 private func makeMicrocodeOperand(_ op: IdaxMicrocodeOperand) -> MicrocodeOperand {
     MicrocodeOperand(
@@ -850,6 +1221,53 @@ private func makeMicrocodeInstruction(_ raw: IdaxMicrocodeInstruction) -> Microc
         destination: makeMicrocodeOperand(raw.destination),
         floatingPointInstruction: raw.floating_point_instruction != 0
     )
+}
+
+/// Convert a Swift MicrocodeOperand to a C IdaxMicrocodeOperand for mutation calls.
+///
+/// The returned struct does NOT own any heap memory (helper_name / nested_instruction
+/// are left nil) because the mutation path in the shim does not need them.
+private func makeRawMicrocodeOperand(_ operand: MicrocodeOperand) -> IdaxMicrocodeOperand {
+    var raw = IdaxMicrocodeOperand()
+    raw.kind                     = operand.kind
+    raw.register_id               = operand.registerID
+    raw.local_variable_index      = operand.localVariableIndex
+    raw.local_variable_offset     = operand.localVariableOffset
+    raw.second_register_id        = operand.secondRegisterID
+    raw.global_address            = operand.globalAddress
+    raw.stack_offset              = operand.stackOffset
+    raw.helper_name               = nil   // not round-tripped via mutation path
+    raw.block_index               = operand.blockIndex
+    raw.nested_instruction        = nil   // not round-tripped via mutation path
+    raw.unsigned_immediate        = operand.unsignedImmediate
+    raw.signed_immediate          = operand.signedImmediate
+    raw.byte_width                = operand.byteWidth
+    raw.mark_user_defined_type    = operand.markUserDefinedType
+    return raw
+}
+
+/// Convert a Swift MicrocodeInstruction to a C IdaxMicrocodeInstruction for mutation calls.
+///
+/// The returned struct does NOT own heap memory; the caller must NOT call
+/// `idax_microcode_instruction_free` on it (helper_name/nested_instruction are nil).
+private func makeRawMicrocodeInstruction(_ instruction: MicrocodeInstruction) -> IdaxMicrocodeInstruction {
+    var raw = IdaxMicrocodeInstruction()
+    raw.opcode                    = instruction.opcode
+    raw.left                      = makeRawMicrocodeOperand(instruction.left)
+    raw.right                     = makeRawMicrocodeOperand(instruction.right)
+    raw.destination               = makeRawMicrocodeOperand(instruction.destination)
+    raw.floating_point_instruction = instruction.floatingPointInstruction ? 1 : 0
+    return raw
+}
+
+/// Convert a Swift MicrocodeValue to a C IdaxMicrocodeValue.
+private func makeRawMicrocodeValue(_ value: MicrocodeValue) -> IdaxMicrocodeValue {
+    var raw = IdaxMicrocodeValue()
+    raw.kind          = value.kind
+    raw.location_kind = value.locationKind
+    raw.data          = value.data
+    raw.byte_width    = value.byteWidth
+    return raw
 }
 
 // MARK: - Decompiler subscription
@@ -922,10 +1340,10 @@ private final class CreateHintBox {
 
 private final class MicrocodeFilterBox {
     let match: (Address, Int) -> Bool
-    let apply: (UnsafeMutableRawPointer) -> Bool
+    let apply: (MicrocodeContext) -> Bool
     init(
         match: @escaping (Address, Int) -> Bool,
-        apply: @escaping (UnsafeMutableRawPointer) -> Bool
+        apply: @escaping (MicrocodeContext) -> Bool
     ) {
         self.match = match
         self.apply = apply
@@ -976,7 +1394,7 @@ private let microcodeMatchTrampoline: @convention(c) (UnsafeMutableRawPointer?, 
 private let microcodeApplyTrampoline: @convention(c) (UnsafeMutableRawPointer?, UnsafeMutableRawPointer?) -> Int32 = { ctx, mctx in
     guard let ctx, let mctx else { return 0 }
     let box = Unmanaged<MicrocodeFilterBox>.fromOpaque(ctx).takeUnretainedValue()
-    return box.apply(mctx) ? 1 : 0
+    return box.apply(MicrocodeContext(mctx)) ? 1 : 0
 }
 
 /// Decompiler facade.
@@ -1158,7 +1576,7 @@ public enum Decompiler {
 
     public static func registerMicrocodeFilter(
         match: @escaping (Address, Int) -> Bool,
-        apply: @escaping (UnsafeMutableRawPointer) -> Bool
+        apply: @escaping (MicrocodeContext) -> Bool
     ) throws(IDAError) -> MicrocodeFilterSubscription {
         let box = MicrocodeFilterBox(match: match, apply: apply)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1180,79 +1598,6 @@ public enum Decompiler {
         return MicrocodeFilterSubscription(token: token, context: ctx)
     }
 
-    // MARK: - Microcode context inspection
-
-    public static func microcodeContextAddress(_ mctx: UnsafeRawPointer) throws(IDAError) -> Address {
-        try withOutput("decompiler.microcodeContextAddress", UInt64(0)) {
-            idax_decompiler_microcode_context_address(mctx, $0)
-        }
-    }
-
-    public static func microcodeContextInstructionType(_ mctx: UnsafeRawPointer) throws(IDAError) -> Int {
-        var out: Int32 = 0
-        try checkStatus(
-            idax_decompiler_microcode_context_instruction_type(mctx, &out),
-            "decompiler.microcodeContextInstructionType"
-        )
-        return Int(out)
-    }
-
-    public static func microcodeContextBlockInstructionCount(_ mctx: UnsafeRawPointer) throws(IDAError) -> Int {
-        var out: Int32 = 0
-        try checkStatus(
-            idax_decompiler_microcode_context_block_instruction_count(mctx, &out),
-            "decompiler.microcodeContextBlockInstructionCount"
-        )
-        return Int(out)
-    }
-
-    public static func microcodeContextHasInstructionAtIndex(_ mctx: UnsafeRawPointer, index: Int) throws(IDAError) -> Bool {
-        var out: Int32 = 0
-        try checkStatus(
-            idax_decompiler_microcode_context_has_instruction_at_index(mctx, Int32(index), &out),
-            "decompiler.microcodeContextHasInstructionAtIndex"
-        )
-        return out != 0
-    }
-
-    public static func microcodeContextInstruction(_ mctx: UnsafeRawPointer) throws(IDAError) -> Instruction {
-        var raw = IdaxInstruction()
-        try checkStatus(
-            idax_decompiler_microcode_context_instruction(mctx, &raw),
-            "decompiler.microcodeContextInstruction"
-        )
-        defer { idax_instruction_free(&raw) }
-        return Instruction(raw: raw)
-    }
-
-    public static func microcodeContextInstructionAtIndex(_ mctx: UnsafeRawPointer, index: Int) throws(IDAError) -> MicrocodeInstruction {
-        var raw = IdaxMicrocodeInstruction()
-        try checkStatus(
-            idax_decompiler_microcode_context_instruction_at_index(mctx, Int32(index), &raw),
-            "decompiler.microcodeContextInstructionAtIndex"
-        )
-        defer { idax_microcode_instruction_free(&raw) }
-        return makeMicrocodeInstruction(raw)
-    }
-
-    public static func microcodeContextHasLastEmittedInstruction(_ mctx: UnsafeRawPointer) throws(IDAError) -> Bool {
-        var out: Int32 = 0
-        try checkStatus(
-            idax_decompiler_microcode_context_has_last_emitted_instruction(mctx, &out),
-            "decompiler.microcodeContextHasLastEmittedInstruction"
-        )
-        return out != 0
-    }
-
-    public static func microcodeContextLastEmittedInstruction(_ mctx: UnsafeRawPointer) throws(IDAError) -> MicrocodeInstruction {
-        var raw = IdaxMicrocodeInstruction()
-        try checkStatus(
-            idax_decompiler_microcode_context_last_emitted_instruction(mctx, &raw),
-            "decompiler.microcodeContextLastEmittedInstruction"
-        )
-        defer { idax_microcode_instruction_free(&raw) }
-        return makeMicrocodeInstruction(raw)
-    }
 }
 
 /// Lightweight handle to a decompiler pseudocode view.
