@@ -6,13 +6,13 @@ import Darwin
 /// UI event snapshot from the IDA kernel.
 ///
 /// Maps directly to C `IdaxUIEvent`. Raw widget/previous_widget void
-/// pointers are omitted — use `widgetId` / `previousWidgetId` instead.
+/// pointers are omitted — use `widgetID` / `previousWidgetID` instead.
 public struct UIEvent: Sendable {
     public let kind: Int32
     public let address: Address
     public let previousAddress: Address
-    public let widgetId: UInt64
-    public let previousWidgetId: UInt64
+    public let widgetID: UInt64
+    public let previousWidgetID: UInt64
     public let isNewDatabase: Bool
     public let startupScript: String
     public let widgetTitle: String
@@ -31,7 +31,7 @@ public struct ShowWidgetOptions: Sendable {
 
 /// Popup event snapshot from the IDA kernel.
 public struct PopupEvent: @unchecked Sendable {
-    public let widgetId: UInt64
+    public let widgetID: UInt64
     public let widgetTitle: String
     public let widgetType: Int32
     // Raw widget/popup void pointers kept as opaque for attachDynamicAction use.
@@ -117,9 +117,9 @@ public struct Widget: @unchecked Sendable {
     }
 
     /// The widget's unique identifier.
-    public var widgetId: UInt64 {
+    public var widgetID: UInt64 {
         get throws(IDAError) {
-            try withOutput("ui.widgetId", UInt64(0)) { idax_ui_widget_id(handle, $0) }
+            try withOutput("ui.widgetID", UInt64(0)) { idax_ui_widget_id(handle, $0) }
         }
     }
 
@@ -937,8 +937,8 @@ private func makeUIEvent(_ raw: UnsafePointer<IdaxUIEvent>) -> UIEvent {
         kind: raw.pointee.kind,
         address: raw.pointee.address,
         previousAddress: raw.pointee.previous_address,
-        widgetId: raw.pointee.widget_id,
-        previousWidgetId: raw.pointee.previous_widget_id,
+        widgetID: raw.pointee.widget_id,
+        previousWidgetID: raw.pointee.previous_widget_id,
         isNewDatabase: raw.pointee.is_new_database != 0,
         startupScript: borrowCString(raw.pointee.startup_script),
         widgetTitle: borrowCString(raw.pointee.widget_title)
@@ -947,7 +947,7 @@ private func makeUIEvent(_ raw: UnsafePointer<IdaxUIEvent>) -> UIEvent {
 
 private func makePopupEvent(_ raw: UnsafePointer<IdaxPopupEvent>) -> PopupEvent {
     PopupEvent(
-        widgetId: raw.pointee.widget_id,
+        widgetID: raw.pointee.widget_id,
         widgetTitle: borrowCString(raw.pointee.widget_title),
         widgetType: raw.pointee.widget_type,
         rawWidget: raw.pointee.widget,
