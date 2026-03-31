@@ -26,6 +26,21 @@ public struct FunctionTypeArguments: ~Copyable {
     }
 }
 
+/// Calling convention for function types.
+///
+/// Mirrors C++ `ida::type::CallingConvention`.
+public enum CallingConvention: Int32, Sendable {
+    case unknown = 0
+    case cdecl = 1
+    case stdcall = 2
+    case pascal = 3
+    case fastcall = 4
+    case thiscall = 5
+    case swift = 6
+    case golang = 7
+    case userDefined = 8
+}
+
 /// Opaque type handle wrapping IDA's type system.
 ///
 /// Move-only value — `deinit` frees the underlying handle.
@@ -149,7 +164,7 @@ public struct TypeHandle: ~Copyable, @unchecked Sendable {
 
     public static func functionType(
         returnType: borrowing TypeHandle,
-        callingConvention: Int = 0,
+        callingConvention: CallingConvention = .unknown,
         hasVarargs: Bool = false,
         arguments: (inout FunctionTypeArguments) -> Void
     ) throws(IDAError) -> TypeHandle {
@@ -161,7 +176,7 @@ public struct TypeHandle: ~Copyable, @unchecked Sendable {
                 returnType.handle,
                 buf.baseAddress,
                 buf.count,
-                Int32(callingConvention),
+                callingConvention.rawValue,
                 hasVarargs ? 1 : 0,
                 &out
             )
@@ -219,11 +234,15 @@ public struct TypeHandle: ~Copyable, @unchecked Sendable {
         return TypeHandle(cloned)
     }
 
-    public var callingConvention: Int {
+    public var callingConvention: CallingConvention {
         get throws(IDAError) {
             var out: Int32 = 0
             try checkStatus(idax_type_calling_convention(handle, &out), "type.callingConvention")
-            return Int(out)
+            guard let convention = CallingConvention(rawValue: out) else {
+                throw IDAError(category: .unsupported, code: out,
+                               message: "unknown calling convention: \(out)")
+            }
+            return convention
         }
     }
 
