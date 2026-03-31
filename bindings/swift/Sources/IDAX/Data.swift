@@ -214,7 +214,25 @@ public enum Data {
         raw.signed_value = value.signedValue
         raw.floating_value = value.floatingValue
         raw.pointer_value = value.pointerValue
-        // For simple scalar types this works; string/bytes/array need more work
+        // Handle string case: keep a null-terminated UTF-8 copy alive for the call.
+        if value.kind == .string {
+            var nullTerminated = Array(value.stringValue.utf8) + [0]
+            nullTerminated.withUnsafeMutableBufferPointer { buffer in
+                raw.string_value = buffer.baseAddress.map { UnsafeMutablePointer<CChar>(OpaquePointer($0)) }
+            }
+            try checkStatus(idax_data_write_typed(address, type.handle, &raw), "data.writeTyped")
+            return
+        }
+        // Handle bytes case: pass a raw pointer to a mutable copy of the byte buffer.
+        if value.kind == .bytes {
+            var mutableBytes = value.bytes
+            mutableBytes.withUnsafeMutableBufferPointer { buffer in
+                raw.bytes = buffer.baseAddress
+                raw.byte_count = buffer.count
+            }
+            try checkStatus(idax_data_write_typed(address, type.handle, &raw), "data.writeTyped")
+            return
+        }
         try checkStatus(idax_data_write_typed(address, type.handle, &raw), "data.writeTyped")
     }
 
