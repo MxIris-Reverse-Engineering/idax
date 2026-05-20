@@ -410,6 +410,36 @@ public enum Plugin {
             "plugin.withDecompilerViewHost"
         )
     }
+
+    // MARK: - Plugin Invocation
+
+    /// Whether a plugin can be located by its name.
+    ///
+    /// - Parameter name: The plugin's short name (e.g. "dscu") — the base
+    ///   name of the plugin module, not a file path.
+    /// - Returns: `true` when the plugin is registered and available to run.
+    public static func isPluginAvailable(_ name: String) -> Bool {
+        name.withCString { idax_plugin_is_plugin_available($0) } != 0
+    }
+
+    /// Load (if needed) and run a plugin by name.
+    ///
+    /// Invokes one of IDA's bundled plugins (such as "dscu") or any
+    /// third-party plugin. The meaning of `argument` is defined entirely by
+    /// the target plugin. For dyld shared cache utilities, prefer the typed
+    /// `DyldCache` API over calling this directly.
+    ///
+    /// - Parameters:
+    ///   - name: The plugin's short name.
+    ///   - argument: Plugin-specific argument (0 by default).
+    public static func runPlugin(
+        _ name: String, argument: Int = 0
+    ) throws(IDAError) {
+        try checkStatus(
+            name.withCString { idax_plugin_run_plugin($0, argument) },
+            "plugin.runPlugin"
+        )
+    }
 }
 
 // MARK: - Callback Boxes
