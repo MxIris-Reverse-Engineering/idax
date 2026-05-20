@@ -84,7 +84,7 @@ swift test
 
 ### Library Structure
 
-- **Static library** (`libidax.a`) with 27 `.cpp` compilation units, one per domain namespace
+- **Static library** (`libidax.a`) with 28 `.cpp` compilation units, one per domain namespace
 - **SDK-agnostic linkage**: consumers link `idax::idax` plus their own `idasdk::plugin`, `idasdk::idalib`, or `idasdk::loader`
 - **Value semantics**: `Segment`, `Function`, `Instruction`, `Operand`, `TypeInfo` are value snapshots, not live SDK pointers
 - **Pimpl for heavy types**: `TypeInfo` hides `tinfo_t` via `detail/type_impl.hpp`; `DecompiledFunction` holds a ref-counted `cfuncptr_t` and is move-only
@@ -92,9 +92,9 @@ swift test
 
 ### Domain Namespace Map
 
-29 public headers in `include/ida/`, each mapping to a `src/*.cpp`:
+30 public headers in `include/ida/`, each mapping to a `src/*.cpp`:
 
-`address`, `analysis`, `comment`, `core`, `data`, `database`, `debugger`, `decompiler`, `diagnostics`, `entry`, `error`, `event`, `fixup`, `function`, `graph`, `instruction`, `lines`, `loader`, `lumina`, `name`, `plugin`, `processor`, `search`, `segment`, `storage`, `type`, `ui`, `xref`
+`address`, `analysis`, `comment`, `core`, `data`, `database`, `debugger`, `decompiler`, `diagnostics`, `dyld_cache`, `entry`, `error`, `event`, `fixup`, `function`, `graph`, `instruction`, `lines`, `loader`, `lumina`, `name`, `plugin`, `processor`, `search`, `segment`, `storage`, `type`, `ui`, `xref`
 
 Master include: `#include <ida/idax.hpp>`
 
@@ -106,7 +106,7 @@ All fallible operations return `ida::Result<T>` (`std::expected<T, ida::Error>`)
 
 - **Rust** (`bindings/rust/`): Cargo workspace with `idax-sys` (raw FFI via C shim + bindgen) and `idax` (safe idiomatic layer). The C shim (`idax-sys/shim/`) uses thread-local error state. `build.rs` invokes CMake to build `libidax.a`, then `cc` for the shim, then `bindgen`.
 - **Node.js** (`bindings/node/`): Native addon via `cmake-js` + `nan`. 20 C++ bind files in `src/`, JS wrapper in `lib/index.js` with TypeScript declarations. Addresses are `BigInt`, errors throw `IdaxError`.
-- **Swift** (`bindings/swift/`): SPM package (Package.swift at repo root) with two targets — `CIDAX` (raw C shim module) and `IDAX` (safe Swift wrapper). Uses Swift 6.0 typed throws (`throws(IDAError)`). 20 namespace files mirror the C++ library. Dual-mode: consumer mode uses `CIDAX.xcframework` (binaryTarget), developer mode (`IDAX_DEV=1`) links pre-built `.a` files. IDA dylibs loaded at runtime via dlopen.
+- **Swift** (`bindings/swift/`): SPM package (Package.swift at repo root) with two targets — `CIDAX` (raw C shim module) and `IDAX` (safe Swift wrapper). Uses Swift 6.0 typed throws (`throws(IDAError)`). 21 namespace files mirror the C++ library. Dual-mode: consumer mode uses `CIDAX.xcframework` (binaryTarget), developer mode (`IDAX_DEV=1`) links pre-built `.a` files. IDA dylibs loaded at runtime via dlopen.
 
 ### Testing Layers
 
