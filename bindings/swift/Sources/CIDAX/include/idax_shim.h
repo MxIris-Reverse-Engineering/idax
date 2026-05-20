@@ -2,7 +2,7 @@
  * @file idax_shim.h
  * @brief C shim declarations for the idax C++ IDA SDK wrapper library.
  *
- * This header declares extern "C" functions covering all 27 idax namespaces.
+ * This header declares extern "C" functions covering all 28 idax namespaces.
  * It is consumed by bindgen to produce Rust FFI bindings.
  *
  * Error convention:
@@ -2276,6 +2276,36 @@ int idax_lumina_pull(const uint64_t* __counted_by(count) addresses __noescape,
 int idax_lumina_push(const uint64_t* __counted_by(count) addresses __noescape,
                      size_t count, int push_mode, int feature,
                      IdaxLuminaBatchResult* out);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Dyld shared cache (ida::dyld_cache)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** A single image (module) inside a dyld shared cache.
+ *  Free an array returned by idax_dyld_cache_list_modules() with
+ *  idax_dyld_cache_list_modules_free(). */
+typedef struct IdaxDyldCacheModule {
+    char*    path;
+    uint64_t load_address;
+} IdaxDyldCacheModule;
+
+int idax_dyld_cache_is_available(void);
+int idax_dyld_cache_list_modules(IdaxDyldCacheModule** out, size_t* count);
+void idax_dyld_cache_list_modules_free(IdaxDyldCacheModule* modules, size_t count);
+int idax_dyld_cache_load_module(const char* module_path);
+int idax_dyld_cache_load_section(uint64_t address);
+int idax_dyld_cache_load_dyld_header(void);
+int idax_dyld_cache_load_branch_islands(size_t* out);
+int idax_dyld_cache_load_branch_mappings(size_t* out);
+int idax_dyld_cache_load_global_offset_tables(size_t* out);
+int idax_dyld_cache_load_gaps(size_t* out);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Plugin invocation (ida::plugin)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+int idax_plugin_is_plugin_available(const char* plugin_name);
+int idax_plugin_run_plugin(const char* plugin_name, size_t argument);
 
 #ifdef __cplusplus
 } /* extern "C" */

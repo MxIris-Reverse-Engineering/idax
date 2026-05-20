@@ -651,3 +651,17 @@ struct RuntimeTests {
         }
     }
 }
+
+// MARK: - DyldCache Types
+
+@Suite("IDA DyldCacheModule")
+struct DyldCacheModuleTests {
+    @Test func basicConstruction() {
+        let module = DyldCacheModule(
+            path: "/usr/lib/libobjc.A.dylib",
+            loadAddress: 0x1_8000_0000
+        )
+        #expect(module.path == "/usr/lib/libobjc.A.dylib")
+        #expect(module.loadAddress == 0x1_8000_0000)
+    }
+}
