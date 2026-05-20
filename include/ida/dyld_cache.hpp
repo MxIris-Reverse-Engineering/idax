@@ -1,0 +1,120 @@
+/// \file dyld_cache.hpp
+/// \brief dyld shared cache utilities — programmatic access to the bundled
+///        IDA "dscu" plugin.
+///
+/// IDA ships a "dscu" (dyld shared cache utils) plugin that becomes available
+/// when a database is opened from a dyld shared cache using the "single
+/// module" option. This namespace exposes that plugin's functionality as a
+/// typed, programmatic API: enumerate the cache's modules and load modules,
+/// regions, branch islands, branch mappings, global offset tables, gaps, and
+/// the cache header into the database.
+///
+/// All operations are deterministic and require no GUI interaction — the
+/// "load all" operations bypass IDA's interactive chooser dialogs, so they
+/// behave identically in GUI plugins and in headless (idalib) tools.
+///
+/// Every function fails with an Unsupported error when the current database
+/// was not opened from a dyld shared cache. Check is_available() first.
+///
+/// Example:
+/// ```cpp
+/// #include <ida/dyld_cache.hpp>
+///
+/// if (ida::dyld_cache::is_available()) {
+///     ida::dyld_cache::load_module("/usr/lib/libobjc.A.dylib");
+///     ida::dyld_cache::load_branch_islands();
+/// }
+/// ```
+
+#ifndef IDAX_DYLD_CACHE_HPP
+#define IDAX_DYLD_CACHE_HPP
+
+#include <ida/error.hpp>
+#include <ida/address.hpp>
+#include <cstddef>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace ida::dyld_cache {
+
+// ── Module enumeration ──────────────────────────────────────────────────
+
+/// A single image (module) contained in a dyld shared cache.
+struct ModuleInfo {
+    std::string path;  ///< Full path inside the cache (e.g. "/usr/lib/libobjc.A.dylib").
+    Address     load_address{BadAddress};  ///< Mach-O header address within the cache.
+};
+
+// ── Availability ────────────────────────────────────────────────────────
+
+/// Whether dyld shared cache utilities are available for the current database.
+///
+/// Returns true only when the database was opened from a dyld shared cache
+/// with the "single module" option (which loads the bundled "dscu" plugin).
+/// When this returns false, every other function here fails with an
+/// Unsupported error.
+bool is_available();
+
+// ── Queries ─────────────────────────────────────────────────────────────
+
+/// Enumerate every module (image) contained in the dyld shared cache.
+///
+/// Parses the cache header of the input file directly, so it works before
+/// any module has been loaded. Use the returned paths with load_module().
+Result<std::vector<ModuleInfo>> list_modules();
+
+// ── Loading ─────────────────────────────────────────────────────────────
+
+/// Load one module (image) from the shared cache by its full path.
+///
+/// @param module_path  Full path inside the cache, e.g. "/usr/lib/libobjc.A.dylib"
+///                      (see list_modules()).
+Status load_module(std::string_view module_path);
+
+/// Load the shared-cache region that contains \p address.
+///
+/// The region kind — a module section, branch island, branch mapping,
+/// global offset table, or gap — is detected automatically from the
+/// address. This is the quickest way to resolve a single reference that
+/// shows up as `MEMORY[0x...]` in the disassembly.
+///
+/// @param address  Any address that falls inside the desired region.
+Status load_section(Address address);
+
+/// Load the formatted `dyld_cache_header` structure into the database.
+///
+/// Requires the initial auto-analysis to have completed.
+Status load_dyld_header();
+
+/// Load every branch-island region from the shared cache.
+///
+/// Branch islands are intermediate stub sequences that bridge calls between
+/// distant modules; loading them resolves indirect branches.
+///
+/// @return The number of branch-island regions loaded.
+Result<std::size_t> load_branch_islands();
+
+/// Load every branch-mapping region from the shared cache (iOS 16+).
+///
+/// Branch mappings carry stub code that routes calls between cache modules.
+///
+/// @return The number of branch-mapping regions loaded.
+Result<std::size_t> load_branch_mappings();
+
+/// Load every global-offset-table region from the shared cache (iOS 16+).
+///
+/// @return The number of global-offset-table regions loaded.
+Result<std::size_t> load_global_offset_tables();
+
+/// Load every gap region from the shared cache.
+///
+/// Gaps are unmapped regions between cache modules; loading them can reveal
+/// data or code that IDA did not map initially.
+///
+/// @return The number of gap regions loaded.
+Result<std::size_t> load_gaps();
+
+} // namespace ida::dyld_cache
+
+#endif // IDAX_DYLD_CACHE_HPP
