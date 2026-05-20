@@ -777,6 +777,11 @@ void check_plugin_surface() {
     (void)static_cast<ActionContextWithWidgetHostFn>(&ida::plugin::with_widget_host);
     (void)static_cast<ActionContextDecompilerViewHostFn>(&ida::plugin::decompiler_view_host);
     (void)static_cast<ActionContextWithDecompilerViewHostFn>(&ida::plugin::with_decompiler_view_host);
+
+    using IsPluginAvailableFn = bool(*)(std::string_view);
+    using RunPluginFn = ida::Status(*)(std::string_view, std::size_t);
+    (void)static_cast<IsPluginAvailableFn>(&ida::plugin::is_plugin_available);
+    (void)static_cast<RunPluginFn>(&ida::plugin::run_plugin);
 }
 
 // ─── ida::loader ────────────────────────────────────────────────────────
@@ -1895,6 +1900,31 @@ void check_core_surface() {
     (void)wo.poll_interval_ms;
 }
 
+// ─── ida::dyld_cache ────────────────────────────────────────────────────
+
+void check_dyld_cache_surface() {
+    ida::dyld_cache::ModuleInfo module_info;
+    (void)module_info.path;
+    (void)module_info.load_address;
+
+    using IsAvailableFn = bool(*)();
+    using ListModulesFn = ida::Result<std::vector<ida::dyld_cache::ModuleInfo>>(*)();
+    using LoadModuleFn = ida::Status(*)(std::string_view);
+    using LoadSectionFn = ida::Status(*)(ida::Address);
+    using LoadDyldHeaderFn = ida::Status(*)();
+    using LoadCountFn = ida::Result<std::size_t>(*)();
+
+    (void)static_cast<IsAvailableFn>(&ida::dyld_cache::is_available);
+    (void)static_cast<ListModulesFn>(&ida::dyld_cache::list_modules);
+    (void)static_cast<LoadModuleFn>(&ida::dyld_cache::load_module);
+    (void)static_cast<LoadSectionFn>(&ida::dyld_cache::load_section);
+    (void)static_cast<LoadDyldHeaderFn>(&ida::dyld_cache::load_dyld_header);
+    (void)static_cast<LoadCountFn>(&ida::dyld_cache::load_branch_islands);
+    (void)static_cast<LoadCountFn>(&ida::dyld_cache::load_branch_mappings);
+    (void)static_cast<LoadCountFn>(&ida::dyld_cache::load_global_offset_tables);
+    (void)static_cast<LoadCountFn>(&ida::dyld_cache::load_gaps);
+}
+
 } // namespace surface_check
 
 // ─── Namespace count verification ────────────────────────────────────────
@@ -1966,6 +1996,7 @@ int main() {
     surface_check::check_storage_surface();    namespaces_verified++;
     surface_check::check_diagnostics_surface();namespaces_verified++;
     surface_check::check_core_surface();       namespaces_verified++;
+    surface_check::check_dyld_cache_surface(); namespaces_verified++;
 
     CHECK(namespaces_verified == 28, "all 28 namespace surfaces verified");
 
