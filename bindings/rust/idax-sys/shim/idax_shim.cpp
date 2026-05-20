@@ -5413,8 +5413,12 @@ int idax_decompiled_has_orphan_comments(void* handle, int* out_result) {
 }
 
 int idax_decompiled_remove_orphan_comments(void* handle, int* out_removed_count) {
+    clear_error();
     auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
-    RETURN_RESULT_VALUE(df->remove_orphan_comments());
+    auto r = df->remove_orphan_comments();
+    if (!r) return fail(r.error());
+    *out_removed_count = *r;
+    return 0;
 }
 
 int idax_decompiled_address_map(void* handle, uint64_t** out_line_numbers,
@@ -8426,7 +8430,7 @@ struct ProcessorBridge final : ida::processor::Processor {
         int size = 0;
         int ret = callbacks.analyze(callbacks.context, address, &size);
         if (ret != 0) {
-            return std::unexpected(ida::Error::sdk_failure("analyze callback failed"));
+            return std::unexpected(ida::Error::sdk("analyze callback failed"));
         }
         return size;
     }
@@ -8790,4 +8794,92 @@ void idax_output_context_token(void* ctx, int kind, const char* text) {
     if (ctx && text)
         static_cast<ida::processor::OutputContext*>(ctx)->token(
             static_cast<ida::processor::OutputTokenKind>(kind), text);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Dyld shared cache
+// ═══════════════════════════════════════════════════════════════════════════
+
+int idax_dyld_cache_is_available(void) {
+    return ida::dyld_cache::is_available() ? 1 : 0;
+}
+
+int idax_dyld_cache_list_modules(IdaxDyldCacheModule** out, size_t* count) {
+    clear_error();
+    auto r = ida::dyld_cache::list_modules();
+    if (!r) return fail(r.error());
+    auto& modules = *r;
+    *count = modules.size();
+    if (modules.empty()) {
+        *out = nullptr;
+        return 0;
+    }
+
+    *out = static_cast<IdaxDyldCacheModule*>(
+        std::calloc(modules.size(), sizeof(IdaxDyldCacheModule)));
+    if (*out == nullptr) return fail(ida::Error::internal("malloc failed"));
+
+    for (size_t i = 0; i < modules.size(); ++i) {
+        (*out)[i].load_address = modules[i].load_address;
+        (*out)[i].path = dup_string(modules[i].path);
+        if ((*out)[i].path == nullptr && !modules[i].path.empty()) {
+            idax_dyld_cache_list_modules_free(*out, i + 1);
+            *out = nullptr;
+            *count = 0;
+            return fail(ida::Error::internal("malloc failed"));
+        }
+    }
+    return 0;
+}
+
+void idax_dyld_cache_list_modules_free(IdaxDyldCacheModule* modules, size_t count) {
+    if (modules == nullptr) return;
+    for (size_t i = 0; i < count; ++i)
+        std::free(modules[i].path);
+    std::free(modules);
+}
+
+int idax_dyld_cache_load_module(const char* module_path) {
+    if (module_path == nullptr)
+        return fail(ida::Error::validation("module path is null"));
+    RETURN_STATUS(ida::dyld_cache::load_module(module_path));
+}
+
+int idax_dyld_cache_load_section(uint64_t address) {
+    RETURN_STATUS(ida::dyld_cache::load_section(address));
+}
+
+int idax_dyld_cache_load_dyld_header(void) {
+    RETURN_STATUS(ida::dyld_cache::load_dyld_header());
+}
+
+int idax_dyld_cache_load_branch_islands(size_t* out) {
+    RETURN_RESULT_VALUE(ida::dyld_cache::load_branch_islands());
+}
+
+int idax_dyld_cache_load_branch_mappings(size_t* out) {
+    RETURN_RESULT_VALUE(ida::dyld_cache::load_branch_mappings());
+}
+
+int idax_dyld_cache_load_global_offset_tables(size_t* out) {
+    RETURN_RESULT_VALUE(ida::dyld_cache::load_global_offset_tables());
+}
+
+int idax_dyld_cache_load_gaps(size_t* out) {
+    RETURN_RESULT_VALUE(ida::dyld_cache::load_gaps());
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Plugin invocation
+// ═══════════════════════════════════════════════════════════════════════════
+
+int idax_plugin_is_plugin_available(const char* plugin_name) {
+    if (plugin_name == nullptr) return 0;
+    return ida::plugin::is_plugin_available(plugin_name) ? 1 : 0;
+}
+
+int idax_plugin_run_plugin(const char* plugin_name, size_t argument) {
+    if (plugin_name == nullptr)
+        return fail(ida::Error::validation("plugin name is null"));
+    RETURN_STATUS(ida::plugin::run_plugin(plugin_name, argument));
 }
