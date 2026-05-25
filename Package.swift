@@ -60,5 +60,24 @@ let package = Package(
             dependencies: ["IDAX"],
             path: "bindings/swift/Tests/IDAXTests"
         ),
+        .plugin(
+            name: "BuildXCFramework",
+            capability: .command(
+                intent: .custom(
+                    verb: "build-xcframework",
+                    description: "Build CIDAX.xcframework (macOS arm64 + x86_64) from the C++ sources."
+                ),
+                permissions: [
+                    .writeToPackageDirectory(
+                        reason: "Write the generated CIDAX.xcframework and CMake build artifacts into the package directory."
+                    ),
+                    .allowNetworkConnections(
+                        scope: .all(),
+                        reason: "CMake FetchContent may download the IDA SDK when IDASDK is unset."
+                    ),
+                ]
+            ),
+            path: "bindings/swift/Plugins/BuildXCFramework"
+        ),
     ]
 )
