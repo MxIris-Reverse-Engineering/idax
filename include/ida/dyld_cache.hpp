@@ -65,12 +65,24 @@ bool is_available();
 Result<std::vector<ModuleInfo>> list_modules();
 
 // ── Loading ─────────────────────────────────────────────────────────────
+//
+// Every load_* operation accepts `wait_for_analysis` (default: false).
+// dscu maps regions and creates segments synchronously, then queues
+// auto-analysis for the new code. Setting `wait_for_analysis = true`
+// drains that queue before returning, ensuring the database is in a
+// quiescent, fully-analysed state. The default is false because draining
+// the queue on a multi-gigabyte macOS shared cache can take tens of
+// minutes (CPU-bound, looks like a hang). Callers that need analysis
+// completed can either pass `true` or invoke ida::analysis::wait()
+// explicitly when they are done batching loads.
 
 /// Load one module (image) from the shared cache by its full path.
 ///
-/// @param module_path  Full path inside the cache, e.g. "/usr/lib/libobjc.A.dylib"
-///                      (see list_modules()).
-Status load_module(std::string_view module_path);
+/// @param module_path        Full path inside the cache, e.g.
+///                            "/usr/lib/libobjc.A.dylib" (see list_modules()).
+/// @param wait_for_analysis  Drain the auto-analysis queue before returning.
+Status load_module(std::string_view module_path,
+                   bool wait_for_analysis = false);
 
 /// Load the shared-cache region that contains \p address.
 ///
@@ -79,41 +91,48 @@ Status load_module(std::string_view module_path);
 /// address. This is the quickest way to resolve a single reference that
 /// shows up as `MEMORY[0x...]` in the disassembly.
 ///
-/// @param address  Any address that falls inside the desired region.
-Status load_section(Address address);
+/// @param address            Any address that falls inside the desired region.
+/// @param wait_for_analysis  Drain the auto-analysis queue before returning.
+Status load_section(Address address, bool wait_for_analysis = false);
 
 /// Load the formatted `dyld_cache_header` structure into the database.
 ///
 /// Requires the initial auto-analysis to have completed.
-Status load_dyld_header();
+///
+/// @param wait_for_analysis  Drain the auto-analysis queue before returning.
+Status load_dyld_header(bool wait_for_analysis = false);
 
 /// Load every branch-island region from the shared cache.
 ///
 /// Branch islands are intermediate stub sequences that bridge calls between
 /// distant modules; loading them resolves indirect branches.
 ///
+/// @param wait_for_analysis  Drain the auto-analysis queue before returning.
 /// @return The number of branch-island regions loaded.
-Result<std::size_t> load_branch_islands();
+Result<std::size_t> load_branch_islands(bool wait_for_analysis = false);
 
 /// Load every branch-mapping region from the shared cache (iOS 16+).
 ///
 /// Branch mappings carry stub code that routes calls between cache modules.
 ///
+/// @param wait_for_analysis  Drain the auto-analysis queue before returning.
 /// @return The number of branch-mapping regions loaded.
-Result<std::size_t> load_branch_mappings();
+Result<std::size_t> load_branch_mappings(bool wait_for_analysis = false);
 
 /// Load every global-offset-table region from the shared cache (iOS 16+).
 ///
+/// @param wait_for_analysis  Drain the auto-analysis queue before returning.
 /// @return The number of global-offset-table regions loaded.
-Result<std::size_t> load_global_offset_tables();
+Result<std::size_t> load_global_offset_tables(bool wait_for_analysis = false);
 
 /// Load every gap region from the shared cache.
 ///
 /// Gaps are unmapped regions between cache modules; loading them can reveal
 /// data or code that IDA did not map initially.
 ///
+/// @param wait_for_analysis  Drain the auto-analysis queue before returning.
 /// @return The number of gap regions loaded.
-Result<std::size_t> load_gaps();
+Result<std::size_t> load_gaps(bool wait_for_analysis = false);
 
 } // namespace ida::dyld_cache
 

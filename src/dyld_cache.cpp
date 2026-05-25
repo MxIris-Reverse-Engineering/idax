@@ -106,11 +106,18 @@ netnode dscu_netnode() {
     return netnode(kDscuNetnode, 0, /*do_create=*/true);
 }
 
-/// Run the dscu plugin with the given mode, then drain auto-analysis so the
-/// newly mapped regions are fully analysed before control returns.
-bool run_dscu(std::size_t mode) {
+/// Run the dscu plugin with the given mode.
+///
+/// dscu maps the requested regions and creates the corresponding segments
+/// *synchronously* inside load_and_run_plugin. It then queues auto-analysis
+/// for the new code. `wait_for_analysis` controls whether to drain that
+/// queue before returning. The default (false) avoids what can look like a
+/// hang on multi-gigabyte macOS shared caches, where cascading analysis can
+/// take tens of minutes.
+bool run_dscu(std::size_t mode, bool wait_for_analysis) {
     bool succeeded = ::load_and_run_plugin(kDscuPlugin, mode);
-    ::auto_wait();
+    if (wait_for_analysis)
+        ::auto_wait();
     return succeeded;
 }
 
@@ -250,7 +257,8 @@ std::vector<Region> enumerate_regions(std::uint32_t wanted_type) {
 /// entries. dscu reports failure in headless mode even on success, so the
 /// number of regions that actually produced a segment is returned instead.
 Result<std::size_t> load_all_regions(std::uint32_t region_type,
-                                     uchar tag, std::size_t mode) {
+                                     uchar tag, std::size_t mode,
+                                     bool wait_for_analysis) {
     if (auto status = ensure_available(); !status)
         return std::unexpected(status.error());
 
@@ -264,7 +272,7 @@ Result<std::size_t> load_all_regions(std::uint32_t region_type,
         node.supset(static_cast<nodeidx_t>(region.start),
                     &end_value, sizeof(end_value), tag);
     }
-    run_dscu(mode);  // result ignored — verified via segment presence below
+    run_dscu(mode, wait_for_analysis);  // result ignored — verified via segment presence below
 
     std::size_t loaded = 0;
     for (const Region& region : regions) {
@@ -321,7 +329,7 @@ Result<std::vector<ModuleInfo>> list_modules() {
     return modules;
 }
 
-Status load_module(std::string_view module_path) {
+Status load_module(std::string_view module_path, bool wait_for_analysis) {
     if (module_path.empty())
         return std::unexpected(Error::validation("Module path cannot be empty"));
     if (auto status = ensure_available(); !status)
@@ -331,12 +339,12 @@ Status load_module(std::string_view module_path) {
     netnode node = dscu_netnode();
     // dscu mode 1 reads the module path from supval key 2 (NUL-terminated).
     node.supset(kKeyModulePath, path.c_str(), path.size() + 1);
-    if (!run_dscu(kModeLoadModule))
+    if (!run_dscu(kModeLoadModule, wait_for_analysis))
         return std::unexpected(Error::sdk("dscu failed to load the module", path));
     return ida::ok();
 }
 
-Status load_section(Address address) {
+Status load_section(Address address, bool wait_for_analysis) {
     if (auto status = ensure_available(); !status)
         return status;
 
@@ -345,7 +353,7 @@ Status load_section(Address address) {
     node.altset(kKeyRegionAddr, static_cast<uval_t>(address));
     // dscu mode 2 reports failure in headless mode even on success, so the
     // outcome is verified by checking for a segment covering `address`.
-    run_dscu(kModeLoadSection);
+    run_dscu(kModeLoadSection, wait_for_analysis);
     if (::getseg(static_cast<ea_t>(address)) == nullptr) {
         return std::unexpected(Error::not_found(
             "No dyld shared cache region was loaded for the address; it may "
@@ -354,10 +362,10 @@ Status load_section(Address address) {
     return ida::ok();
 }
 
-Status load_dyld_header() {
+Status load_dyld_header(bool wait_for_analysis) {
     if (auto status = ensure_available(); !status)
         return status;
-    if (!run_dscu(kModeLoadHeader)) {
+    if (!run_dscu(kModeLoadHeader, wait_for_analysis)) {
         return std::unexpected(Error::sdk(
             "dscu failed to load the dyld cache header; the initial "
             "auto-analysis must have completed first"));
@@ -365,7 +373,7 @@ Status load_dyld_header() {
     return ida::ok();
 }
 
-Result<std::size_t> load_branch_islands() {
+Result<std::size_t> load_branch_islands(bool wait_for_analysis) {
     if (auto status = ensure_available(); !status)
         return std::unexpected(status.error());
 
@@ -383,20 +391,23 @@ Result<std::size_t> load_branch_islands() {
         node.supset(static_cast<nodeidx_t>(index),
                     &slot_flag, sizeof(slot_flag), kTagIsland);
     }
-    run_dscu(kModeLoadIsland);  // result ignored — headless reports false
+    run_dscu(kModeLoadIsland, wait_for_analysis);  // result ignored — headless reports false
     return static_cast<std::size_t>(pool_count);
 }
 
-Result<std::size_t> load_branch_mappings() {
-    return load_all_regions(kRegionMapping, kTagMapping, kModeLoadMapping);
+Result<std::size_t> load_branch_mappings(bool wait_for_analysis) {
+    return load_all_regions(kRegionMapping, kTagMapping, kModeLoadMapping,
+                            wait_for_analysis);
 }
 
-Result<std::size_t> load_global_offset_tables() {
-    return load_all_regions(kRegionGot, kTagGot, kModeLoadGot);
+Result<std::size_t> load_global_offset_tables(bool wait_for_analysis) {
+    return load_all_regions(kRegionGot, kTagGot, kModeLoadGot,
+                            wait_for_analysis);
 }
 
-Result<std::size_t> load_gaps() {
-    return load_all_regions(kRegionGap, kTagGap, kModeLoadGap);
+Result<std::size_t> load_gaps(bool wait_for_analysis) {
+    return load_all_regions(kRegionGap, kTagGap, kModeLoadGap,
+                            wait_for_analysis);
 }
 
 }  // namespace ida::dyld_cache
