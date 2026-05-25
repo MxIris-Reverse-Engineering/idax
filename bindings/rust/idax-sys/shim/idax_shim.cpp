@@ -8839,34 +8839,34 @@ void idax_dyld_cache_list_modules_free(IdaxDyldCacheModule* modules, size_t coun
     std::free(modules);
 }
 
-int idax_dyld_cache_load_module(const char* module_path) {
+int idax_dyld_cache_load_module(const char* module_path, int wait_for_analysis) {
     if (module_path == nullptr)
         return fail(ida::Error::validation("module path is null"));
-    RETURN_STATUS(ida::dyld_cache::load_module(module_path));
+    RETURN_STATUS(ida::dyld_cache::load_module(module_path, wait_for_analysis != 0));
 }
 
-int idax_dyld_cache_load_section(uint64_t address) {
-    RETURN_STATUS(ida::dyld_cache::load_section(address));
+int idax_dyld_cache_load_section(uint64_t address, int wait_for_analysis) {
+    RETURN_STATUS(ida::dyld_cache::load_section(address, wait_for_analysis != 0));
 }
 
-int idax_dyld_cache_load_dyld_header(void) {
-    RETURN_STATUS(ida::dyld_cache::load_dyld_header());
+int idax_dyld_cache_load_dyld_header(int wait_for_analysis) {
+    RETURN_STATUS(ida::dyld_cache::load_dyld_header(wait_for_analysis != 0));
 }
 
-int idax_dyld_cache_load_branch_islands(size_t* out) {
-    RETURN_RESULT_VALUE(ida::dyld_cache::load_branch_islands());
+int idax_dyld_cache_load_branch_islands(int wait_for_analysis, size_t* out) {
+    RETURN_RESULT_VALUE(ida::dyld_cache::load_branch_islands(wait_for_analysis != 0));
 }
 
-int idax_dyld_cache_load_branch_mappings(size_t* out) {
-    RETURN_RESULT_VALUE(ida::dyld_cache::load_branch_mappings());
+int idax_dyld_cache_load_branch_mappings(int wait_for_analysis, size_t* out) {
+    RETURN_RESULT_VALUE(ida::dyld_cache::load_branch_mappings(wait_for_analysis != 0));
 }
 
-int idax_dyld_cache_load_global_offset_tables(size_t* out) {
-    RETURN_RESULT_VALUE(ida::dyld_cache::load_global_offset_tables());
+int idax_dyld_cache_load_global_offset_tables(int wait_for_analysis, size_t* out) {
+    RETURN_RESULT_VALUE(ida::dyld_cache::load_global_offset_tables(wait_for_analysis != 0));
 }
 
-int idax_dyld_cache_load_gaps(size_t* out) {
-    RETURN_RESULT_VALUE(ida::dyld_cache::load_gaps());
+int idax_dyld_cache_load_gaps(int wait_for_analysis, size_t* out) {
+    RETURN_RESULT_VALUE(ida::dyld_cache::load_gaps(wait_for_analysis != 0));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

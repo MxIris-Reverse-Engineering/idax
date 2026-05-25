@@ -2384,16 +2384,21 @@ typedef struct IdaxDyldCacheModule {
     uint64_t load_address;
 } IdaxDyldCacheModule;
 
+/* Every load_* function takes a `wait_for_analysis` flag (0/1). When set,
+ * the call drains IDA's auto-analysis queue before returning, which on a
+ * multi-gigabyte macOS dyld shared cache can take tens of minutes. The
+ * safer default in callers is to pass 0 and invoke an explicit analysis
+ * wait once a batch of loads is complete. */
 int idax_dyld_cache_is_available(void);
 int idax_dyld_cache_list_modules(IdaxDyldCacheModule** out, size_t* count);
 void idax_dyld_cache_list_modules_free(IdaxDyldCacheModule* modules, size_t count);
-int idax_dyld_cache_load_module(const char* module_path);
-int idax_dyld_cache_load_section(uint64_t address);
-int idax_dyld_cache_load_dyld_header(void);
-int idax_dyld_cache_load_branch_islands(size_t* out);
-int idax_dyld_cache_load_branch_mappings(size_t* out);
-int idax_dyld_cache_load_global_offset_tables(size_t* out);
-int idax_dyld_cache_load_gaps(size_t* out);
+int idax_dyld_cache_load_module(const char* module_path, int wait_for_analysis);
+int idax_dyld_cache_load_section(uint64_t address, int wait_for_analysis);
+int idax_dyld_cache_load_dyld_header(int wait_for_analysis);
+int idax_dyld_cache_load_branch_islands(int wait_for_analysis, size_t* out);
+int idax_dyld_cache_load_branch_mappings(int wait_for_analysis, size_t* out);
+int idax_dyld_cache_load_global_offset_tables(int wait_for_analysis, size_t* out);
+int idax_dyld_cache_load_gaps(int wait_for_analysis, size_t* out);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Plugin invocation (ida::plugin)
