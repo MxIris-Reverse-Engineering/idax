@@ -17,6 +17,14 @@ public struct DyldCacheModule: Sendable {
 /// dyld shared cache with the "single module" option. Check `isAvailable()`
 /// first; otherwise each call throws `IDAError` with category `.unsupported`.
 ///
+/// Every `load*` method accepts an optional `waitForAnalysis` flag (default
+/// `false`). When `true`, the call drains IDA's auto-analysis queue before
+/// returning; on a multi-gigabyte macOS dyld shared cache this can take tens
+/// of minutes (CPU-bound, looks like a hang). The safer default is `false`:
+/// dscu still creates segments synchronously, but the cascading code analysis
+/// runs in the background. Wait once after batching loads if you need a
+/// quiescent database.
+///
 /// Mirrors C++ `ida::dyld_cache`.
 public enum DyldCache {
 
@@ -50,11 +58,18 @@ public enum DyldCache {
 
     /// Load one module (image) from the shared cache by its full path.
     ///
-    /// - Parameter modulePath: Full path inside the cache, e.g.
-    ///   "/usr/lib/libobjc.A.dylib" (see `listModules`).
-    public static func loadModule(_ modulePath: String) throws(IDAError) {
+    /// - Parameters:
+    ///   - modulePath: Full path inside the cache, e.g.
+    ///     "/usr/lib/libobjc.A.dylib" (see `listModules`).
+    ///   - waitForAnalysis: Drain the auto-analysis queue before returning.
+    public static func loadModule(
+        _ modulePath: String,
+        waitForAnalysis: Bool = true
+    ) throws(IDAError) {
         try checkStatus(
-            modulePath.withCString { idax_dyld_cache_load_module($0) },
+            modulePath.withCString {
+                idax_dyld_cache_load_module($0, waitForAnalysis ? 1 : 0)
+            },
             "dyldCache.loadModule"
         )
     }
@@ -64,10 +79,15 @@ public enum DyldCache {
     /// The region kind — a module section, branch island, branch mapping,
     /// global offset table, or gap — is detected automatically.
     ///
-    /// - Parameter address: Any address that falls inside the desired region.
-    public static func loadSection(at address: Address) throws(IDAError) {
+    /// - Parameters:
+    ///   - address: Any address that falls inside the desired region.
+    ///   - waitForAnalysis: Drain the auto-analysis queue before returning.
+    public static func loadSection(
+        at address: Address,
+        waitForAnalysis: Bool = true
+    ) throws(IDAError) {
         try checkStatus(
-            idax_dyld_cache_load_section(address),
+            idax_dyld_cache_load_section(address, waitForAnalysis ? 1 : 0),
             "dyldCache.loadSection"
         )
     }
@@ -75,50 +95,66 @@ public enum DyldCache {
     /// Load the formatted `dyld_cache_header` structure into the database.
     ///
     /// Requires the initial auto-analysis to have completed.
-    public static func loadDyldHeader() throws(IDAError) {
+    ///
+    /// - Parameter waitForAnalysis: Drain the auto-analysis queue before returning.
+    public static func loadDyldHeader(
+        waitForAnalysis: Bool = true
+    ) throws(IDAError) {
         try checkStatus(
-            idax_dyld_cache_load_dyld_header(),
+            idax_dyld_cache_load_dyld_header(waitForAnalysis ? 1 : 0),
             "dyldCache.loadDyldHeader"
         )
     }
 
     /// Load every branch-island region from the shared cache.
     ///
+    /// - Parameter waitForAnalysis: Drain the auto-analysis queue before returning.
     /// - Returns: The number of branch-island regions loaded.
     @discardableResult
-    public static func loadBranchIslands() throws(IDAError) -> Int {
+    public static func loadBranchIslands(
+        waitForAnalysis: Bool = true
+    ) throws(IDAError) -> Int {
         try withOutput("dyldCache.loadBranchIslands", 0) {
-            idax_dyld_cache_load_branch_islands($0)
+            idax_dyld_cache_load_branch_islands(waitForAnalysis ? 1 : 0, $0)
         }
     }
 
     /// Load every branch-mapping region from the shared cache (iOS 16+).
     ///
+    /// - Parameter waitForAnalysis: Drain the auto-analysis queue before returning.
     /// - Returns: The number of branch-mapping regions loaded.
     @discardableResult
-    public static func loadBranchMappings() throws(IDAError) -> Int {
+    public static func loadBranchMappings(
+        waitForAnalysis: Bool = true
+    ) throws(IDAError) -> Int {
         try withOutput("dyldCache.loadBranchMappings", 0) {
-            idax_dyld_cache_load_branch_mappings($0)
+            idax_dyld_cache_load_branch_mappings(waitForAnalysis ? 1 : 0, $0)
         }
     }
 
     /// Load every global-offset-table region from the shared cache (iOS 16+).
     ///
+    /// - Parameter waitForAnalysis: Drain the auto-analysis queue before returning.
     /// - Returns: The number of global-offset-table regions loaded.
     @discardableResult
-    public static func loadGlobalOffsetTables() throws(IDAError) -> Int {
+    public static func loadGlobalOffsetTables(
+        waitForAnalysis: Bool = true
+    ) throws(IDAError) -> Int {
         try withOutput("dyldCache.loadGlobalOffsetTables", 0) {
-            idax_dyld_cache_load_global_offset_tables($0)
+            idax_dyld_cache_load_global_offset_tables(waitForAnalysis ? 1 : 0, $0)
         }
     }
 
     /// Load every gap region from the shared cache.
     ///
+    /// - Parameter waitForAnalysis: Drain the auto-analysis queue before returning.
     /// - Returns: The number of gap regions loaded.
     @discardableResult
-    public static func loadGaps() throws(IDAError) -> Int {
+    public static func loadGaps(
+        waitForAnalysis: Bool = true
+    ) throws(IDAError) -> Int {
         try withOutput("dyldCache.loadGaps", 0) {
-            idax_dyld_cache_load_gaps($0)
+            idax_dyld_cache_load_gaps(waitForAnalysis ? 1 : 0, $0)
         }
     }
 }
