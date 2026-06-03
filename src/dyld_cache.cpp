@@ -335,11 +335,34 @@ Status load_module(std::string_view module_path, bool wait_for_analysis) {
     if (auto status = ensure_available(); !status)
         return status;
 
+    // dscu mode 1 validates the input path against the cache state's
+    // `dyld_cache_image_info` (old-format) list. On modern macOS caches
+    // that list is a backward-compat subset of the actual contents — modules
+    // that only appear in `dyld_cache_image_text_info` or in subcaches
+    // produce `Invalid module: ...` and a false return even when the
+    // underlying Mach-O loader would happily load them. To recover the
+    // ground truth, look up the expected load address up front and verify
+    // success by segment presence (the same pattern as `load_section`).
+    auto modules = list_modules();
+    if (!modules)
+        return std::unexpected(modules.error());
+
     std::string path(module_path);
+    auto entry = std::find_if(
+        modules->begin(), modules->end(),
+        [&](const ModuleInfo& m) { return m.path == path; });
+    if (entry == modules->end())
+        return std::unexpected(Error::not_found(
+            "Module is not present in the dyld shared cache", path));
+
     netnode node = dscu_netnode();
     // dscu mode 1 reads the module path from supval key 2 (NUL-terminated).
     node.supset(kKeyModulePath, path.c_str(), path.size() + 1);
-    if (!run_dscu(kModeLoadModule, wait_for_analysis))
+    // dscu mode 1 reports failure in headless mode even on success (when the
+    // path is only in the new-format image_text_info table), so the outcome
+    // is verified by checking for a segment at the module's load address.
+    run_dscu(kModeLoadModule, wait_for_analysis);
+    if (::getseg(static_cast<ea_t>(entry->load_address)) == nullptr)
         return std::unexpected(Error::sdk("dscu failed to load the module", path));
     return ida::ok();
 }
