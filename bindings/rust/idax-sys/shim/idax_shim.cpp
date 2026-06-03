@@ -778,6 +778,7 @@ int idax_path_is_directory(const char* path, int* out) {
     }
     *out = ida::path::is_directory(path == nullptr ? "" : path) ? 1 : 0;
     return 0;
+}
 
 int idax_database_init_with_options(const IdaxRuntimeOptions* options) {
     clear_error();
