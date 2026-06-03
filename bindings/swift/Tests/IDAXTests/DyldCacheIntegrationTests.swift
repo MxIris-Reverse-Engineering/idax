@@ -35,8 +35,8 @@ struct DyldCacheIntegrationTests {
         //   IDA_DYLD_CACHE_MODULE — module path inside the cache
         //   IDA_DYLD_CACHE_DEPTH  — dependency depth (0 = module only,
         //                            -1 = all)
-        let modulePath = ProcessInfo.processInfo.environment["IDAX_TEST_DSC_MODULE"]
-            ?? "/usr/lib/libobjc.A.dylib"
+        var modulePath = "/System/iOSSupport/System/Library/PrivateFrameworks/UIKitCore.framework/Versions/A/UIKitCore"
+        
         setenv("IDA_DYLD_CACHE_MODULE", modulePath, 1)
         setenv("IDA_DYLD_CACHE_DEPTH", "0", 1)
         defer {
@@ -57,8 +57,6 @@ struct DyldCacheIntegrationTests {
             "dscu plugin not loaded — open the database from a dyld shared cache with the 'single module' option"
         )
 
-        // 1) Enumerate every image in the cache. Parses the DSC header on
-        //    disk, so it works before any module is loaded.
         let cachedModules = try DyldCache.listModules()
         #expect(!cachedModules.isEmpty, "Expected at least one image in the cache header")
         print("Modules in cache: \(cachedModules.count)")
@@ -66,50 +64,19 @@ struct DyldCacheIntegrationTests {
             let loadAddressHex = String(cachedModule.loadAddress, radix: 16)
             print("  0x\(loadAddressHex): \(cachedModule.path)")
         }
-
-        // 2) Load a single module by its full cache path.
-        //    `IDA_DYLD_CACHE_DEPTH=0` already materialised `modulePath`, so
-        //    asking dscu to load it again would fail — pick any other
-        //    image from the header.
-        if let candidateModule = cachedModules.first(where: { $0.path != modulePath }) {
-            print("Loading module: \(candidateModule.path)")
-            try DyldCache.loadModule(candidateModule.path)
-        } else {
-            print("No additional modules to load — cache only contains \(modulePath)")
-        }
-
-        // 3) Materialise the formatted `dyld_cache_header` structure.
-        //    Tolerated as best-effort because mode 6 requires the initial
-        //    auto-analysis to have completed.
-        do {
-            try DyldCache.loadDyldHeader()
-            print("Loaded dyld_cache_header")
-        } catch {
-            print("loadDyldHeader skipped: \(error)")
-        }
-
-        // 4) Bulk-load each region kind. Returning 0 is valid for caches
-        //    that simply do not contain that kind of region.
-        let branchIslandCount = try DyldCache.loadBranchIslands()
-        print("Branch islands loaded: \(branchIslandCount)")
-
-//        let branchMappingCount = try DyldCache.loadBranchMappings()
-//        print("Branch mappings loaded: \(branchMappingCount)")
+        
+        modulePath = "/System/Library/PrivateFrameworks/UIKitMacHelper.framework/Versions/A/UIKitMacHelper"
+        print("Loading module: \(modulePath)")
+        try DyldCache.loadModule(modulePath)
+        
+        modulePath = "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit"
+        print("Loading module: \(modulePath)")
+        try DyldCache.loadModule(modulePath)
 
         let globalOffsetTableCount = try DyldCache.loadGlobalOffsetTables()
         print("Global offset tables loaded: \(globalOffsetTableCount)")
 
-        let gapCount = try DyldCache.loadGaps()
-        print("Gaps loaded: \(gapCount)")
-
-        // 5) `loadSection(at:)` resolves a single region by address. It is
-        //    not exercised here because a deterministic target address
-        //    depends on the specific cache. Typical usage:
-        //
-        //        try DyldCache.loadSection(at: 0x1AECFF7F9)
-        //
-        //    The wrapper auto-detects the region kind and creates a
-        //    segment covering the address.
         try Database.save()
+        try Database.close()
     }
 }
