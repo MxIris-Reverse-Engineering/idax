@@ -78,6 +78,13 @@ Result<std::vector<ModuleInfo>> list_modules();
 
 /// Load one module (image) from the shared cache by its full path.
 ///
+/// The path is validated against the cache's image directory; an unknown
+/// path returns a NotFound error without touching the database. Success is
+/// verified by checking that a segment exists at the module's load address,
+/// so paths that live only in the new-format `dyld_cache_image_text_info`
+/// table (where dscu's mode-1 chooser cannot find them) are still loaded
+/// correctly on modern macOS caches.
+///
 /// @param module_path        Full path inside the cache, e.g.
 ///                            "/usr/lib/libobjc.A.dylib" (see list_modules()).
 /// @param wait_for_analysis  Drain the auto-analysis queue before returning.
