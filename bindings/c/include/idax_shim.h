@@ -21,6 +21,34 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/* Bounds-safety and lifetime annotations for Swift C interop (SE-0447).
+ *
+ * `__counted_by` tells the Swift importer the pointer spans `N` elements;
+ * `__noescape` marks pointers that do not outlive the call. Together they
+ * let the Swift compiler synthesise `Span<T>`-shaped overloads when
+ * `-enable-experimental-feature SafeInteropWrappers` is in effect (the
+ * Swift binding sets this; consumers transparently benefit).
+ *
+ * On Apple Clang the attributes resolve to real attributes when
+ * `<ptrcheck.h>` is available; on every other toolchain they fall back to
+ * no-op macros. The shim implementation file must repeat the same
+ * attributes on every function definition so declarations and definitions
+ * agree on type identity.
+ */
+#if __has_include(<ptrcheck.h>)
+#  include <ptrcheck.h>
+#endif
+#ifndef __counted_by
+#  define __counted_by(N)
+#endif
+#ifndef __noescape
+#  if __has_attribute(noescape)
+#    define __noescape __attribute__((noescape))
+#  else
+#    define __noescape
+#  endif
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -54,6 +82,11 @@ const char* idax_last_error_message(void);
 /** Free a malloc'd string returned by an idax function. */
 void idax_free_string(char* s);
 
+/// Copy IDA's data-symbol values (callui, dbg, under_debugger) from the loaded
+/// libida dylib into this binary's stub definitions.  Must be called after
+/// idax_database_init() succeeds.
+void idax_sync_ida_globals(void);
+
 /** Free a malloc'd byte array returned by an idax function. */
 void idax_free_bytes(uint8_t* p);
 
@@ -74,8 +107,8 @@ int idax_database_close(int save);
 int idax_database_file_to_database(const char* file_path, int64_t file_offset,
                                    uint64_t ea, uint64_t size,
                                    int patchable, int remote);
-int idax_database_memory_to_database(const uint8_t* bytes, size_t len,
-                                     uint64_t ea, int64_t file_offset);
+int idax_database_memory_to_database(const uint8_t* __counted_by(len) bytes __noescape,
+                                     size_t len, uint64_t ea, int64_t file_offset);
 
 typedef struct IdaxDatabaseCompilerInfo {
     uint32_t id;
@@ -360,6 +393,8 @@ typedef struct IdaxOperand {
     int      byte_width;
     char*    register_name;  /**< malloc'd */
     int      register_category; /**< ida::instruction::RegisterCategory as int */
+    int      is_read;        /**< processor-marked CF_USE for this operand index */
+    int      is_written;     /**< processor-marked CF_CHG for this operand index */
 } IdaxOperand;
 
 /** Flat C representation of a decoded instruction. */
@@ -370,6 +405,7 @@ typedef struct IdaxInstruction {
     char*        mnemonic;     /**< malloc'd */
     IdaxOperand* operands;     /**< malloc'd array */
     size_t       operand_count;
+    int          branch_condition; /**< ida::instruction::BranchCondition as int (None=0 when N/A) */
 } IdaxInstruction;
 
 /** Free all malloc'd fields inside an IdaxInstruction. */
@@ -427,6 +463,10 @@ int idax_instruction_is_call(uint64_t ea);
 int idax_instruction_is_return(uint64_t ea);
 int idax_instruction_is_jump(uint64_t ea);
 int idax_instruction_is_conditional_jump(uint64_t ea);
+/** Classify branch condition for the instruction at `ea`.
+ *  Out parameter receives ida::instruction::BranchCondition as int.
+ *  Returns 0 on success; non-zero is reserved for future SDK failures. */
+int idax_instruction_branch_condition(uint64_t ea, int* out);
 int idax_instruction_next(uint64_t ea, IdaxInstruction* out);
 int idax_instruction_prev(uint64_t ea, IdaxInstruction* out);
 
@@ -472,13 +512,13 @@ int idax_data_write_byte(uint64_t ea, uint8_t value);
 int idax_data_write_word(uint64_t ea, uint16_t value);
 int idax_data_write_dword(uint64_t ea, uint32_t value);
 int idax_data_write_qword(uint64_t ea, uint64_t value);
-int idax_data_write_bytes(uint64_t ea, const uint8_t* data, size_t len);
+int idax_data_write_bytes(uint64_t ea, const uint8_t* __counted_by(len) data __noescape, size_t len);
 
 int idax_data_patch_byte(uint64_t ea, uint8_t value);
 int idax_data_patch_word(uint64_t ea, uint16_t value);
 int idax_data_patch_dword(uint64_t ea, uint32_t value);
 int idax_data_patch_qword(uint64_t ea, uint64_t value);
-int idax_data_patch_bytes(uint64_t ea, const uint8_t* data, size_t len);
+int idax_data_patch_bytes(uint64_t ea, const uint8_t* __counted_by(len) data __noescape, size_t len);
 
 int idax_data_revert_patch(uint64_t ea);
 int idax_data_revert_patches(uint64_t ea, uint64_t count, uint64_t* reverted);
@@ -586,9 +626,11 @@ int idax_comment_clear_anterior(uint64_t ea);
 int idax_comment_clear_posterior(uint64_t ea);
 int idax_comment_remove_anterior_line(uint64_t ea, int line_index);
 int idax_comment_remove_posterior_line(uint64_t ea, int line_index);
-int idax_comment_set_anterior_lines(uint64_t ea, const char* const* lines,
+int idax_comment_set_anterior_lines(uint64_t ea,
+                                    const char* const* __counted_by(count) lines __noescape,
                                     size_t count);
-int idax_comment_set_posterior_lines(uint64_t ea, const char* const* lines,
+int idax_comment_set_posterior_lines(uint64_t ea,
+                                     const char* const* __counted_by(count) lines __noescape,
                                      size_t count);
 int idax_comment_anterior_lines(uint64_t ea, char*** out, size_t* count);
 int idax_comment_posterior_lines(uint64_t ea, char*** out, size_t* count);
@@ -966,7 +1008,8 @@ int idax_loader_encode_load_flags(const IdaxLoaderLoadFlags* flags, uint16_t* ou
 
 int idax_loader_file_to_database(void* li_handle, int64_t file_offset,
                                  uint64_t ea, uint64_t size, int patchable);
-int idax_loader_memory_to_database(const uint8_t* data, uint64_t ea, uint64_t size);
+int idax_loader_memory_to_database(const uint8_t* __counted_by(size) data __noescape,
+                                   uint64_t ea, uint64_t size);
 void idax_loader_abort_load(const char* message);
 
 int idax_loader_input_size(void* li_handle, int64_t* out);
@@ -1402,7 +1445,8 @@ int idax_debugger_has_breakpoint(uint64_t address, int* out);
 
 int idax_debugger_read_memory(uint64_t address, uint64_t size,
                               uint8_t** out, size_t* out_len);
-int idax_debugger_write_memory(uint64_t address, const uint8_t* data,
+int idax_debugger_write_memory(uint64_t address,
+                               const uint8_t* __counted_by(len) data __noescape,
                                size_t len);
 
 int idax_debugger_is_request_running(void);
@@ -1746,6 +1790,30 @@ int idax_ctree_expr_call_argument(IdaxCtreeExprHandle expr, size_t index,
 int idax_ctree_expr_member_offset(IdaxCtreeExprHandle expr, uint32_t* out);
 int idax_ctree_expr_to_string(IdaxCtreeExprHandle expr, char** out);
 
+/** Read-only snapshot of a parent ctree item.
+ *
+ *  Populated by `idax_ctree_expr_parent` / `idax_ctree_stmt_parent` while
+ *  inside an `idax_ctree_visit` / `idax_ctree_visit_ex` callback. Outside a
+ *  visitor callback (or when no parent was recorded for the given handle)
+ *  `has_value` is 0 and the remaining fields are unspecified.
+ */
+typedef struct IdaxCtreeItemInfo {
+    int      has_value;     /**< 1 if a parent was recorded, 0 otherwise */
+    int      type;          /**< ida::decompiler::ItemType as int */
+    uint64_t address;
+    int      is_expression; /**< 1 if parent is an expression, 0 if statement */
+} IdaxCtreeItemInfo;
+
+/** Return the direct parent of the given expression handle.
+ *
+ *  Sets `out->has_value` to 1 and fills the remaining fields when the
+ *  handle's parent was recorded by the active ctree visitor; otherwise
+ *  sets `out->has_value` to 0 and returns 0 (not an error).
+ *
+ *  Returns non-zero only on argument validation failures.
+ */
+int idax_ctree_expr_parent(IdaxCtreeExprHandle expr, IdaxCtreeItemInfo* out);
+
 /* ── Statement query functions ───────────────────────────────────────── */
 
 int idax_ctree_stmt_type(IdaxCtreeStmtHandle stmt, int* out);
@@ -1782,6 +1850,12 @@ int idax_ctree_stmt_switch_case_values(IdaxCtreeStmtHandle stmt, size_t index,
 int idax_ctree_stmt_switch_case_body(IdaxCtreeStmtHandle stmt, size_t index,
                                      IdaxCtreeStmtHandle* out);
 void idax_ctree_switch_case_values_free(uint64_t* values);
+
+/** Return the direct parent of the given statement handle.
+ *
+ *  Semantics mirror `idax_ctree_expr_parent`.
+ */
+int idax_ctree_stmt_parent(IdaxCtreeStmtHandle stmt, IdaxCtreeItemInfo* out);
 
 /* Microcode filter support */
 typedef int (*IdaxMicrocodeMatchCallback)(void* context, uint64_t address, int itype);
@@ -1933,7 +2007,8 @@ int idax_storage_node_alt_remove(IdaxNodeHandle node, uint64_t index,
 int idax_storage_node_sup_get(IdaxNodeHandle node, uint64_t index,
                               uint8_t tag, uint8_t** out, size_t* out_len);
 int idax_storage_node_sup_set(IdaxNodeHandle node, uint64_t index,
-                              const uint8_t* data, size_t len, uint8_t tag);
+                              const uint8_t* __counted_by(len) data __noescape,
+                              size_t len, uint8_t tag);
 
 int idax_storage_node_hash_get(IdaxNodeHandle node, const char* key,
                                uint8_t tag, char** out);
@@ -1943,7 +2018,8 @@ int idax_storage_node_hash_set(IdaxNodeHandle node, const char* key,
 int idax_storage_node_blob_get(IdaxNodeHandle node, uint64_t index,
                                uint8_t tag, uint8_t** out, size_t* out_len);
 int idax_storage_node_blob_set(IdaxNodeHandle node, uint64_t index,
-                               const uint8_t* data, size_t len, uint8_t tag);
+                               const uint8_t* __counted_by(len) data __noescape,
+                               size_t len, uint8_t tag);
 int idax_storage_node_blob_remove(IdaxNodeHandle node, uint64_t index,
                                   uint8_t tag);
 int idax_storage_node_blob_size(IdaxNodeHandle node, uint64_t index,
@@ -2365,11 +2441,11 @@ typedef struct IdaxLuminaBatchResult {
 int idax_lumina_has_connection(int feature, int* out);
 int idax_lumina_close_connection(int feature);
 int idax_lumina_close_all_connections(void);
-int idax_lumina_pull(const uint64_t* addresses, size_t count,
-                     int auto_apply, int feature,
+int idax_lumina_pull(const uint64_t* __counted_by(count) addresses __noescape,
+                     size_t count, int auto_apply, int feature,
                      IdaxLuminaBatchResult* out);
-int idax_lumina_push(const uint64_t* addresses, size_t count,
-                     int push_mode, int feature,
+int idax_lumina_push(const uint64_t* __counted_by(count) addresses __noescape,
+                     size_t count, int push_mode, int feature,
                      IdaxLuminaBatchResult* out);
 
 /* ═══════════════════════════════════════════════════════════════════════════

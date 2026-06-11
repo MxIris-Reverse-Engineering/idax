@@ -537,7 +537,8 @@ int idax_database_file_to_database(const char* file_path, int64_t file_offset,
         file_path, file_offset, ea, size, patchable != 0, remote != 0));
 }
 
-int idax_database_memory_to_database(const uint8_t* bytes, size_t len,
+int idax_database_memory_to_database(const uint8_t* __counted_by(len) bytes __noescape,
+                                     size_t len,
                                      uint64_t ea, int64_t file_offset) {
     RETURN_STATUS(ida::database::memory_to_database(
         std::span<const uint8_t>(bytes, len), ea, file_offset));
@@ -1434,10 +1435,11 @@ int idax_function_code_addresses(uint64_t ea, uint64_t** out, size_t* count) {
 namespace {
 
 void fill_instruction(IdaxInstruction* out, const ida::instruction::Instruction& insn) {
-    out->address       = insn.address();
-    out->size          = insn.size();
-    out->opcode        = insn.opcode();
-    out->mnemonic      = dup_string(insn.mnemonic());
+    out->address          = insn.address();
+    out->size             = insn.size();
+    out->opcode           = insn.opcode();
+    out->mnemonic         = dup_string(insn.mnemonic());
+    out->branch_condition = static_cast<int>(insn.branch_condition());
     auto& ops = insn.operands();
     out->operand_count = ops.size();
     if (ops.empty()) {
@@ -1454,6 +1456,8 @@ void fill_instruction(IdaxInstruction* out, const ida::instruction::Instruction&
             out->operands[i].byte_width     = ops[i].byte_width();
             out->operands[i].register_name  = dup_string(ops[i].register_name());
             out->operands[i].register_category = static_cast<int>(ops[i].register_category());
+            out->operands[i].is_read        = ops[i].is_read() ? 1 : 0;
+            out->operands[i].is_written     = ops[i].is_written() ? 1 : 0;
         }
     }
 }
@@ -1692,6 +1696,13 @@ int idax_instruction_is_conditional_jump(uint64_t ea) {
     return ida::instruction::is_conditional_jump(ea) ? 1 : 0;
 }
 
+int idax_instruction_branch_condition(uint64_t ea, int* out) {
+    clear_error();
+    if (!out) return fail(ida::Error::validation("out is null"));
+    *out = static_cast<int>(ida::instruction::branch_condition(ea));
+    return 0;
+}
+
 int idax_instruction_next(uint64_t ea, IdaxInstruction* out) {
     clear_error();
     auto r = ida::instruction::next(ea);
@@ -1922,7 +1933,8 @@ int idax_data_write_qword(uint64_t ea, uint64_t value) {
     RETURN_STATUS(ida::data::write_qword(ea, value));
 }
 
-int idax_data_write_bytes(uint64_t ea, const uint8_t* data, size_t len) {
+int idax_data_write_bytes(uint64_t ea, const uint8_t* __counted_by(len) data __noescape,
+                          size_t len) {
     RETURN_STATUS(ida::data::write_bytes(ea, std::span<const uint8_t>(data, len)));
 }
 
@@ -1942,7 +1954,8 @@ int idax_data_patch_qword(uint64_t ea, uint64_t value) {
     RETURN_STATUS(ida::data::patch_qword(ea, value));
 }
 
-int idax_data_patch_bytes(uint64_t ea, const uint8_t* data, size_t len) {
+int idax_data_patch_bytes(uint64_t ea, const uint8_t* __counted_by(len) data __noescape,
+                          size_t len) {
     RETURN_STATUS(ida::data::patch_bytes(ea, std::span<const uint8_t>(data, len)));
 }
 
@@ -2355,7 +2368,8 @@ std::vector<std::string> collect_lines_input(const char* const* lines, size_t co
 
 } // anonymous namespace
 
-int idax_comment_set_anterior_lines(uint64_t ea, const char* const* lines,
+int idax_comment_set_anterior_lines(uint64_t ea,
+                                    const char* const* __counted_by(count) lines __noescape,
                                     size_t count) {
     clear_error();
     if (count > 0 && lines == nullptr) {
@@ -2367,7 +2381,8 @@ int idax_comment_set_anterior_lines(uint64_t ea, const char* const* lines,
     return 0;
 }
 
-int idax_comment_set_posterior_lines(uint64_t ea, const char* const* lines,
+int idax_comment_set_posterior_lines(uint64_t ea,
+                                     const char* const* __counted_by(count) lines __noescape,
                                      size_t count) {
     clear_error();
     if (count > 0 && lines == nullptr) {
@@ -3706,7 +3721,8 @@ int idax_loader_file_to_database(void* li_handle, int64_t file_offset,
         li_handle, file_offset, ea, size, patchable != 0));
 }
 
-int idax_loader_memory_to_database(const uint8_t* data, uint64_t ea, uint64_t size) {
+int idax_loader_memory_to_database(const uint8_t* __counted_by(size) data __noescape,
+                                   uint64_t ea, uint64_t size) {
     RETURN_STATUS(ida::loader::memory_to_database(data, ea, size));
 }
 
@@ -4273,7 +4289,8 @@ int idax_debugger_read_memory(uint64_t address, uint64_t size,
     return 0;
 }
 
-int idax_debugger_write_memory(uint64_t address, const uint8_t* data,
+int idax_debugger_write_memory(uint64_t address,
+                               const uint8_t* __counted_by(len) data __noescape,
                                size_t len) {
     RETURN_STATUS(ida::debugger::write_memory(address, std::span<const uint8_t>(data, len)));
 }
@@ -5340,6 +5357,41 @@ int idax_decompiler_for_each_item(IdaxDecompiledHandle handle,
 
 // ── Ctree handle-based API ──────────────────────────────────────────────
 
+namespace {
+
+/// Parent map for the currently active `idax_ctree_visit[_ex]` call.
+///
+/// Populated by visitor callbacks before invoking the user callback so
+/// `idax_ctree_expr_parent` / `idax_ctree_stmt_parent` can look up the
+/// recorded parent for a `raw_handle()` key. Cleared on visit exit.
+///
+/// Re-entrant visits save/restore this pointer.
+using CtreeParentMap = std::unordered_map<const void*, ida::decompiler::CtreeItemView>;
+thread_local CtreeParentMap* g_ctree_parent_map = nullptr;
+
+struct CtreeParentMapScope {
+    CtreeParentMap* previous;
+    explicit CtreeParentMapScope(CtreeParentMap* current) noexcept
+        : previous(g_ctree_parent_map) {
+        g_ctree_parent_map = current;
+    }
+    ~CtreeParentMapScope() {
+        g_ctree_parent_map = previous;
+    }
+    CtreeParentMapScope(const CtreeParentMapScope&) = delete;
+    CtreeParentMapScope& operator=(const CtreeParentMapScope&) = delete;
+};
+
+template <typename View>
+void record_ctree_parent(CtreeParentMap& parent_map, const View& view) {
+    auto parent = view.parent();
+    if (!parent || !*parent)
+        return;
+    parent_map[view.raw_handle()] = **parent;
+}
+
+} // anonymous namespace
+
 int idax_ctree_visit(IdaxDecompiledHandle handle,
                      IdaxCtreeExprVisitor expr_cb,
                      IdaxCtreeStmtVisitor stmt_cb,
@@ -5353,22 +5405,26 @@ int idax_ctree_visit(IdaxDecompiledHandle handle,
     auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
     ida::decompiler::VisitOptions opts;
     opts.post_order = (post_order != 0);
+    opts.track_parents = true;
 
     class Visitor : public ida::decompiler::CtreeVisitor {
     public:
         IdaxCtreeExprVisitor expr_cb_;
         IdaxCtreeStmtVisitor stmt_cb_;
         void* ctx_;
+        CtreeParentMap parent_map;
 
         Visitor(IdaxCtreeExprVisitor ec, IdaxCtreeStmtVisitor sc, void* c)
             : expr_cb_(ec), stmt_cb_(sc), ctx_(c) {}
 
         ida::decompiler::VisitAction visit_expression(ida::decompiler::ExpressionView expr) override {
+            record_ctree_parent(parent_map, expr);
             if (expr_cb_ == nullptr)
                 return ida::decompiler::VisitAction::Continue;
             return visit_action_from_c_int(expr_cb_(ctx_, expr.raw_handle()));
         }
         ida::decompiler::VisitAction visit_statement(ida::decompiler::StatementView stmt) override {
+            record_ctree_parent(parent_map, stmt);
             if (stmt_cb_ == nullptr)
                 return ida::decompiler::VisitAction::Continue;
             return visit_action_from_c_int(stmt_cb_(ctx_, stmt.raw_handle()));
@@ -5376,6 +5432,7 @@ int idax_ctree_visit(IdaxDecompiledHandle handle,
     };
 
     Visitor visitor(expr_cb, stmt_cb, context);
+    CtreeParentMapScope scope(&visitor.parent_map);
     auto result = df->visit(visitor, opts);
     if (!result) return fail(result.error());
     *out_visited = *result;
@@ -5481,6 +5538,7 @@ int idax_ctree_visit_ex(void* handle,
     auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
     ida::decompiler::VisitOptions opts;
     opts.post_order = (post_order != 0);
+    opts.track_parents = true;
 
     class VisitorEx : public ida::decompiler::CtreeVisitor {
     public:
@@ -5489,6 +5547,7 @@ int idax_ctree_visit_ex(void* handle,
         IdaxCtreeExprLeaveVisitor leave_expr_;
         IdaxCtreeStmtLeaveVisitor leave_stmt_;
         void* ctx_;
+        CtreeParentMap parent_map;
 
         VisitorEx(IdaxCtreeExprVisitor ve, IdaxCtreeStmtVisitor vs,
                   IdaxCtreeExprLeaveVisitor le, IdaxCtreeStmtLeaveVisitor ls,
@@ -5498,31 +5557,69 @@ int idax_ctree_visit_ex(void* handle,
 
         ida::decompiler::VisitAction visit_expression(
                 ida::decompiler::ExpressionView expr) override {
+            record_ctree_parent(parent_map, expr);
             if (!visit_expr_) return ida::decompiler::VisitAction::Continue;
             return visit_action_from_c_int(visit_expr_(ctx_, expr.raw_handle()));
         }
         ida::decompiler::VisitAction visit_statement(
                 ida::decompiler::StatementView stmt) override {
+            record_ctree_parent(parent_map, stmt);
             if (!visit_stmt_) return ida::decompiler::VisitAction::Continue;
             return visit_action_from_c_int(visit_stmt_(ctx_, stmt.raw_handle()));
         }
         ida::decompiler::VisitAction leave_expression(
                 ida::decompiler::ExpressionView expr) override {
+            record_ctree_parent(parent_map, expr);
             if (!leave_expr_) return ida::decompiler::VisitAction::Continue;
             return visit_action_from_c_int(leave_expr_(ctx_, expr.raw_handle()));
         }
         ida::decompiler::VisitAction leave_statement(
                 ida::decompiler::StatementView stmt) override {
+            record_ctree_parent(parent_map, stmt);
             if (!leave_stmt_) return ida::decompiler::VisitAction::Continue;
             return visit_action_from_c_int(leave_stmt_(ctx_, stmt.raw_handle()));
         }
     };
 
     VisitorEx visitor(visit_expr, visit_stmt, leave_expr, leave_stmt, context);
+    CtreeParentMapScope scope(&visitor.parent_map);
     auto result = df->visit(visitor, opts);
     if (!result) return fail(result.error());
     *out_visited = *result;
     return 0;
+}
+
+namespace {
+
+int populate_ctree_parent_info(const void* handle, IdaxCtreeItemInfo* out) {
+    if (!out)
+        return fail(ida::Error::validation("out is null"));
+    out->has_value     = 0;
+    out->type          = 0;
+    out->address       = 0;
+    out->is_expression = 0;
+    if (!handle || !g_ctree_parent_map)
+        return 0;
+    auto it = g_ctree_parent_map->find(handle);
+    if (it == g_ctree_parent_map->end())
+        return 0;
+    out->has_value     = 1;
+    out->type          = static_cast<int>(it->second.type);
+    out->address       = it->second.address;
+    out->is_expression = it->second.is_expression ? 1 : 0;
+    return 0;
+}
+
+} // anonymous namespace
+
+int idax_ctree_expr_parent(IdaxCtreeExprHandle expr, IdaxCtreeItemInfo* out) {
+    clear_error();
+    return populate_ctree_parent_info(expr, out);
+}
+
+int idax_ctree_stmt_parent(IdaxCtreeStmtHandle stmt, IdaxCtreeItemInfo* out) {
+    clear_error();
+    return populate_ctree_parent_info(stmt, out);
 }
 
 // ── Expression query functions ──────────────────────────────────────────
@@ -6421,7 +6518,8 @@ int idax_storage_node_sup_get(IdaxNodeHandle node, uint64_t index,
 }
 
 int idax_storage_node_sup_set(IdaxNodeHandle node, uint64_t index,
-                              const uint8_t* data, size_t len, uint8_t tag) {
+                              const uint8_t* __counted_by(len) data __noescape,
+                              size_t len, uint8_t tag) {
     RETURN_STATUS(static_cast<ida::storage::Node*>(node)->set_sup(
         index, std::span<const uint8_t>(data, len), tag));
 }
@@ -6451,7 +6549,8 @@ int idax_storage_node_blob_get(IdaxNodeHandle node, uint64_t index,
 }
 
 int idax_storage_node_blob_set(IdaxNodeHandle node, uint64_t index,
-                               const uint8_t* data, size_t len, uint8_t tag) {
+                               const uint8_t* __counted_by(len) data __noescape,
+                               size_t len, uint8_t tag) {
     RETURN_STATUS(static_cast<ida::storage::Node*>(node)->set_blob(
         index, std::span<const uint8_t>(data, len), tag));
 }
@@ -8149,8 +8248,8 @@ int idax_lumina_close_all_connections(void) {
     RETURN_STATUS(ida::lumina::close_all_connections());
 }
 
-int idax_lumina_pull(const uint64_t* addresses, size_t count,
-                     int auto_apply, int feature,
+int idax_lumina_pull(const uint64_t* __counted_by(count) addresses __noescape,
+                     size_t count, int auto_apply, int feature,
                      IdaxLuminaBatchResult* out) {
     clear_error();
     std::span<const ida::Address> addrs(addresses, count);
@@ -8166,8 +8265,8 @@ int idax_lumina_pull(const uint64_t* addresses, size_t count,
     return 0;
 }
 
-int idax_lumina_push(const uint64_t* addresses, size_t count,
-                     int push_mode, int feature,
+int idax_lumina_push(const uint64_t* __counted_by(count) addresses __noescape,
+                     size_t count, int push_mode, int feature,
                      IdaxLuminaBatchResult* out) {
     clear_error();
     std::span<const ida::Address> addrs(addresses, count);
