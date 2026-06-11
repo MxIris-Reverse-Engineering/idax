@@ -156,6 +156,105 @@ std::string decode_operand_register_name(Address address,
     return register_name;
 }
 
+BranchCondition parse_branch_condition_from_mnemonic(std::string_view mnemonic) {
+    if (mnemonic.empty())
+        return BranchCondition::None;
+
+    std::string lowered = to_lower_ascii(std::string(mnemonic));
+
+    auto strip_suffix = [](std::string& text, std::string_view suffix) {
+        if (text.size() > suffix.size()
+            && text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0) {
+            text.resize(text.size() - suffix.size());
+        }
+    };
+    strip_suffix(lowered, ".w");
+    strip_suffix(lowered, ".n");
+
+    // ARM64 direct zero / bit-test branches.
+    if (lowered == "cbz" || lowered == "tbz")
+        return BranchCondition::Zero;
+    if (lowered == "cbnz" || lowered == "tbnz")
+        return BranchCondition::NotZero;
+
+    // Unconditional control transfers (mnemonic exact match).
+    if (lowered == "b" || lowered == "bl" || lowered == "br" || lowered == "bx"
+        || lowered == "blr" || lowered == "blx"
+        || lowered == "braa" || lowered == "brab"
+        || lowered == "blraa" || lowered == "blrab"
+        || lowered == "braaz" || lowered == "brabz"
+        || lowered == "ret" || lowered == "retaa" || lowered == "retab"
+        || lowered == "jmp" || lowered == "jmpf" || lowered == "jmpe") {
+        return BranchCondition::Always;
+    }
+
+    // x86 counter-zero family.
+    if (lowered == "jcxz" || lowered == "jecxz" || lowered == "jrcxz"
+        || lowered == "loop" || lowered == "loope" || lowered == "loopz"
+        || lowered == "loopne" || lowered == "loopnz") {
+        return BranchCondition::CountZero;
+    }
+
+    // Extract condition suffix.
+    std::string_view condition;
+    if (starts_with(lowered, "b.")) {
+        condition = std::string_view(lowered).substr(2); // ARM64: B.<cond>
+    } else if (starts_with(lowered, "b")) {
+        condition = std::string_view(lowered).substr(1); // ARM32: B<cond>
+    } else if (starts_with(lowered, "j")) {
+        condition = std::string_view(lowered).substr(1); // x86: J<cond>
+    } else {
+        return BranchCondition::None;
+    }
+
+    if (condition == "eq" || condition == "e" || condition == "z")
+        return BranchCondition::Equal;
+    if (condition == "ne" || condition == "nz")
+        return BranchCondition::NotEqual;
+
+    if (condition == "gt" || condition == "g" || condition == "nle")
+        return BranchCondition::GreaterThanSigned;
+    if (condition == "ge" || condition == "nl")
+        return BranchCondition::GreaterThanOrEqualSigned;
+    if (condition == "lt" || condition == "l" || condition == "nge")
+        return BranchCondition::LessThanSigned;
+    if (condition == "le" || condition == "ng")
+        return BranchCondition::LessThanOrEqualSigned;
+
+    if (condition == "hi" || condition == "a" || condition == "nbe")
+        return BranchCondition::GreaterThanUnsigned;
+    if (condition == "hs" || condition == "cs"
+        || condition == "ae" || condition == "nb" || condition == "nc")
+        return BranchCondition::GreaterThanOrEqualUnsigned;
+    if (condition == "lo" || condition == "cc"
+        || condition == "b"  || condition == "nae" || condition == "c")
+        return BranchCondition::LessThanUnsigned;
+    if (condition == "ls" || condition == "be" || condition == "na")
+        return BranchCondition::LessThanOrEqualUnsigned;
+
+    if (condition == "mi" || condition == "s")
+        return BranchCondition::Negative;
+    if (condition == "pl" || condition == "ns")
+        return BranchCondition::NotNegative;
+
+    if (condition == "vs" || condition == "o")
+        return BranchCondition::Overflow;
+    if (condition == "vc" || condition == "no")
+        return BranchCondition::NoOverflow;
+
+    if (condition == "p" || condition == "pe")
+        return BranchCondition::Parity;
+    if (condition == "np" || condition == "po")
+        return BranchCondition::NoParity;
+
+    if (condition == "al")
+        return BranchCondition::Always;
+    if (condition == "nv")
+        return BranchCondition::None;
+
+    return BranchCondition::None;
+}
+
 } // anonymous namespace
 
 // ── Internal access helper ──────────────────────────────────────────────
@@ -167,6 +266,7 @@ struct InstructionAccess {
         insn.size_  = static_cast<AddressSize>(raw.size);
         insn.itype_ = raw.itype;
         insn.mnemonic_ = mnemonic_text;
+        insn.branch_condition_ = parse_branch_condition_from_mnemonic(mnemonic_text);
 
         processor_t* processor = get_ph();
         const uint32 feature = processor ? raw.get_canon_feature(*processor) : 0;
@@ -631,6 +731,13 @@ bool is_conditional_jump(Address ea) {
             has_fallthrough = true;
     }
     return has_jump && has_fallthrough;
+}
+
+BranchCondition branch_condition(Address ea) {
+    qstring qmnem;
+    if (!print_insn_mnem(&qmnem, ea))
+        return BranchCondition::None;
+    return parse_branch_condition_from_mnemonic(ida::detail::to_string(qmnem));
 }
 
 Result<Instruction> next(Address ea) {
