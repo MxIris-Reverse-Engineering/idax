@@ -6,6 +6,51 @@ public enum OperandType: Int32, Sendable {
     case displacement, immediate, far, near
 }
 
+/// Semantic branch-condition classifier for conditional control-transfer
+/// instructions.
+///
+/// Mirrors C++ `ida::instruction::BranchCondition`. The raw value matches
+/// the C++ enum so the C ABI can ferry it as `int`.
+///
+/// Implementation is mnemonic-based on the C++ side, so the same vocabulary
+/// applies across ARM64, x86, ARM32, and any other processor whose
+/// conditional-branch mnemonics follow the standard `B<cc>` / `B.<cc>` /
+/// `J<cc>` / `CB[N]Z` / `TB[N]Z` patterns.
+public enum BranchCondition: Int32, Sendable {
+    /// Not a conditional control-transfer, or could not be classified.
+    case none = 0
+    /// Unconditional jump or branch (e.g. ARM64 `B`, x86 `JMP`).
+    case always
+    case equal
+    case notEqual
+    case lessThanSigned
+    case lessThanOrEqualSigned
+    case greaterThanSigned
+    case greaterThanOrEqualSigned
+    case lessThanUnsigned
+    case lessThanOrEqualUnsigned
+    case greaterThanUnsigned
+    case greaterThanOrEqualUnsigned
+    /// Direct register-is-zero test (ARM64 `CBZ`, `TBZ`).
+    case zero
+    /// Direct register-is-not-zero test (ARM64 `CBNZ`, `TBNZ`).
+    case notZero
+    /// Negative / N flag set (ARM64 `B.MI`, x86 `JS`).
+    case negative
+    /// Non-negative / N flag clear (ARM64 `B.PL`, x86 `JNS`).
+    case notNegative
+    /// Overflow flag set (ARM64 `B.VS`, x86 `JO`).
+    case overflow
+    /// Overflow flag clear (ARM64 `B.VC`, x86 `JNO`).
+    case noOverflow
+    /// Parity flag set (x86 `JP` / `JPE`).
+    case parity
+    /// Parity flag clear (x86 `JNP` / `JPO`).
+    case noParity
+    /// Counter register is zero (x86 `JCXZ` / `JECXZ` / `JRCXZ`, `LOOP*`).
+    case countZero
+}
+
 /// Decoded instruction operand.
 public struct Operand: Sendable {
     public let index: Int
@@ -16,6 +61,18 @@ public struct Operand: Sendable {
     public let value: UInt64
     public let targetAddress: Address
     public let byteWidth: Int
+    /// Processor-marked semantic read (SDK `CF_USE<n>` feature bit).
+    ///
+    /// True when the processor module reports that this operand index is
+    /// read by the instruction. Suitable as the LIR `registersRead` source
+    /// for register / memory-phrase / memory-displacement operands.
+    public let isRead: Bool
+    /// Processor-marked semantic write (SDK `CF_CHG<n>` feature bit).
+    ///
+    /// True when the processor module reports that this operand index is
+    /// changed by the instruction. Suitable as the LIR `registersWritten`
+    /// source for register operands.
+    public let isWritten: Bool
 
     public var isImmediate: Bool { operandType == .immediate }
     public var isRegister: Bool { operandType == .register }
@@ -29,6 +86,13 @@ public struct Instruction: Sendable {
     public let opcode: UInt16
     public let mnemonic: String
     public let operands: [Operand]
+    /// Semantic branch-condition classification of the instruction.
+    ///
+    /// `.none` for non-branch instructions, `.always` for unconditional
+    /// branches/jumps, and a specific `BranchCondition` case otherwise.
+    /// Suitable as the LIR `branchCondition` source on terminator
+    /// instructions.
+    public let branchCondition: BranchCondition
 
     public var operandCount: Int { operands.count }
 
@@ -61,6 +125,20 @@ public struct Instruction: Sendable {
 
     public static func isConditionalJump(_ address: Address) -> Bool {
         idax_instruction_is_conditional_jump(address) != 0
+    }
+
+    /// Classify the branch condition of the instruction at `address`.
+    ///
+    /// Returns `.none` for non-branch instructions / decode failures,
+    /// `.always` for unconditional branches, and the specific condition
+    /// otherwise. Mirrors C++ `ida::instruction::branch_condition`.
+    public static func branchCondition(at address: Address) throws(IDAError) -> BranchCondition {
+        var raw: Int32 = 0
+        try checkStatus(
+            idax_instruction_branch_condition(address, &raw),
+            "instruction.branchCondition"
+        )
+        return BranchCondition(rawValue: raw) ?? .none
     }
 
     public static func hasFallThrough(_ address: Address) -> Bool {
@@ -249,6 +327,7 @@ public struct Instruction: Sendable {
         self.size = raw.size
         self.opcode = raw.opcode
         self.mnemonic = borrowCString(raw.mnemonic)
+        self.branchCondition = BranchCondition(rawValue: Int32(raw.branch_condition)) ?? .none
 
         var ops: [Operand] = []
         if let ptr = raw.operands, raw.operand_count > 0 {
@@ -262,7 +341,9 @@ public struct Instruction: Sendable {
                     registerCategory: o.register_category,
                     value: o.value,
                     targetAddress: o.target_address,
-                    byteWidth: Int(o.byte_width)
+                    byteWidth: Int(o.byte_width),
+                    isRead: o.is_read != 0,
+                    isWritten: o.is_written != 0
                 )
             }
         }

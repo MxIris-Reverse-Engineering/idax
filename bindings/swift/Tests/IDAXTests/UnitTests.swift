@@ -148,7 +148,8 @@ struct OperandPredicateTests {
         let op = Operand(
             index: 0, operandType: .immediate, registerID: 0,
             registerName: "", registerCategory: 0, value: 42,
-            targetAddress: 0, byteWidth: 4
+            targetAddress: 0, byteWidth: 4,
+            isRead: true, isWritten: false
         )
         #expect(op.isImmediate)
         #expect(!op.isRegister)
@@ -159,7 +160,8 @@ struct OperandPredicateTests {
         let op = Operand(
             index: 0, operandType: .register, registerID: 1,
             registerName: "rax", registerCategory: 0, value: 0,
-            targetAddress: 0, byteWidth: 8
+            targetAddress: 0, byteWidth: 8,
+            isRead: true, isWritten: true
         )
         #expect(op.isRegister)
         #expect(!op.isImmediate)

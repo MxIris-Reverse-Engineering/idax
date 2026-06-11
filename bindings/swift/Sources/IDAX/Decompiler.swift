@@ -576,6 +576,21 @@ public enum CtreeVisitAction: Int32, Sendable {
     case skipChildren = 2
 }
 
+/// Value snapshot of a parent ctree item.
+///
+/// Returned by ``CtreeExpression/parent`` and ``CtreeStatement/parent``
+/// when the active visitor recorded a parent for the queried handle.
+/// Suitable as the source for HIR structuring passes that need to walk
+/// from a sub-expression back up to its enclosing statement.
+public struct CtreeItemInfo: Sendable {
+    /// The parent item's opcode classification.
+    public let type: CtreeItemType
+    /// The parent item's associated database address (may be `BadAddress`).
+    public let address: Address
+    /// `true` when the parent is an expression, `false` when statement.
+    public let isExpression: Bool
+}
+
 /// Non-owning handle to a ctree expression. Valid only during visitor callback.
 public struct CtreeExpression: @unchecked Sendable {
     let handle: IdaxCtreeExprHandle
@@ -667,6 +682,19 @@ public struct CtreeExpression: @unchecked Sendable {
         var raw: IdaxCtreeExprHandle?
         try checkStatus(idax_ctree_expr_call_argument(handle, index, &raw), "ctree.expr.callArgument")
         return try body(CtreeExpression(raw!))
+    }
+
+    /// Direct parent of this expression, or `nil` if it is the ctree root
+    /// or no parent was recorded by the active visitor.
+    ///
+    /// Only valid while inside the visitor callback that produced this
+    /// handle — the parent map is cleared when the visitor returns.
+    public var parent: CtreeItemInfo? {
+        get throws(IDAError) {
+            var raw = IdaxCtreeItemInfo()
+            try checkStatus(idax_ctree_expr_parent(handle, &raw), "ctree.expr.parent")
+            return makeCtreeItemInfo(raw)
+        }
     }
 }
 
@@ -784,6 +812,28 @@ public struct CtreeStatement: @unchecked Sendable {
         try checkStatus(idax_ctree_stmt_switch_case_body(handle, index, &raw), "ctree.stmt.switchCaseBody")
         return try body(CtreeStatement(raw!))
     }
+
+    /// Direct parent of this statement, or `nil` if it is the ctree root
+    /// or no parent was recorded by the active visitor.
+    ///
+    /// Only valid while inside the visitor callback that produced this
+    /// handle — the parent map is cleared when the visitor returns.
+    public var parent: CtreeItemInfo? {
+        get throws(IDAError) {
+            var raw = IdaxCtreeItemInfo()
+            try checkStatus(idax_ctree_stmt_parent(handle, &raw), "ctree.stmt.parent")
+            return makeCtreeItemInfo(raw)
+        }
+    }
+}
+
+private func makeCtreeItemInfo(_ raw: IdaxCtreeItemInfo) -> CtreeItemInfo? {
+    guard raw.has_value != 0 else { return nil }
+    return CtreeItemInfo(
+        type: CtreeItemType(rawValue: Int32(raw.type)) ?? .exprEmpty,
+        address: raw.address,
+        isExpression: raw.is_expression != 0
+    )
 }
 
 // MARK: - Microcode types

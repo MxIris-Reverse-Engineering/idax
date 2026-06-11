@@ -542,6 +542,10 @@ private func hostCallbackTrampoline(
 /// Create an `IdaxPluginActionContext` with strdup'd C strings.
 /// Must be paired with `freeRawContext` to avoid leaks.
 private func makeRawContext(_ ctx: ActionContext) -> IdaxPluginActionContext {
+    // `type_ref_name` / `type_ref_type` are Rust-binding-specific extensions
+    // on the shared C ABI for routing IDA Local-Types selections through
+    // action contexts; Swift consumers do not currently surface them and
+    // leave the slots empty.
     IdaxPluginActionContext(
         action_id: strdup(ctx.actionId),
         widget_title: strdup(ctx.widgetTitle),
@@ -553,7 +557,9 @@ private func makeRawContext(_ ctx: ActionContext) -> IdaxPluginActionContext {
         register_name: strdup(ctx.registerName),
         widget_handle: ctx.widgetHandle,
         focused_widget_handle: ctx.focusedWidgetHandle,
-        decompiler_view_handle: ctx.decompilerViewHandle
+        decompiler_view_handle: ctx.decompilerViewHandle,
+        type_ref_name: nil,
+        type_ref_type: nil
     )
 }
 
