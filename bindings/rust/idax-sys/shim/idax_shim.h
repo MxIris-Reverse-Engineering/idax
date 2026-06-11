@@ -2407,6 +2407,154 @@ int idax_dyld_cache_load_gaps(int wait_for_analysis, size_t* out);
 int idax_plugin_is_plugin_available(const char* plugin_name);
 int idax_plugin_run_plugin(const char* plugin_name, size_t argument);
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Microcode snapshot (ida::microcode)
+ *
+ * Post-hoc, value-typed view of a function's Hex-Rays microcode (mba_t).
+ * Distinct from the live MicrocodeContext filter API exposed in the
+ * Decompiler section: the snapshot is built once via gen_microcode() and
+ * then walked off-line without any further SDK interaction.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Opaque handle to a microcode snapshot. Free with
+ *  idax_microcode_snapshot_free(). */
+typedef void* IdaxMicrocodeSnapshotHandle;
+
+/** Maturity selector, mirroring ida::microcode::Maturity. */
+#define IDAX_MICROCODE_MATURITY_GENERATED        1
+#define IDAX_MICROCODE_MATURITY_PREOPTIMIZED     2
+#define IDAX_MICROCODE_MATURITY_LOCOPT           3
+#define IDAX_MICROCODE_MATURITY_CALLED_ARGUMENTS 4
+#define IDAX_MICROCODE_MATURITY_GLBOPT1          5
+#define IDAX_MICROCODE_MATURITY_GLBOPT2          6
+#define IDAX_MICROCODE_MATURITY_GLBOPT3          7
+#define IDAX_MICROCODE_MATURITY_LVARS            8
+
+/** Block kind, mirroring ida::microcode::BlockKind. */
+#define IDAX_MICROCODE_BLOCK_KIND_NONE     0
+#define IDAX_MICROCODE_BLOCK_KIND_STOP     1
+#define IDAX_MICROCODE_BLOCK_KIND_NO_WAY   2
+#define IDAX_MICROCODE_BLOCK_KIND_ONE_WAY  3
+#define IDAX_MICROCODE_BLOCK_KIND_TWO_WAY  4
+#define IDAX_MICROCODE_BLOCK_KIND_N_WAY    5
+#define IDAX_MICROCODE_BLOCK_KIND_EXTERNAL 6
+
+/** Operand kind, mirroring ida::microcode::Operand::Kind. */
+#define IDAX_MICROCODE_OPERAND_NONE                0
+#define IDAX_MICROCODE_OPERAND_REGISTER            1
+#define IDAX_MICROCODE_OPERAND_NUMERIC_CONSTANT    2
+#define IDAX_MICROCODE_OPERAND_STRING_LITERAL      3
+#define IDAX_MICROCODE_OPERAND_NESTED_INSTRUCTION  4
+#define IDAX_MICROCODE_OPERAND_STACK_VARIABLE      5
+#define IDAX_MICROCODE_OPERAND_GLOBAL_ADDRESS      6
+#define IDAX_MICROCODE_OPERAND_BLOCK_REFERENCE     7
+#define IDAX_MICROCODE_OPERAND_CALL_INFO           8
+#define IDAX_MICROCODE_OPERAND_LOCAL_VARIABLE      9
+#define IDAX_MICROCODE_OPERAND_ADDRESS_OF          10
+#define IDAX_MICROCODE_OPERAND_HELPER              11
+#define IDAX_MICROCODE_OPERAND_CASES               12
+#define IDAX_MICROCODE_OPERAND_FLOAT_CONSTANT      13
+#define IDAX_MICROCODE_OPERAND_REGISTER_PAIR       14
+#define IDAX_MICROCODE_OPERAND_SCATTERED           15
+
+/** Flat C representation of a microcode operand snapshot.
+ *  helper_name and string_literal are malloc'd char* (may be NULL); free
+ *  the containing IdaxMicrocodeSnapshotInstruction with
+ *  idax_microcode_snapshot_instruction_free() to release them. */
+typedef struct IdaxMicrocodeSnapshotOperand {
+    int      kind;                       /**< IDAX_MICROCODE_OPERAND_* */
+    int      byte_width;                 /**< NOSIZE (-1) for unknown. */
+    int      register_id;
+    int      second_register_id;
+    int64_t  numeric_value;
+    double   float_value;
+    int64_t  stack_offset;
+    uint64_t global_address;
+    int      local_variable_index;       /**< -1 if not applicable. */
+    int64_t  local_variable_offset;
+    char*    helper_name;                /**< malloc'd or NULL. */
+    char*    string_literal;             /**< malloc'd or NULL. */
+    int      block_index;                /**< -1 if not applicable. */
+    int      nested_instruction_id;      /**< -1 if not applicable. */
+    int      ssa_version;                /**< Valid iff has_ssa_version != 0. */
+    int      has_ssa_version;
+    uint8_t  operand_properties;         /**< Raw mop_t::oprops bitmask. */
+} IdaxMicrocodeSnapshotOperand;
+
+/** Flat C representation of a microcode instruction snapshot. */
+typedef struct IdaxMicrocodeSnapshotInstruction {
+    int                          id;
+    uint64_t                     source_address;
+    int                          opcode;          /**< Raw mcode_t. */
+    char*                        opcode_name;     /**< malloc'd. */
+    IdaxMicrocodeSnapshotOperand left;
+    IdaxMicrocodeSnapshotOperand right;
+    IdaxMicrocodeSnapshotOperand destination;
+    uint32_t                     flags;           /**< minsn_t::iprops snapshot. */
+} IdaxMicrocodeSnapshotInstruction;
+
+/** Flat C representation of a basic block snapshot. predecessor_indices
+ *  and successor_indices are malloc'd int arrays; instructions is a
+ *  malloc'd array of instructions whose internal strings must be freed
+ *  via the containing block's idax_microcode_snapshot_block_free(). */
+typedef struct IdaxMicrocodeSnapshotBlock {
+    int                                index;
+    uint64_t                           start_address;
+    uint64_t                           end_address;
+    int                                kind;                  /**< IDAX_MICROCODE_BLOCK_KIND_* */
+    uint32_t                           flags;
+    int*                               predecessor_indices;
+    size_t                             predecessor_count;
+    int*                               successor_indices;
+    size_t                             successor_count;
+    IdaxMicrocodeSnapshotInstruction*  instructions;
+    size_t                             instruction_count;
+} IdaxMicrocodeSnapshotBlock;
+
+/** Build a microcode snapshot of the function at the given address.
+ *  `maturity` must be one of IDAX_MICROCODE_MATURITY_*; pass 0 for the
+ *  default (IDAX_MICROCODE_MATURITY_LVARS). */
+int idax_microcode_snapshot_create(uint64_t function_address,
+                                   int maturity,
+                                   IdaxMicrocodeSnapshotHandle* out);
+
+/** Release a snapshot built with idax_microcode_snapshot_create(). */
+void idax_microcode_snapshot_free(IdaxMicrocodeSnapshotHandle handle);
+
+int idax_microcode_snapshot_function_address(IdaxMicrocodeSnapshotHandle handle,
+                                             uint64_t* out);
+int idax_microcode_snapshot_maturity(IdaxMicrocodeSnapshotHandle handle,
+                                     int* out);
+int idax_microcode_snapshot_local_variables_size(IdaxMicrocodeSnapshotHandle handle,
+                                                 int64_t* out);
+int idax_microcode_snapshot_saved_registers_size(IdaxMicrocodeSnapshotHandle handle,
+                                                 int64_t* out);
+int idax_microcode_snapshot_stack_size(IdaxMicrocodeSnapshotHandle handle,
+                                       int64_t* out);
+
+int idax_microcode_snapshot_block_count(IdaxMicrocodeSnapshotHandle handle,
+                                        size_t* out);
+
+/** Copy the block at zero-based `index` into `out`. Free the result with
+ *  idax_microcode_snapshot_block_free(). */
+int idax_microcode_snapshot_block(IdaxMicrocodeSnapshotHandle handle,
+                                  size_t index,
+                                  IdaxMicrocodeSnapshotBlock* out);
+void idax_microcode_snapshot_block_free(IdaxMicrocodeSnapshotBlock* block);
+
+/** Look up a nested microinstruction by id (negative ids are invalid).
+ *  Free the result with idax_microcode_snapshot_instruction_free(). */
+int idax_microcode_snapshot_nested_instruction(IdaxMicrocodeSnapshotHandle handle,
+                                               int nested_instruction_id,
+                                               IdaxMicrocodeSnapshotInstruction* out);
+void idax_microcode_snapshot_instruction_free(IdaxMicrocodeSnapshotInstruction* instruction);
+
+/** Copy the snapshot's local-variable table. Free with
+ *  idax_decompiled_variables_free() (same allocator as the decompiler API). */
+int idax_microcode_snapshot_local_variables(IdaxMicrocodeSnapshotHandle handle,
+                                            IdaxLocalVariable** out,
+                                            size_t* count);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -8884,3 +8884,329 @@ int idax_plugin_run_plugin(const char* plugin_name, size_t argument) {
         return fail(ida::Error::validation("plugin name is null"));
     RETURN_STATUS(ida::plugin::run_plugin(plugin_name, argument));
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Microcode snapshot (ida::microcode)
+// ════════════════════════════════════════════════════════════════════════════
+
+namespace {
+
+ida::microcode::Maturity parse_microcode_maturity(int raw) {
+    switch (raw) {
+        case 0:
+        case IDAX_MICROCODE_MATURITY_LVARS:
+            return ida::microcode::Maturity::Lvars;
+        case IDAX_MICROCODE_MATURITY_GENERATED:
+            return ida::microcode::Maturity::Generated;
+        case IDAX_MICROCODE_MATURITY_PREOPTIMIZED:
+            return ida::microcode::Maturity::Preoptimized;
+        case IDAX_MICROCODE_MATURITY_LOCOPT:
+            return ida::microcode::Maturity::Locopt;
+        case IDAX_MICROCODE_MATURITY_CALLED_ARGUMENTS:
+            return ida::microcode::Maturity::CalledArguments;
+        case IDAX_MICROCODE_MATURITY_GLBOPT1:
+            return ida::microcode::Maturity::Glbopt1;
+        case IDAX_MICROCODE_MATURITY_GLBOPT2:
+            return ida::microcode::Maturity::Glbopt2;
+        case IDAX_MICROCODE_MATURITY_GLBOPT3:
+            return ida::microcode::Maturity::Glbopt3;
+        default:
+            return ida::microcode::Maturity::Lvars;
+    }
+}
+
+void free_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* op) {
+    if (op == nullptr) return;
+    std::free(op->helper_name);
+    op->helper_name = nullptr;
+    std::free(op->string_literal);
+    op->string_literal = nullptr;
+}
+
+ida::Status fill_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* out,
+                                            const ida::microcode::Operand& operand) {
+    if (out == nullptr)
+        return std::unexpected(ida::Error::internal("null microcode-snapshot operand output"));
+
+    std::memset(out, 0, sizeof(*out));
+    out->kind                  = static_cast<int>(operand.kind);
+    out->byte_width            = operand.byte_width;
+    out->register_id           = operand.register_id;
+    out->second_register_id    = operand.second_register_id;
+    out->numeric_value         = operand.numeric_value;
+    out->float_value           = operand.float_value;
+    out->stack_offset          = operand.stack_offset;
+    out->global_address        = operand.global_address;
+    out->local_variable_index  = operand.local_variable_index;
+    out->local_variable_offset = operand.local_variable_offset;
+    out->block_index           = operand.block_index;
+    out->nested_instruction_id = operand.nested_instruction_id;
+    out->operand_properties    = operand.operand_properties;
+
+    if (operand.ssa_version) {
+        out->ssa_version     = *operand.ssa_version;
+        out->has_ssa_version = 1;
+    }
+
+    if (!operand.helper_name.empty()) {
+        out->helper_name = dup_string(operand.helper_name);
+        if (out->helper_name == nullptr)
+            return std::unexpected(ida::Error::internal("malloc failed"));
+    }
+    if (!operand.string_literal.empty()) {
+        out->string_literal = dup_string(operand.string_literal);
+        if (out->string_literal == nullptr) {
+            free_microcode_snapshot_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+    }
+    return ida::ok();
+}
+
+void free_microcode_snapshot_instruction_fields(IdaxMicrocodeSnapshotInstruction* inst) {
+    if (inst == nullptr) return;
+    std::free(inst->opcode_name);
+    inst->opcode_name = nullptr;
+    free_microcode_snapshot_operand(&inst->left);
+    free_microcode_snapshot_operand(&inst->right);
+    free_microcode_snapshot_operand(&inst->destination);
+}
+
+ida::Status fill_microcode_snapshot_instruction(IdaxMicrocodeSnapshotInstruction* out,
+                                                const ida::microcode::Instruction& instruction) {
+    if (out == nullptr)
+        return std::unexpected(ida::Error::internal("null microcode-snapshot instruction output"));
+
+    std::memset(out, 0, sizeof(*out));
+    out->id             = instruction.id;
+    out->source_address = instruction.source_address;
+    out->opcode         = instruction.opcode;
+    out->flags          = instruction.flags;
+    out->opcode_name    = dup_string(instruction.opcode_name);
+    if (out->opcode_name == nullptr && !instruction.opcode_name.empty())
+        return std::unexpected(ida::Error::internal("malloc failed"));
+
+    if (auto status = fill_microcode_snapshot_operand(&out->left, instruction.left); !status) {
+        free_microcode_snapshot_instruction_fields(out);
+        return status;
+    }
+    if (auto status = fill_microcode_snapshot_operand(&out->right, instruction.right); !status) {
+        free_microcode_snapshot_instruction_fields(out);
+        return status;
+    }
+    if (auto status = fill_microcode_snapshot_operand(&out->destination, instruction.destination); !status) {
+        free_microcode_snapshot_instruction_fields(out);
+        return status;
+    }
+    return ida::ok();
+}
+
+ida::microcode::FunctionSnapshot* as_microcode_snapshot(IdaxMicrocodeSnapshotHandle handle) {
+    return static_cast<ida::microcode::FunctionSnapshot*>(handle);
+}
+
+} // namespace
+
+int idax_microcode_snapshot_create(uint64_t function_address,
+                                   int maturity,
+                                   IdaxMicrocodeSnapshotHandle* out) {
+    clear_error();
+    if (out == nullptr)
+        return fail(ida::Error::validation("snapshot output pointer is null"));
+
+    auto result = ida::microcode::snapshot(function_address, parse_microcode_maturity(maturity));
+    if (!result)
+        return fail(result.error());
+
+    auto* heap = new ida::microcode::FunctionSnapshot(std::move(*result));
+    *out = heap;
+    return 0;
+}
+
+void idax_microcode_snapshot_free(IdaxMicrocodeSnapshotHandle handle) {
+    if (handle == nullptr) return;
+    delete as_microcode_snapshot(handle);
+}
+
+int idax_microcode_snapshot_function_address(IdaxMicrocodeSnapshotHandle handle,
+                                             uint64_t* out) {
+    clear_error();
+    if (handle == nullptr || out == nullptr)
+        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
+    *out = as_microcode_snapshot(handle)->function_address();
+    return 0;
+}
+
+int idax_microcode_snapshot_maturity(IdaxMicrocodeSnapshotHandle handle, int* out) {
+    clear_error();
+    if (handle == nullptr || out == nullptr)
+        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
+    *out = static_cast<int>(as_microcode_snapshot(handle)->maturity());
+    return 0;
+}
+
+int idax_microcode_snapshot_local_variables_size(IdaxMicrocodeSnapshotHandle handle,
+                                                 int64_t* out) {
+    clear_error();
+    if (handle == nullptr || out == nullptr)
+        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
+    *out = as_microcode_snapshot(handle)->local_variables_size();
+    return 0;
+}
+
+int idax_microcode_snapshot_saved_registers_size(IdaxMicrocodeSnapshotHandle handle,
+                                                 int64_t* out) {
+    clear_error();
+    if (handle == nullptr || out == nullptr)
+        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
+    *out = as_microcode_snapshot(handle)->saved_registers_size();
+    return 0;
+}
+
+int idax_microcode_snapshot_stack_size(IdaxMicrocodeSnapshotHandle handle,
+                                       int64_t* out) {
+    clear_error();
+    if (handle == nullptr || out == nullptr)
+        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
+    *out = as_microcode_snapshot(handle)->stack_size();
+    return 0;
+}
+
+int idax_microcode_snapshot_block_count(IdaxMicrocodeSnapshotHandle handle,
+                                        size_t* out) {
+    clear_error();
+    if (handle == nullptr || out == nullptr)
+        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
+    *out = as_microcode_snapshot(handle)->blocks().size();
+    return 0;
+}
+
+int idax_microcode_snapshot_block(IdaxMicrocodeSnapshotHandle handle,
+                                  size_t index,
+                                  IdaxMicrocodeSnapshotBlock* out) {
+    clear_error();
+    if (handle == nullptr || out == nullptr)
+        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
+
+    const auto& blocks = as_microcode_snapshot(handle)->blocks();
+    if (index >= blocks.size())
+        return fail(ida::Error::not_found(
+            "block index out of range", std::to_string(index)));
+
+    const auto& block = blocks[index];
+    std::memset(out, 0, sizeof(*out));
+    out->index               = block.index;
+    out->start_address       = block.start_address;
+    out->end_address         = block.end_address;
+    out->kind                = static_cast<int>(block.kind);
+    out->flags               = block.flags;
+    out->predecessor_count   = block.predecessor_indices.size();
+    out->successor_count     = block.successor_indices.size();
+    out->instruction_count   = block.instructions.size();
+
+    if (!block.predecessor_indices.empty()) {
+        out->predecessor_indices = static_cast<int*>(
+            std::malloc(block.predecessor_indices.size() * sizeof(int)));
+        if (out->predecessor_indices == nullptr) {
+            idax_microcode_snapshot_block_free(out);
+            return fail(ida::Error::internal("malloc failed"));
+        }
+        std::memcpy(out->predecessor_indices,
+                    block.predecessor_indices.data(),
+                    block.predecessor_indices.size() * sizeof(int));
+    }
+    if (!block.successor_indices.empty()) {
+        out->successor_indices = static_cast<int*>(
+            std::malloc(block.successor_indices.size() * sizeof(int)));
+        if (out->successor_indices == nullptr) {
+            idax_microcode_snapshot_block_free(out);
+            return fail(ida::Error::internal("malloc failed"));
+        }
+        std::memcpy(out->successor_indices,
+                    block.successor_indices.data(),
+                    block.successor_indices.size() * sizeof(int));
+    }
+
+    if (!block.instructions.empty()) {
+        out->instructions = static_cast<IdaxMicrocodeSnapshotInstruction*>(
+            std::calloc(block.instructions.size(),
+                        sizeof(IdaxMicrocodeSnapshotInstruction)));
+        if (out->instructions == nullptr) {
+            idax_microcode_snapshot_block_free(out);
+            return fail(ida::Error::internal("malloc failed"));
+        }
+        for (size_t i = 0; i < block.instructions.size(); ++i) {
+            auto status = fill_microcode_snapshot_instruction(
+                &out->instructions[i], block.instructions[i]);
+            if (!status) {
+                idax_microcode_snapshot_block_free(out);
+                return fail(status.error());
+            }
+        }
+    }
+    return 0;
+}
+
+void idax_microcode_snapshot_block_free(IdaxMicrocodeSnapshotBlock* block) {
+    if (block == nullptr) return;
+    std::free(block->predecessor_indices);
+    block->predecessor_indices = nullptr;
+    std::free(block->successor_indices);
+    block->successor_indices = nullptr;
+    if (block->instructions != nullptr) {
+        for (size_t i = 0; i < block->instruction_count; ++i)
+            free_microcode_snapshot_instruction_fields(&block->instructions[i]);
+        std::free(block->instructions);
+        block->instructions = nullptr;
+    }
+    block->predecessor_count = 0;
+    block->successor_count   = 0;
+    block->instruction_count = 0;
+}
+
+int idax_microcode_snapshot_nested_instruction(IdaxMicrocodeSnapshotHandle handle,
+                                               int nested_instruction_id,
+                                               IdaxMicrocodeSnapshotInstruction* out) {
+    clear_error();
+    if (handle == nullptr || out == nullptr)
+        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
+    auto result = as_microcode_snapshot(handle)->nested_instruction(nested_instruction_id);
+    if (!result)
+        return fail(result.error());
+    auto status = fill_microcode_snapshot_instruction(out, *result);
+    if (!status)
+        return fail(status.error());
+    return 0;
+}
+
+void idax_microcode_snapshot_instruction_free(IdaxMicrocodeSnapshotInstruction* instruction) {
+    free_microcode_snapshot_instruction_fields(instruction);
+}
+
+int idax_microcode_snapshot_local_variables(IdaxMicrocodeSnapshotHandle handle,
+                                            IdaxLocalVariable** out,
+                                            size_t* count) {
+    clear_error();
+    if (handle == nullptr || out == nullptr || count == nullptr)
+        return fail(ida::Error::validation("snapshot handle/out/count pointer is null"));
+
+    auto result = as_microcode_snapshot(handle)->local_variables();
+    if (!result)
+        return fail(result.error());
+
+    const auto& variables = *result;
+    *count = variables.size();
+    if (variables.empty()) {
+        *out = nullptr;
+        return 0;
+    }
+    *out = static_cast<IdaxLocalVariable*>(
+        std::malloc(variables.size() * sizeof(IdaxLocalVariable)));
+    if (*out == nullptr)
+        return fail(ida::Error::internal("malloc failed"));
+    for (size_t i = 0; i < variables.size(); ++i) {
+        std::memset(&(*out)[i], 0, sizeof(IdaxLocalVariable));
+        fill_local_variable(&(*out)[i], variables[i]);
+    }
+    return 0;
+}
