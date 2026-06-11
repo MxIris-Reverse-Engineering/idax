@@ -106,7 +106,7 @@ echo "    $(lipo -info "$UNIVERSAL_FW/CIDAX")"
 
 # ── Step 6: Prepare headers + modulemap ────────────────────────────────────
 echo "==> Preparing headers..."
-cp "$SWIFT_DIR/Sources/CIDAX/include/idax_shim.h" "$UNIVERSAL_FW/Headers/"
+cp "$REPO_ROOT/bindings/c/include/idax_shim.h" "$UNIVERSAL_FW/Headers/"
 
 cat > "$UNIVERSAL_FW/Modules/module.modulemap" <<'MODULEMAP'
 framework module CIDAX {

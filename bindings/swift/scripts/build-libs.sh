@@ -139,6 +139,7 @@ fi
 
 $CXX $STD_FLAG "${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"}" \
     -c "$SHIM_CPP" -o "$SHIM_OBJ" \
+    -I"$REPO_ROOT/bindings/c/include" \
     -I"$REPO_ROOT/include" \
     -I"$REPO_ROOT/src" \
     -I"$SDK_INCLUDE" \
