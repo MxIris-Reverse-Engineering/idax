@@ -60,10 +60,6 @@ struct DyldCacheIntegrationTests {
         let cachedModules = try DyldCache.listModules()
         #expect(!cachedModules.isEmpty, "Expected at least one image in the cache header")
         print("Modules in cache: \(cachedModules.count)")
-        for cachedModule in cachedModules.prefix(5) {
-            let loadAddressHex = String(cachedModule.loadAddress, radix: 16)
-            print("  0x\(loadAddressHex): \(cachedModule.path)")
-        }
         
         modulePath = "/System/Library/PrivateFrameworks/UIKitMacHelper.framework/Versions/A/UIKitMacHelper"
         print("Loading module: \(modulePath)")
