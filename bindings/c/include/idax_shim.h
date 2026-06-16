@@ -2550,6 +2550,9 @@ typedef struct IdaxMicrocodeSnapshotOperand {
     int64_t  local_variable_offset;
     char*    helper_name;                /**< malloc'd or NULL. */
     char*    string_literal;             /**< malloc'd or NULL. */
+    char*    global_name;                /**< Name at global_address (malloc'd or NULL). */
+    struct IdaxMicrocodeSnapshotOperand* call_arguments; /**< CallInfo args (malloc'd array or NULL). */
+    size_t   call_argument_count;        /**< Number of call_arguments. */
     int      block_index;                /**< -1 if not applicable. */
     int      nested_instruction_id;      /**< -1 if not applicable. */
     int      ssa_version;                /**< Valid iff has_ssa_version != 0. */
@@ -2607,6 +2610,8 @@ int idax_microcode_snapshot_saved_registers_size(IdaxMicrocodeSnapshotHandle han
                                                  int64_t* out);
 int idax_microcode_snapshot_stack_size(IdaxMicrocodeSnapshotHandle handle,
                                        int64_t* out);
+int idax_microcode_snapshot_return_value_variable_index(IdaxMicrocodeSnapshotHandle handle,
+                                                        int* out);
 
 int idax_microcode_snapshot_block_count(IdaxMicrocodeSnapshotHandle handle,
                                         size_t* out);
