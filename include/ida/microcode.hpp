@@ -86,6 +86,7 @@ struct Operand {
     double        float_value{0.0};           ///< `mop_fn` decoded value (best effort).
     std::int64_t  stack_offset{0};            ///< `mop_S` / `mop_a` stack offset.
     Address       global_address{BadAddress}; ///< `mop_v` / `mop_a` global EA.
+    std::string   global_name;                ///< Name at `global_address` (`get_name`), empty if none. Lets a MIR consumer render a call/global by name (e.g. `objc_opt_self`, `sub_…`) instead of a raw address.
     int           local_variable_index{-1};   ///< `mop_l`/`mop_a` index in `mba->vars`.
     std::int64_t  local_variable_offset{0};   ///< `mop_l`/`mop_a` offset within lvar.
     std::string   helper_name;                ///< `mop_h` symbolic helper name.
@@ -95,6 +96,12 @@ struct Operand {
     /// For `Kind::NestedInstruction`, identifies a nested microinstruction
     /// owned by the snapshot. Look it up with `FunctionSnapshot::nested_instruction(id)`.
     int           nested_instruction_id{-1};
+
+    /// For `Kind::CallInfo` (`mop_f`), the call's argument operands in order
+    /// (`mcallinfo_t::args`, each `mcallarg_t` is itself a `mop_t`). Empty for
+    /// every other kind. Lets a MIR consumer bind a call's arguments (e.g.
+    /// `objc_retain(v9)`) instead of dropping them.
+    std::vector<Operand> call_arguments;
 
     /// SSA-style value number copied from `mop_t::valnum`. Zero means unknown.
     /// Present from `MMAT_GLBOPT2` onward; populated for all maturities but
@@ -149,6 +156,14 @@ public:
     [[nodiscard]] std::int64_t local_variables_size() const noexcept;
     [[nodiscard]] std::int64_t saved_registers_size() const noexcept;
     [[nodiscard]] std::int64_t stack_size() const noexcept;
+
+    /// Index into `local_variables()` of the lvar holding the function's
+    /// return value (`mba_t::retvaridx`), or `-1` when the function returns
+    /// `void` / the return value is undefined. At `MMAT_LVARS` the returned
+    /// value lives in this lvar (not on the `m_ret` instruction's operands),
+    /// so a MIR consumer recovers `return <expr>` by wiring this lvar's
+    /// reaching definition at each `m_ret`.
+    [[nodiscard]] int return_value_variable_index() const noexcept;
 
     /// Top-level blocks, ordered by serial number (`mba_t::natural` order).
     [[nodiscard]] const std::vector<Block>& blocks() const noexcept;

@@ -70,10 +70,16 @@ public enum Microcode {
         public let floatValue: Double
         public let stackOffset: Int64
         public let globalAddress: Address
+        /// Name at `globalAddress` (`get_name`), empty if none — lets a consumer
+        /// render a call/global by name instead of a raw address.
+        public let globalName: String
         public let localVariableIndex: Int
         public let localVariableOffset: Int64
         public let helperName: String
         public let stringLiteral: String
+        /// For a `.callInfo` operand (`mop_f`), the call's argument operands in
+        /// order. Empty for every other kind.
+        public let callArguments: [Operand]
         public let blockIndex: Int
         public let nestedInstructionID: Int
         public let ssaVersion: Int?
@@ -160,6 +166,22 @@ public enum Microcode {
                 try withOutput("microcode.stackSize", Int64(0)) {
                     idax_microcode_snapshot_stack_size(handle, $0)
                 }
+            }
+        }
+
+        /// Index into `localVariables` of the lvar holding the function's
+        /// return value (`mba_t::retvaridx`), or `-1` for a `void` / undefined
+        /// return. At `.lvars` maturity the returned value lives in this lvar
+        /// (not on `m_ret`'s operands), so a MIR consumer wires `return <expr>`
+        /// from this lvar's reaching definition at each `m_ret`.
+        public var returnValueVariableIndex: Int {
+            get throws(IDAError) {
+                var out: Int32 = -1
+                try checkStatus(
+                    idax_microcode_snapshot_return_value_variable_index(handle, &out),
+                    "microcode.returnValueVariableIndex"
+                )
+                return Int(out)
             }
         }
 
@@ -283,10 +305,18 @@ private extension Microcode.Operand {
         self.floatValue          = raw.float_value
         self.stackOffset         = raw.stack_offset
         self.globalAddress       = raw.global_address
+        self.globalName          = borrowCString(raw.global_name)
         self.localVariableIndex  = Int(raw.local_variable_index)
         self.localVariableOffset = raw.local_variable_offset
         self.helperName          = borrowCString(raw.helper_name)
         self.stringLiteral       = borrowCString(raw.string_literal)
+        if raw.call_argument_count > 0, let argumentsPointer = raw.call_arguments {
+            self.callArguments = (0 ..< Int(raw.call_argument_count)).map {
+                Microcode.Operand(raw: argumentsPointer[$0])
+            }
+        } else {
+            self.callArguments = []
+        }
         self.blockIndex          = Int(raw.block_index)
         self.nestedInstructionID = Int(raw.nested_instruction_id)
         self.ssaVersion          = raw.has_ssa_version != 0 ? Int(raw.ssa_version) : nil

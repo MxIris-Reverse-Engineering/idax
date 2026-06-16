@@ -99,20 +99,14 @@ std::string opcode_to_string(mcode_t opcode) {
 double decode_float_constant(const fnumber_t* fnum) noexcept {
     if (fnum == nullptr)
         return 0.0;
-    // SDK keeps floats in IEEE-internal `fpvalue_t`; we surface the binary
-    // representation for sizes 4 and 8 so the snapshot is usable even though
-    // we cannot perform 80-bit conversion without SDK helpers.
-    if (fnum->nbytes == 4) {
-        float value{};
-        std::memcpy(&value, fnum->fnum.w, sizeof(value));
-        return static_cast<double>(value);
-    }
-    if (fnum->nbytes == 8) {
-        double value{};
-        std::memcpy(&value, fnum->fnum.w, sizeof(value));
-        return value;
-    }
-    return 0.0;
+    // `fpvalue_t` is IDA's processor-independent INTERNAL float representation,
+    // not raw IEEE-754 bytes — a `memcpy` of `fnum.w` reinterprets the internal
+    // layout as a native double and yields garbage (e.g. `65536.0` decoded as
+    // `0.0`). Convert through the SDK helper, which handles every original size
+    // (4 / 8 / 10 / 12 bytes) and rounds long double down to double.
+    double value = 0.0;
+    fnum->fnum.to_double(&value);
+    return value;
 }
 
 struct OperandPopulationContext {
@@ -172,15 +166,24 @@ Operand snapshot_operand(const mop_t& op, OperandPopulationContext& ctx) {
         case mop_v:
             snap.kind           = Operand::Kind::GlobalAddress;
             snap.global_address = op.g;
+            snap.global_name    = ida::detail::to_string(get_name(op.g));
             break;
         case mop_b:
             snap.kind        = Operand::Kind::BlockReference;
             snap.block_index = op.b;
             break;
         case mop_f:
-            // Detailed call info is not surfaced in the snapshot today; only
-            // the kind is recorded so downstream consumers can detect calls.
+            // Call info (`mcallinfo_t`). Surface the argument operands in order
+            // so a consumer can bind them; each `mcallarg_t` is itself a `mop_t`
+            // (sliced to its base here — the formal name/type are not yet
+            // surfaced). Nested-instruction args route through `register_nested`
+            // via the recursive `snapshot_operand`, so no inline recursion.
             snap.kind = Operand::Kind::CallInfo;
+            if (op.f != nullptr) {
+                snap.call_arguments.reserve(op.f->args.size());
+                for (const mcallarg_t& argument : op.f->args)
+                    snap.call_arguments.push_back(snapshot_operand(argument, ctx));
+            }
             break;
         case mop_l:
             snap.kind = Operand::Kind::LocalVariable;
@@ -200,6 +203,7 @@ Operand snapshot_operand(const mop_t& op, OperandPopulationContext& ctx) {
                         break;
                     case mop_v:
                         snap.global_address = op.a->g;
+                        snap.global_name    = ida::detail::to_string(get_name(op.a->g));
                         break;
                     case mop_S:
                         if (op.a->s != nullptr)
@@ -272,6 +276,7 @@ struct FunctionSnapshot::Impl {
     std::int64_t                                       local_variables_size{0};
     std::int64_t                                       saved_registers_size{0};
     std::int64_t                                       stack_size{0};
+    int                                                return_value_variable_index{-1};
     std::vector<Block>                                 blocks;
     std::unordered_map<int, Instruction>               nested_instructions;
     std::vector<ida::decompiler::LocalVariable>        local_variables;
@@ -305,6 +310,10 @@ std::int64_t FunctionSnapshot::saved_registers_size() const noexcept {
 
 std::int64_t FunctionSnapshot::stack_size() const noexcept {
     return impl_ ? impl_->stack_size : 0;
+}
+
+int FunctionSnapshot::return_value_variable_index() const noexcept {
+    return impl_ ? impl_->return_value_variable_index : -1;
 }
 
 const std::vector<Block>& FunctionSnapshot::blocks() const noexcept {
@@ -371,6 +380,13 @@ Result<FunctionSnapshot> snapshot(Address function_address, Maturity maturity) {
     impl->local_variables_size = static_cast<std::int64_t>(mba->frsize);
     impl->saved_registers_size = static_cast<std::int64_t>(mba->frregs);
     impl->stack_size           = static_cast<std::int64_t>(mba->stacksize);
+    // Index of the lvar carrying the return value. At MMAT_LVARS the returned
+    // value lives in this lvar, not on the m_ret operands. `mba_t::retvaridx`
+    // is -1 for a void / no-return function, so consumers skip return-value
+    // wiring on -1. (The MBA2_UNDEF_RETVAR "undefined return" flag lives in the
+    // private `flags2`; there is no public accessor, and retvaridx==-1 already
+    // covers the common void case, so it is not consulted here.)
+    impl->return_value_variable_index = mba->retvaridx;
 
     OperandPopulationContext ctx;
 

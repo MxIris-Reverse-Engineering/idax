@@ -9020,6 +9020,13 @@ void free_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* op) {
     op->helper_name = nullptr;
     std::free(op->string_literal);
     op->string_literal = nullptr;
+    std::free(op->global_name);
+    op->global_name = nullptr;
+    for (size_t i = 0; i < op->call_argument_count; ++i)
+        free_microcode_snapshot_operand(&op->call_arguments[i]);
+    std::free(op->call_arguments);
+    op->call_arguments = nullptr;
+    op->call_argument_count = 0;
 }
 
 ida::Status fill_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* out,
@@ -9057,6 +9064,31 @@ ida::Status fill_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* out,
         if (out->string_literal == nullptr) {
             free_microcode_snapshot_operand(out);
             return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+    }
+    if (!operand.global_name.empty()) {
+        out->global_name = dup_string(operand.global_name);
+        if (out->global_name == nullptr) {
+            free_microcode_snapshot_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+    }
+    if (!operand.call_arguments.empty()) {
+        const size_t count = operand.call_arguments.size();
+        auto* arguments = static_cast<IdaxMicrocodeSnapshotOperand*>(
+            std::calloc(count, sizeof(IdaxMicrocodeSnapshotOperand)));
+        if (arguments == nullptr) {
+            free_microcode_snapshot_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        // Assign before filling so a mid-loop failure frees what was built.
+        out->call_arguments      = arguments;
+        out->call_argument_count = count;
+        for (size_t i = 0; i < count; ++i) {
+            if (auto status = fill_microcode_snapshot_operand(&arguments[i], operand.call_arguments[i]); !status) {
+                free_microcode_snapshot_operand(out);
+                return status;
+            }
         }
     }
     return ida::ok();
@@ -9168,6 +9200,15 @@ int idax_microcode_snapshot_stack_size(IdaxMicrocodeSnapshotHandle handle,
     if (handle == nullptr || out == nullptr)
         return fail(ida::Error::validation("snapshot handle/out pointer is null"));
     *out = as_microcode_snapshot(handle)->stack_size();
+    return 0;
+}
+
+int idax_microcode_snapshot_return_value_variable_index(IdaxMicrocodeSnapshotHandle handle,
+                                                        int* out) {
+    clear_error();
+    if (handle == nullptr || out == nullptr)
+        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
+    *out = as_microcode_snapshot(handle)->return_value_variable_index();
     return 0;
 }
 
