@@ -103,6 +103,39 @@ struct Operand {
     /// `objc_retain(v9)`) instead of dropping them.
     std::vector<Operand> call_arguments;
 
+    /// For `Kind::CallInfo` (`mop_f`), the per-argument `mcallarg_t::flags`
+    /// (`FAI_*` bitmask), index-aligned with `call_arguments`. The
+    /// load-bearing bit for Swift `sret` / indirect returns is
+    /// `FAI_RETPTR` (0x0002) — an argument so flagged is a hidden pointer
+    /// to the call's return slot, so a large/existential return value that
+    /// never lands in `return_registers` is instead written through this
+    /// argument. Empty for every other kind, and the same length as
+    /// `call_arguments` for `CallInfo`.
+    std::vector<std::uint32_t> argument_flags;
+
+    /// For `Kind::CallInfo` (`mop_f`), the call's return register operands
+    /// (`mcallinfo_t::retregs`, a `mopvec_t` — each entry is a full `mop_t`,
+    /// usually a `mop_r` register but possibly a pair/stack slot). These are
+    /// the locations the call writes its result to, so a MIR consumer can
+    /// register a producer for the value read after the call (e.g.
+    /// `v5 = <call>` rather than treating the call as `void`). Empty for every
+    /// other kind, and empty when the call has no register return value
+    /// (e.g. `void`, or an `sret`/indirect return — see `argument_flags`).
+    ///
+    /// Note: `retregs` is cleared by Hex-Rays once a call is propagated
+    /// (`FCI_PROP`/`FCI_DEAD`); `return_register_ids` (built from the more
+    /// durable `mcallinfo_t::return_regs` list) survives that and should be
+    /// preferred when `return_registers` is unexpectedly empty.
+    std::vector<Operand> return_registers;
+
+    /// For `Kind::CallInfo` (`mop_f`), the micro-register numbers
+    /// (`mreg_t`) the call returns into, taken from `mcallinfo_t::return_regs`
+    /// (an `mlist_t`; only its register part `.reg` is surfaced — memory
+    /// return locations are not). Unlike `return_registers` this list is not
+    /// cleared on propagation, so it is the durable source of "the call
+    /// returns into these registers". Empty for every other kind.
+    std::vector<int> return_register_ids;
+
     /// SSA-style value number copied from `mop_t::valnum`. Zero means unknown.
     /// Present from `MMAT_GLBOPT2` onward; populated for all maturities but
     /// only carries meaning at advanced ones.

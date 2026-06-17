@@ -80,10 +80,42 @@ public enum Microcode {
         /// For a `.callInfo` operand (`mop_f`), the call's argument operands in
         /// order. Empty for every other kind.
         public let callArguments: [Operand]
+        /// For a `.callInfo` operand (`mop_f`), the `FAI_*` flag bitmask of each
+        /// argument, index-aligned with `callArguments`. `FAI_RETPTR` (0x0002)
+        /// marks a hidden `sret` pointer argument — the real output location for
+        /// a large/existential return value that never lands in a register. Use
+        /// `argumentIsReturnPointer(at:)` for the common check. Empty for every
+        /// other kind.
+        public let argumentFlags: [UInt32]
+        /// For a `.callInfo` operand (`mop_f`), the call's return register
+        /// operands (`mcallinfo_t::retregs`) — the locations the call writes its
+        /// result to, so a consumer can wire `v5 = <call>` instead of treating
+        /// the call as `void`. Each is usually a `.register` operand. Cleared by
+        /// Hex-Rays once the call is propagated; prefer `returnRegisterIDs` when
+        /// this is unexpectedly empty. Empty for every other kind.
+        public let returnRegisters: [Operand]
+        /// For a `.callInfo` operand (`mop_f`), the micro-register numbers
+        /// (`mreg_t`) the call returns into (`mcallinfo_t::return_regs` register
+        /// part). Unlike `returnRegisters` this survives propagation. Empty for
+        /// every other kind.
+        public let returnRegisterIDs: [Int]
         public let blockIndex: Int
         public let nestedInstructionID: Int
         public let ssaVersion: Int?
         public let operandProperties: UInt8
+
+        /// `FAI_RETPTR` — argument is a hidden pointer to the return value
+        /// (`sret`), implies hidden. From IDA SDK `typeinf.hpp`.
+        public static let argumentFlagReturnPointer: UInt32 = 0x0002
+
+        /// Whether the argument at `index` is a hidden `sret` return pointer
+        /// (`FAI_RETPTR`). For such a call the result is written through this
+        /// argument rather than into `returnRegisters`. Returns `false` for an
+        /// out-of-range index.
+        public func argumentIsReturnPointer(at index: Int) -> Bool {
+            guard index >= 0, index < argumentFlags.count else { return false }
+            return argumentFlags[index] & Self.argumentFlagReturnPointer != 0
+        }
     }
 
     /// Deep-copied microcode instruction snapshot.
@@ -316,6 +348,27 @@ private extension Microcode.Operand {
             }
         } else {
             self.callArguments = []
+        }
+        if raw.argument_flags_count > 0, let flagsPointer = raw.argument_flags {
+            self.argumentFlags = (0 ..< Int(raw.argument_flags_count)).map {
+                flagsPointer[$0]
+            }
+        } else {
+            self.argumentFlags = []
+        }
+        if raw.return_register_count > 0, let returnRegistersPointer = raw.return_registers {
+            self.returnRegisters = (0 ..< Int(raw.return_register_count)).map {
+                Microcode.Operand(raw: returnRegistersPointer[$0])
+            }
+        } else {
+            self.returnRegisters = []
+        }
+        if raw.return_register_id_count > 0, let idsPointer = raw.return_register_ids {
+            self.returnRegisterIDs = (0 ..< Int(raw.return_register_id_count)).map {
+                Int(idsPointer[$0])
+            }
+        } else {
+            self.returnRegisterIDs = []
         }
         self.blockIndex          = Int(raw.block_index)
         self.nestedInstructionID = Int(raw.nested_instruction_id)
