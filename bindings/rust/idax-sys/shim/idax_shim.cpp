@@ -9027,6 +9027,17 @@ void free_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* op) {
     std::free(op->call_arguments);
     op->call_arguments = nullptr;
     op->call_argument_count = 0;
+    std::free(op->argument_flags);
+    op->argument_flags = nullptr;
+    op->argument_flags_count = 0;
+    for (size_t i = 0; i < op->return_register_count; ++i)
+        free_microcode_snapshot_operand(&op->return_registers[i]);
+    std::free(op->return_registers);
+    op->return_registers = nullptr;
+    op->return_register_count = 0;
+    std::free(op->return_register_ids);
+    op->return_register_ids = nullptr;
+    op->return_register_id_count = 0;
 }
 
 ida::Status fill_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* out,
@@ -9090,6 +9101,48 @@ ida::Status fill_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* out,
                 return status;
             }
         }
+    }
+    if (!operand.argument_flags.empty()) {
+        const size_t count = operand.argument_flags.size();
+        auto* flags = static_cast<uint32_t*>(std::calloc(count, sizeof(uint32_t)));
+        if (flags == nullptr) {
+            free_microcode_snapshot_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        out->argument_flags       = flags;
+        out->argument_flags_count = count;
+        for (size_t i = 0; i < count; ++i)
+            flags[i] = operand.argument_flags[i];
+    }
+    if (!operand.return_registers.empty()) {
+        const size_t count = operand.return_registers.size();
+        auto* return_registers = static_cast<IdaxMicrocodeSnapshotOperand*>(
+            std::calloc(count, sizeof(IdaxMicrocodeSnapshotOperand)));
+        if (return_registers == nullptr) {
+            free_microcode_snapshot_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        // Assign before filling so a mid-loop failure frees what was built.
+        out->return_registers      = return_registers;
+        out->return_register_count = count;
+        for (size_t i = 0; i < count; ++i) {
+            if (auto status = fill_microcode_snapshot_operand(&return_registers[i], operand.return_registers[i]); !status) {
+                free_microcode_snapshot_operand(out);
+                return status;
+            }
+        }
+    }
+    if (!operand.return_register_ids.empty()) {
+        const size_t count = operand.return_register_ids.size();
+        auto* ids = static_cast<int*>(std::calloc(count, sizeof(int)));
+        if (ids == nullptr) {
+            free_microcode_snapshot_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        out->return_register_ids      = ids;
+        out->return_register_id_count = count;
+        for (size_t i = 0; i < count; ++i)
+            ids[i] = operand.return_register_ids[i];
     }
     return ida::ok();
 }

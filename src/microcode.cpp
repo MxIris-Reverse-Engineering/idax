@@ -178,11 +178,40 @@ Operand snapshot_operand(const mop_t& op, OperandPopulationContext& ctx) {
             // (sliced to its base here — the formal name/type are not yet
             // surfaced). Nested-instruction args route through `register_nested`
             // via the recursive `snapshot_operand`, so no inline recursion.
+            //
+            // Also surface the call's return/output locations:
+            //   * `retregs` (`mopvec_t`) — return register operands, each a full
+            //     `mop_t`, so a consumer can wire `v5 = <call>` instead of
+            //     dropping the result. Cleared by Hex-Rays once the call is
+            //     propagated, hence the second, durable source below.
+            //   * `return_regs` (`mlist_t`) — the register part is walked into
+            //     `return_register_ids` (mreg numbers); survives propagation.
+            //   * per-argument `FAI_*` flags — index-aligned with
+            //     `call_arguments`. `FAI_RETPTR` marks a hidden `sret` pointer
+            //     argument, i.e. the real output location for large/existential
+            //     returns that never land in a register.
             snap.kind = Operand::Kind::CallInfo;
             if (op.f != nullptr) {
                 snap.call_arguments.reserve(op.f->args.size());
-                for (const mcallarg_t& argument : op.f->args)
+                snap.argument_flags.reserve(op.f->args.size());
+                for (const mcallarg_t& argument : op.f->args) {
                     snap.call_arguments.push_back(snapshot_operand(argument, ctx));
+                    snap.argument_flags.push_back(static_cast<std::uint32_t>(argument.flags));
+                }
+
+                snap.return_registers.reserve(op.f->retregs.size());
+                for (const mop_t& return_register : op.f->retregs)
+                    snap.return_registers.push_back(snapshot_operand(return_register, ctx));
+
+                // `mlist_t::reg` is an `rlist_t` (a `bitset_t`); each set bit is
+                // a micro-register number (`mreg_t`). `bitset_t::iterator` has
+                // no `operator++`, so step it explicitly via `inc()`.
+                const rlist_t& return_register_list = op.f->return_regs.reg;
+                for (rlist_t::iterator it = return_register_list.begin();
+                     it != return_register_list.end();
+                     return_register_list.inc(it)) {
+                    snap.return_register_ids.push_back(static_cast<int>(*it));
+                }
             }
             break;
         case mop_l:

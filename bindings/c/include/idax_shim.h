@@ -2553,6 +2553,23 @@ typedef struct IdaxMicrocodeSnapshotOperand {
     char*    global_name;                /**< Name at global_address (malloc'd or NULL). */
     struct IdaxMicrocodeSnapshotOperand* call_arguments; /**< CallInfo args (malloc'd array or NULL). */
     size_t   call_argument_count;        /**< Number of call_arguments. */
+    /** CallInfo: per-argument mcallarg_t::flags (FAI_* bitmask), index-aligned
+     *  with call_arguments. FAI_RETPTR (0x0002) marks a hidden sret pointer
+     *  argument — the output location for large/existential returns. malloc'd
+     *  array of length call_argument_count, or NULL when there are none. */
+    uint32_t* argument_flags;
+    size_t   argument_flags_count;       /**< Number of argument_flags (== call_argument_count for CallInfo). */
+    /** CallInfo: return register operands (mcallinfo_t::retregs), each a full
+     *  operand (usually a register). The locations the call writes its result
+     *  to. malloc'd array or NULL. Cleared by Hex-Rays once the call is
+     *  propagated — see return_register_ids for a durable source. */
+    struct IdaxMicrocodeSnapshotOperand* return_registers;
+    size_t   return_register_count;      /**< Number of return_registers. */
+    /** CallInfo: micro-register numbers the call returns into
+     *  (mcallinfo_t::return_regs register part). Survives propagation. malloc'd
+     *  int array or NULL. */
+    int*     return_register_ids;
+    size_t   return_register_id_count;   /**< Number of return_register_ids. */
     int      block_index;                /**< -1 if not applicable. */
     int      nested_instruction_id;      /**< -1 if not applicable. */
     int      ssa_version;                /**< Valid iff has_ssa_version != 0. */
