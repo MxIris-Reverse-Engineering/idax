@@ -3488,7 +3488,17 @@ static LocalVariable make_local_variable(const lvar_t& v, std::size_t index) {
 
 ItemType ExpressionView::type() const noexcept {
     if (!raw_) return ItemType::ExprEmpty;
-    return from_ctype(static_cast<cexpr_t*>(raw_)->op);
+    // Defensive last line: `op` is the first field of every citem_t. If `raw_`
+    // is somehow a stale/invalid handle, the value read here will be outside the
+    // valid ctype_t range — surface that as ExprEmpty instead of letting the
+    // garbage opcode propagate downstream. (The structural cause of bad child
+    // handles is fixed in left()/right()/third()/operand_count() below, which
+    // now gate on op_uses_x/y/z; this check only guards against a genuinely
+    // dangling handle handed in from outside.)
+    const int op_value = static_cast<int>(static_cast<cexpr_t*>(raw_)->op);
+    if (op_value < cot_empty || op_value > cot_last)
+        return ItemType::ExprEmpty;
+    return from_ctype(static_cast<ctype_t>(op_value));
 }
 
 Address ExpressionView::address() const noexcept {
@@ -3659,8 +3669,15 @@ bool ExpressionView::is_assignment_lhs() const noexcept {
 Result<ExpressionView> ExpressionView::left() const {
     if (!raw_) return std::unexpected(Error::internal("null expression"));
     auto* e = static_cast<cexpr_t*>(raw_);
-    // x is valid for all non-leaf expressions that have sub-operands.
-    // Leaf ops: cot_num, cot_fnum, cot_str, cot_obj, cot_var, cot_insn, cot_helper, cot_empty
+    // `x` is the first union member of cexpr_t. It is a real `cexpr_t*` ONLY for
+    // operators that actually use it; for leaf ops (cot_num/cot_fnum/cot_str/
+    // cot_obj/cot_var/cot_insn/cot_helper/cot_type/cot_empty) the same storage
+    // aliases a non-pointer member (cnumber_t* n, char* string, var_ref_t v, …),
+    // which is frequently non-null. A bare `e->x == nullptr` check therefore
+    // lets that aliased garbage through and the caller faults reading its `op`.
+    // Gate on the SDK's op_uses_x() so we only ever expose a genuine operand.
+    if (!op_uses_x(e->op))
+        return std::unexpected(Error::validation("Expression has no left operand (leaf expression)"));
     if (e->x == nullptr)
         return std::unexpected(Error::validation("Expression has no left operand (leaf expression)"));
     return ExpressionView(ExpressionView::Tag{}, e->x,
@@ -3671,16 +3688,16 @@ Result<ExpressionView> ExpressionView::left() const {
 Result<ExpressionView> ExpressionView::right() const {
     if (!raw_) return std::unexpected(Error::internal("null expression"));
     auto* e = static_cast<cexpr_t*>(raw_);
-    // y is valid for binary expressions. It shares a union with `a` (call args)
-    // and `m` (member offset), so only access it for binary ops.
+    // `y` shares its union slot with `a` (call arglist) and `m` (member offset),
+    // and for unary ops (cot_neg/cot_lnot/cot_ptr/cot_preinc/…) it is undefined
+    // garbage that is often non-null. op_uses_y() is the authoritative predicate
+    // for "y holds a real cexpr_t* second operand"; it excludes calls, member
+    // access and every unary op, so checking it removes the need for the ad-hoc
+    // cot_call / cot_memref / cot_memptr special cases below.
+    if (!op_uses_y(e->op))
+        return std::unexpected(Error::validation("Expression has no right operand"));
     if (e->x == nullptr || e->y == nullptr)
         return std::unexpected(Error::validation("Expression has no right operand"));
-    // Guard: for calls, y is actually `a` (arglist), not a cexpr_t*
-    if (e->op == cot_call)
-        return std::unexpected(Error::validation("Use call_argument() for call expressions"));
-    // Guard: for member access, y is `m` (uint32), not a cexpr_t*
-    if (e->op == cot_memref || e->op == cot_memptr)
-        return std::unexpected(Error::validation("Use member_offset() for member access expressions"));
     return ExpressionView(ExpressionView::Tag{}, e->y,
                           append_parent(parents_, static_cast<citem_t*>(e)),
                           e);
@@ -3689,16 +3706,19 @@ Result<ExpressionView> ExpressionView::right() const {
 int ExpressionView::operand_count() const noexcept {
     if (!raw_) return 0;
     auto* e = static_cast<cexpr_t*>(raw_);
-    // Leaf expressions (no x pointer)
-    if (e->x == nullptr)
+    // Count only union slots that the SDK says this operator actually uses, so a
+    // unary op's aliased-garbage `y` can never inflate the count to 2 and push a
+    // caller into right() over an invalid handle (the ctree-walk crash).
+    if (!op_uses_x(e->op))
         return 0;
-    // Unary or binary: check if y/a/m is meaningful
-    // For calls: x = callee, a = args → count as 2 (callee + arglist)
-    // For member access: x = base, m = offset → count as 2
-    // For ternary (cot_tern): x, y, z → count as 3
-    if (e->op == cot_tern)
+    if (op_uses_z(e->op))   // only cot_tern: x, y, z
         return 3;
-    if (e->y != nullptr || e->op == cot_call || e->op == cot_memref || e->op == cot_memptr)
+    // Calls (x=callee, a=arglist) and member access (x=base, m=offset) carry a
+    // structural second child even though op_uses_y() is false for them; the
+    // consumer reaches those via call_argument()/member_offset(), but the
+    // reported count stays 2 to preserve the established contract.
+    if (op_uses_y(e->op)
+        || e->op == cot_call || e->op == cot_memref || e->op == cot_memptr)
         return 2;
     return 1;
 }
@@ -3706,7 +3726,9 @@ int ExpressionView::operand_count() const noexcept {
 Result<ExpressionView> ExpressionView::third() const {
     if (!raw_) return std::unexpected(Error::internal("null expression"));
     auto* e = static_cast<cexpr_t*>(raw_);
-    if (e->op != cot_tern || e->z == nullptr)
+    // `z` is a real cexpr_t* only for the ternary operator (op_uses_z); for every
+    // other op the slot aliases `ptrsize` (an int) and must not be dereferenced.
+    if (!op_uses_z(e->op) || e->z == nullptr)
         return std::unexpected(Error::validation("Expression has no third operand"));
     return ExpressionView(ExpressionView::Tag{}, e->z,
                           append_parent(parents_, static_cast<citem_t*>(e)),
