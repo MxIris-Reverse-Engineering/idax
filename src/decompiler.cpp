@@ -3481,6 +3481,10 @@ static LocalVariable make_local_variable(const lvar_t& v, std::size_t index) {
     else
         lv.storage = VariableStorage::Unknown;
 
+    // `get_stkoff()` returns the stack-frame vd-offset for stack variables and
+    // a negative value (-1) for everything else.
+    lv.stack_offset = static_cast<std::int64_t>(v.get_stkoff());
+
     return lv;
 }
 

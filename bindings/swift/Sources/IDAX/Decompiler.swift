@@ -17,6 +17,9 @@ public struct LocalVariable: Sendable {
     public let hasUserName: Bool
     public let storage: VariableStorage
     public let comment: String
+    /// Stack-frame offset for stack variables; `-1` for variables that do not
+    /// live on the stack. Mirrors `lvar_t::get_stkoff()`.
+    public let stackOffset: Int64
 }
 
 /// Decompiled function handle.
@@ -80,7 +83,8 @@ public struct DecompiledFunction: ~Copyable, @unchecked Sendable {
                     width: Int(v.width),
                     hasUserName: v.has_user_name != 0,
                     storage: VariableStorage(rawValue: Int(v.storage)) ?? .unknown,
-                    comment: borrowCString(v.comment)
+                    comment: borrowCString(v.comment),
+                    stackOffset: v.stack_offset
                 )
             }
         }

@@ -857,6 +857,10 @@ struct LocalVariable {
     /// Storage location classification.
     VariableStorage storage{VariableStorage::Unknown};
 
+    /// Stack-frame offset (vd-offset) for stack variables; `-1` for variables
+    /// that do not live on the stack. Mirrors `lvar_t::get_stkoff()`.
+    std::int64_t stack_offset{-1};
+
     /// User comment on this variable (may be empty).
     std::string comment;
 };

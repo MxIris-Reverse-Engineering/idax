@@ -1682,6 +1682,7 @@ typedef struct IdaxLocalVariable {
     int      storage;       /**< 0=unknown, 1=register, 2=stack */
     char*    comment;
     size_t   index;
+    int64_t  stack_offset;  /**< Stack-frame offset for stack variables; -1 otherwise. */
 } IdaxLocalVariable;
 
 void idax_local_variable_free(IdaxLocalVariable* var);
