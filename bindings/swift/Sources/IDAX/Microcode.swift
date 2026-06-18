@@ -293,7 +293,8 @@ public enum Microcode {
                         width: Int(v.width),
                         hasUserName: v.has_user_name != 0,
                         storage: VariableStorage(rawValue: Int(v.storage)) ?? .unknown,
-                        comment: borrowCString(v.comment)
+                        comment: borrowCString(v.comment),
+                        stackOffset: v.stack_offset
                     )
                 }
             }
