@@ -99,6 +99,20 @@ public enum Microcode {
         /// part). Unlike `returnRegisters` this survives propagation. Empty for
         /// every other kind.
         public let returnRegisterIDs: [Int]
+        /// For a `.cases` operand (`mop_c`), the switch's case values, flattened
+        /// and index-aligned with `switchCaseTargetBlocks`. Each value selects
+        /// the target micro-block at the same index. The default case is not in
+        /// this list — see `switchDefaultTargetBlock`. Empty for every other
+        /// kind.
+        public let switchCaseValues: [Int64]
+        /// For a `.cases` operand (`mop_c`), the target micro-block serial for
+        /// each entry in `switchCaseValues` (parallel, same length). Empty for
+        /// every other kind.
+        public let switchCaseTargetBlocks: [Int]
+        /// For a `.cases` operand (`mop_c`), the default target micro-block
+        /// serial (the group with no case values), or `-1` when there is no
+        /// default case. `-1` for every other kind.
+        public let switchDefaultTargetBlock: Int
         public let blockIndex: Int
         public let nestedInstructionID: Int
         public let ssaVersion: Int?
@@ -371,6 +385,21 @@ private extension Microcode.Operand {
         } else {
             self.returnRegisterIDs = []
         }
+        if raw.switch_case_value_count > 0, let valuesPointer = raw.switch_case_values {
+            self.switchCaseValues = (0 ..< Int(raw.switch_case_value_count)).map {
+                valuesPointer[$0]
+            }
+        } else {
+            self.switchCaseValues = []
+        }
+        if raw.switch_case_value_count > 0, let targetBlocksPointer = raw.switch_case_target_blocks {
+            self.switchCaseTargetBlocks = (0 ..< Int(raw.switch_case_value_count)).map {
+                Int(targetBlocksPointer[$0])
+            }
+        } else {
+            self.switchCaseTargetBlocks = []
+        }
+        self.switchDefaultTargetBlock = Int(raw.switch_default_target_block)
         self.blockIndex          = Int(raw.block_index)
         self.nestedInstructionID = Int(raw.nested_instruction_id)
         self.ssaVersion          = raw.has_ssa_version != 0 ? Int(raw.ssa_version) : nil

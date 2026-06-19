@@ -2571,6 +2571,16 @@ typedef struct IdaxMicrocodeSnapshotOperand {
      *  int array or NULL. */
     int*     return_register_ids;
     size_t   return_register_id_count;   /**< Number of return_register_ids. */
+    /** Cases (mop_c): flattened switch case values, parallel with
+     *  switch_case_target_blocks. malloc'd int64 array or NULL. */
+    int64_t* switch_case_values;
+    size_t   switch_case_value_count;    /**< Number of switch_case_values (== switch_case_target_blocks count). */
+    /** Cases (mop_c): target micro-block serial for each switch_case_values
+     *  entry (parallel, same count). malloc'd int array or NULL. */
+    int*     switch_case_target_blocks;
+    /** Cases (mop_c): default target micro-block serial (the group with empty
+     *  values), or -1 when there is no default case. */
+    int      switch_default_target_block;
     int      block_index;                /**< -1 if not applicable. */
     int      nested_instruction_id;      /**< -1 if not applicable. */
     int      ssa_version;                /**< Valid iff has_ssa_version != 0. */
