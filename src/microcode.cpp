@@ -256,6 +256,29 @@ Operand snapshot_operand(const mop_t& op, OperandPopulationContext& ctx) {
             break;
         case mop_c:
             snap.kind = Operand::Kind::Cases;
+            if (op.c != nullptr) {
+                // `mcases_t` parallels `values` (a `qvector<svalvec_t>`) and
+                // `targets` (an `intvec_t`): group `i` jumps to block
+                // `targets[i]` for each case value in `values[i]`. The group
+                // whose `values[i]` is empty is the default case (its
+                // `targets[i]` is the default target block). Flatten each
+                // non-default group into parallel (value, target-block) pairs
+                // to avoid threading nested vectors through the C ABI.
+                const size_t case_group_count = op.c->size();
+                for (size_t group_index = 0; group_index < case_group_count; ++group_index) {
+                    const svalvec_t& group_values  = op.c->values[group_index];
+                    const int        target_block  = op.c->targets[group_index];
+                    if (group_values.empty()) {
+                        snap.switch_default_target_block = target_block;
+                        continue;
+                    }
+                    for (const sval_t case_value : group_values) {
+                        snap.switch_case_values.push_back(
+                            static_cast<std::int64_t>(case_value));
+                        snap.switch_case_target_blocks.push_back(target_block);
+                    }
+                }
+            }
             break;
         case mop_fn:
             snap.kind        = Operand::Kind::FloatConstant;

@@ -9039,6 +9039,11 @@ void free_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* op) {
     std::free(op->return_register_ids);
     op->return_register_ids = nullptr;
     op->return_register_id_count = 0;
+    std::free(op->switch_case_values);
+    op->switch_case_values = nullptr;
+    op->switch_case_value_count = 0;
+    std::free(op->switch_case_target_blocks);
+    op->switch_case_target_blocks = nullptr;
 }
 
 ida::Status fill_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* out,
@@ -9060,6 +9065,7 @@ ida::Status fill_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* out,
     out->block_index           = operand.block_index;
     out->nested_instruction_id = operand.nested_instruction_id;
     out->operand_properties    = operand.operand_properties;
+    out->switch_default_target_block = operand.switch_default_target_block;
 
     if (operand.ssa_version) {
         out->ssa_version     = *operand.ssa_version;
@@ -9144,6 +9150,28 @@ ida::Status fill_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* out,
         out->return_register_id_count = count;
         for (size_t i = 0; i < count; ++i)
             ids[i] = operand.return_register_ids[i];
+    }
+    if (!operand.switch_case_values.empty()) {
+        const size_t count = operand.switch_case_values.size();
+        auto* values = static_cast<int64_t*>(std::calloc(count, sizeof(int64_t)));
+        if (values == nullptr) {
+            free_microcode_snapshot_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        // Assign before filling so a mid-loop failure frees what was built.
+        out->switch_case_values      = values;
+        out->switch_case_value_count = count;
+        for (size_t i = 0; i < count; ++i)
+            values[i] = operand.switch_case_values[i];
+
+        auto* target_blocks = static_cast<int*>(std::calloc(count, sizeof(int)));
+        if (target_blocks == nullptr) {
+            free_microcode_snapshot_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        out->switch_case_target_blocks = target_blocks;
+        for (size_t i = 0; i < count; ++i)
+            target_blocks[i] = operand.switch_case_target_blocks[i];
     }
     return ida::ok();
 }

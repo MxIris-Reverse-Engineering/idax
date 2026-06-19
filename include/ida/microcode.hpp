@@ -136,6 +136,21 @@ struct Operand {
     /// returns into these registers". Empty for every other kind.
     std::vector<int> return_register_ids;
 
+    /// For `Kind::Cases` (`mop_c`), the switch's case-value -> target-block
+    /// mapping, flattened; the default target is `switch_default_target_block`
+    /// (-1 if none). Empty for every other kind.
+    std::vector<std::int64_t> switch_case_values;
+
+    /// For `Kind::Cases` (`mop_c`), the target micro-block serial for each
+    /// entry in `switch_case_values` (parallel, same length). Empty for every
+    /// other kind.
+    std::vector<int> switch_case_target_blocks;
+
+    /// For `Kind::Cases` (`mop_c`), the default target micro-block serial (the
+    /// `mcases_t` group whose values are empty), or `-1` when there is no
+    /// default case. `-1` for every other kind.
+    int switch_default_target_block{-1};
+
     /// SSA-style value number copied from `mop_t::valnum`. Zero means unknown.
     /// Present from `MMAT_GLBOPT2` onward; populated for all maturities but
     /// only carries meaning at advanced ones.
