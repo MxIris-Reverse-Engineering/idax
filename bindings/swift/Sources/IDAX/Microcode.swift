@@ -308,7 +308,8 @@ public enum Microcode {
                         hasUserName: v.has_user_name != 0,
                         storage: VariableStorage(rawValue: Int(v.storage)) ?? .unknown,
                         comment: borrowCString(v.comment),
-                        stackOffset: v.stack_offset
+                        stackOffset: v.stack_offset,
+                        registerNumber: Int(v.register_number)
                     )
                 }
             }

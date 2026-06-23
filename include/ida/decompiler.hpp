@@ -863,6 +863,13 @@ struct LocalVariable {
 
     /// User comment on this variable (may be empty).
     std::string comment;
+
+    /// Microcode register number (`mreg_t`) for register variables; `-1` for
+    /// variables that do not live in a register. Mirrors `lvar_t::get_reg1()`.
+    /// On ARM64 the mreg of `x<n>` follows the linear law `8 + 8*n`
+    /// (x0=8, x1=16, ..., x20=168), which lets consumers map argument lvars
+    /// back to the physical ABI registers.
+    int register_number{-1};
 };
 
 /// Serializable saved Hex-Rays local-variable user setting.

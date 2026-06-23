@@ -1683,6 +1683,8 @@ typedef struct IdaxLocalVariable {
     char*    comment;
     size_t   index;
     int64_t  stack_offset;  /**< Stack-frame offset for stack variables; -1 otherwise. */
+    int      register_number; /**< Microcode register number (mreg_t) for register
+                                   variables; -1 otherwise. On ARM64 x<n> = 8 + 8*n. */
 } IdaxLocalVariable;
 
 void idax_local_variable_free(IdaxLocalVariable* var);
