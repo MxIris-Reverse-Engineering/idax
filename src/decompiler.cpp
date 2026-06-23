@@ -3474,12 +3474,17 @@ static LocalVariable make_local_variable(const lvar_t& v, std::size_t index) {
     lv.has_nice_name = v.has_nice_name();
     lv.comment       = ida::detail::to_string(v.cmt);
 
-    if (v.is_stk_var())
+    if (v.is_stk_var()) {
         lv.storage = VariableStorage::Stack;
-    else if (v.is_reg_var())
+    } else if (v.is_reg_var()) {
         lv.storage = VariableStorage::Register;
-    else
+        // `get_reg1()` returns the microcode register number (mreg_t). On ARM64
+        // the mreg of `x<n>` is `8 + 8*n` (x0=8, x1=16, ...), which lets
+        // consumers map argument lvars back to the ABI registers x0-x7.
+        lv.register_number = v.get_reg1();
+    } else {
         lv.storage = VariableStorage::Unknown;
+    }
 
     // `get_stkoff()` returns the stack-frame vd-offset for stack variables and
     // a negative value (-1) for everything else.

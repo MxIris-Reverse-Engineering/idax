@@ -4969,8 +4969,9 @@ static void fill_local_variable(IdaxLocalVariable* out,
     out->has_user_name = variable.has_user_name ? 1 : 0;
     out->storage       = static_cast<int>(variable.storage);
     out->comment       = dup_string(variable.comment);
-    out->index         = variable.index;
-    out->stack_offset  = variable.stack_offset;
+    out->index           = variable.index;
+    out->stack_offset    = variable.stack_offset;
+    out->register_number = variable.register_number;
 }
 
 int idax_decompiled_variable_count(IdaxDecompiledHandle handle, size_t* out) {

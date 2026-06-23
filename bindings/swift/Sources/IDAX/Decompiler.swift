@@ -20,6 +20,11 @@ public struct LocalVariable: Sendable {
     /// Stack-frame offset for stack variables; `-1` for variables that do not
     /// live on the stack. Mirrors `lvar_t::get_stkoff()`.
     public let stackOffset: Int64
+    /// Microcode register number (`mreg_t`) for register variables; `-1` for
+    /// variables that do not live in a register. Mirrors `lvar_t::get_reg1()`.
+    /// On ARM64 the mreg of `x<n>` is `8 + 8*n` (x0=8, x1=16, ..., x20=168),
+    /// which lets consumers map argument lvars back to the ABI registers x0-x7.
+    public let registerNumber: Int
 }
 
 /// Decompiled function handle.
@@ -84,7 +89,8 @@ public struct DecompiledFunction: ~Copyable, @unchecked Sendable {
                     hasUserName: v.has_user_name != 0,
                     storage: VariableStorage(rawValue: Int(v.storage)) ?? .unknown,
                     comment: borrowCString(v.comment),
-                    stackOffset: v.stack_offset
+                    stackOffset: v.stack_offset,
+                    registerNumber: Int(v.register_number)
                 )
             }
         }

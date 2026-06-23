@@ -345,24 +345,26 @@ struct LocalVariableTests {
         let lv = LocalVariable(
             name: "result", typeName: "int", isArgument: false,
             width: 4, hasUserName: true, storage: .stack, comment: "",
-            stackOffset: 0x8
+            stackOffset: 0x8, registerNumber: -1
         )
         #expect(lv.name == "result")
         #expect(lv.storage == .stack)
         #expect(!lv.isArgument)
         #expect(lv.hasUserName)
         #expect(lv.stackOffset == 0x8)
+        #expect(lv.registerNumber == -1)
     }
 
     @Test func argumentVariable() {
         let lv = LocalVariable(
             name: "argc", typeName: "int", isArgument: true,
             width: 4, hasUserName: false, storage: .register, comment: "",
-            stackOffset: -1
+            stackOffset: -1, registerNumber: 8
         )
         #expect(lv.isArgument)
         #expect(lv.storage == .register)
         #expect(lv.stackOffset == -1)
+        #expect(lv.registerNumber == 8)
     }
 }
 
