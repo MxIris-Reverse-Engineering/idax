@@ -295,19 +295,29 @@ Result<std::vector<ModuleInfo>> list_modules() {
     if (!path)
         return std::unexpected(path.error());
 
-    std::ifstream file(path->c_str(), std::ios::binary);
+    return list_modules(*path);
+}
+
+Result<std::vector<ModuleInfo>> list_modules(std::string_view cache_path) {
+    if (cache_path.empty())
+        return std::unexpected(Error::validation("Dyld shared cache path cannot be empty"));
+
+    std::string cache_path_string(cache_path);
+
+    std::ifstream file(cache_path_string.c_str(), std::ios::binary);
     if (!file.is_open())
-        return std::unexpected(Error::not_found("Cannot open the input file", *path));
+        return std::unexpected(Error::not_found(
+            "Cannot open the dyld shared cache", cache_path_string));
 
     unsigned char header[0x98] = {};
     file.read(reinterpret_cast<char*>(header), sizeof(header));
     std::streamsize header_size = file.gcount();
     if (header_size < 0x20)
         return std::unexpected(Error::validation(
-            "Input file is too small to be a dyld shared cache", *path));
+            "Input file is too small to be a dyld shared cache", cache_path_string));
     if (!has_dyld_magic(header))
         return std::unexpected(Error::validation(
-            "Input file is not a dyld shared cache", *path));
+            "Input file is not a dyld shared cache", cache_path_string));
 
     // Strategy 1: old dyld_cache_image_info array (uint32 offset/count @ 0x18).
     std::vector<ModuleInfo> modules;
@@ -325,7 +335,7 @@ Result<std::vector<ModuleInfo>> list_modules() {
 
     if (modules.empty())
         return std::unexpected(Error::not_found(
-            "No images found in the dyld shared cache header", *path));
+            "No images found in the dyld shared cache header", cache_path_string));
     return modules;
 }
 

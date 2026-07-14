@@ -39,6 +39,16 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .library(name: "IDAX", targets: ["IDAX"]),
+        .executable(
+            name: "idax-dyld-cache-database-creator",
+            targets: ["IDAXDyldCacheDatabaseCreator"]
+        ),
+    ],
+    dependencies: [
+        .package(
+            url: "https://github.com/apple/swift-argument-parser.git",
+            from: "1.8.2"
+        ),
     ],
     targets: [
         cidaxTarget,
@@ -55,10 +65,31 @@ let package = Package(
             dependencies: ["IDAX"],
             path: "bindings/swift/Examples"
         ),
+        .target(
+            name: "IDAXDyldCacheDatabaseCreatorCore",
+            dependencies: [
+                "IDAX",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "bindings/swift/Tools/DyldCacheDatabaseCreatorCore"
+        ),
+        .executableTarget(
+            name: "IDAXDyldCacheDatabaseCreator",
+            dependencies: ["IDAXDyldCacheDatabaseCreatorCore"],
+            path: "bindings/swift/Tools/DyldCacheDatabaseCreator"
+        ),
         .testTarget(
             name: "IDAXTests",
             dependencies: ["IDAX"],
             path: "bindings/swift/Tests/IDAXTests"
+        ),
+        .testTarget(
+            name: "IDAXDyldCacheDatabaseCreatorTests",
+            dependencies: [
+                "IDAXDyldCacheDatabaseCreatorCore",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "bindings/swift/Tests/IDAXDyldCacheDatabaseCreatorTests"
         ),
         .plugin(
             name: "BuildXCFramework",

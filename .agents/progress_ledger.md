@@ -2179,3 +2179,32 @@
   - 16.158.4. Definition/declaration consistency: SE-0447 `__counted_by` is a real attribute under Apple Clang 21+ when `<ptrcheck.h>` is available, so declaration-only annotation makes the shim's function definitions disagree on type identity ("conflicting types for ..."). The shim implementation `idax_shim.cpp` was updated to repeat the same `__counted_by(...)`/`__noescape` modifiers on every annotated function definition so declarations and definitions agree on every supported platform (Apple Clang sees real attributes; other toolchains see the no-op macro fallback defined inside `<ptrcheck.h>` or by the central header).
   - 16.158.5. Swift consumer follow-ups: `bindings/swift/Sources/IDAX/Plugin.swift::makeRawContext` now also passes `type_ref_name: nil, type_ref_type: nil` to satisfy the Rust-binding-specific `IdaxPluginActionContext` extension that became visible to Swift when the headers unified; a code comment documents that these are Rust-binding routing fields. `bindings/swift/Tests/IDAXTests/UnitTests.swift` was already updated in 16.157 to pass `isRead`/`isWritten` to the `Operand` initialiser.
   - 16.158.6. Validation evidence: `cmake --build build-validate --target idax` builds the static C++ library; `bindings/swift/scripts/build-libs.sh --arch arm64` builds `libidax.a` and `libidax_shim.a` against the central header; `IDAX_DEV=1 swift build --target IDAX` compiles the Swift binding library from scratch; `IDAX_DEV=1 swift build --target IDAXTests` compiles the Swift test target; `cmake --build build-validate --target idax_unit_test && build-validate/tests/unit/idax_unit_test` runs C++ unit tests with 48/48 passing.
+
+- **16.159. P23 Swift Dyld Cache Database Creator 启动**
+  - 16.159.1. 已批准范围：新增基于 `swift-argument-parser` 的 Swift executable，接受 dyld shared cache 路径、多个 image path、可选 region 加载 flag，以及显式或派生的输出数据库名称。
+  - 16.159.2. Binding 范围：在 C++ 中新增经过检查的指定路径保存行为，通过 canonical C ABI 暴露，并保持 Swift、Node、Rust lifecycle 接口一致。
+  - 16.159.3. 验证范围：parser/命名 focused test、binding build、XCFramework 重新生成，以及临时真实 cache smoke run。
+
+- **16.160. P23 build-system preflight blocker 与处理**
+  - 16.160.1. 复用的 `build-validate` directory 在 ida-sdk FetchContent update 期间失败，因为切换 revision 会覆盖 SDK checkout 中未跟踪的生成 package 文件；项目源码尚未开始编译。
+  - 16.160.2. 处理方式：保留共享 checkout，使用全新的隔离 build directory，并将 `IDASDK` 显式指向现有 SDK source tree，再从该稳定路径构建 Swift development library。
+
+- **16.161. P23 Swift Dyld Cache Database Creator 完成**
+  - 16.161.1. 新增 `idax-dyld-cache-database-creator` product 与可测试 core target，支持重复 `--image`、显式 `--output`、默认 `+` 连接命名、overwrite protection，以及 dyld header、branch island、branch mapping、global offset table、gap 和 final analysis 控制。
+  - 16.161.2. 新增经过错误检查的 `ida::database::save_to`，并同步 C ABI、Swift、Node、Rust、API parity test、类型声明与 committed `CIDAX.xcframework`。
+  - 16.161.3. 文档已同步到 `README.md`、`docs/Tools/DyldCacheDatabaseCreator.md`、SDK coverage matrix、API catalog 与 Node agent API reference。
+  - 16.161.4. 验证：C++ unit 48/48；Swift focused test 10/10；Rust focused test 1/1；Node unit 183/183；Swift development/consumer build 与 universal XCFramework rebuild 通过；`nm` 确认 `idax_database_save_to` export。
+  - 16.161.5. 使用 IDA Professional 9.3 对 macOS 26.5.2 arm64e dyld shared cache 完成真实 smoke run：同时加载 AppKit 与 UIKitMacHelper，加载 27 个 global offset table region 和 31 个 gap region，成功生成约 3.1 GB 临时 `.i64` 后清理产物。
+  - 16.161.6. Node 验证发现 `npm ci` 会过早运行 native install lifecycle；采用 `npm ci --ignore-scripts` 后携带完整 build 环境显式 rebuild，发现已记录为 F374 / 35.32。
+  - 16.161.7. 最终 destructive-path audit 新增保护：即使传入 `--overwrite`，也拒绝把输出指向 directory 或原始 cache；同时拒绝空显式输出路径，并以 focused test 覆盖这些情况。
+
+- **16.162. P23 image selector contract 更新**
+  - 16.162.1. 移除旧 `--image`，新增支持空格分隔列表的 `--image-name` 和 `--image-path`；两者均可单独使用，也可组合。
+  - 16.162.2. 新增 C++ `ida::dyld_cache::list_modules(cache_path)`、canonical C ABI `idax_dyld_cache_list_modules_at_path` 与 Swift `DyldCache.listModules(in:)`，使 name-only 输入可以在 database 打开前解析首个完整路径。
+  - 16.162.3. `--image-name` 依据 image path 最后一个 component 去除 extension 后精确匹配，并覆盖 missing、同名首项选择、duplicate resolution 与显式 path 不存在等行为。
+  - 16.162.4. README、独立工具文档、SDK coverage matrix、API catalog 与 architecture decision 已同步；最终 build/runtime evidence 在本条后续子项记录。
+  - 16.162.5. 验证：C++ unit 48/48 与 API surface compile 通过；Swift focused test 19/19；Rust focused test 1/1；Node unit 183/183；XcodeBuildMCP development/consumer target build 与 universal `CIDAX.xcframework` rebuild 通过；`nm` 确认 `idax_dyld_cache_list_modules_at_path` export。
+  - 16.162.6. 使用 IDA Professional 9.3 和 macOS 26.5.2 arm64e dyld shared cache 执行 `--image-name AppKit` 正向 smoke run，成功完成 pre-open name resolution、database open 与 252 MB 临时 `.i64` 保存，随后清理产物。
+  - 16.162.7. XcodeBuildMCP CLI 的 package test 会额外链接无关 development-mode example，并因既有 IDA symbol link contract 失败；按四级回退规则使用 consumer XCFramework 执行 `swift test 2>&1 | xcsift`，19 个 focused test 全部通过且无 warning/error。
+  - 16.162.8. 真实 cache 验证发现 `SwiftUI` 同时存在 macOS framework、iOSSupport framework 与 Accessibility bundle 三条同名 path；为保证 `--image-name AppKit SwiftUI SwiftUICore` 可直接使用，name selector 固定选择 cache enumeration order 的第一条，非首条要求使用 `--image-path`。该发现记录为 F376 / 35.34。
+  - 16.162.9. 使用真实 cache 解析 `--image-name AppKit SwiftUI SwiftUICore` 并额外传入 AppKit 完整 path；命令到达预期 duplicate-selector guard，证明三个 name 均成功完成批量解析且没有打开或写出 database。

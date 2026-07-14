@@ -526,6 +526,12 @@ int idax_database_save(void) {
     RETURN_STATUS(ida::database::save());
 }
 
+int idax_database_save_to(const char* output_database_path) {
+    if (output_database_path == nullptr)
+        return fail(ida::Error::validation("Output database path is null"));
+    RETURN_STATUS(ida::database::save_to(output_database_path));
+}
+
 int idax_database_close(int save) {
     RETURN_STATUS(ida::database::close(save != 0));
 }
@@ -8906,38 +8912,76 @@ int idax_dyld_cache_is_available(void) {
     return ida::dyld_cache::is_available() ? 1 : 0;
 }
 
-int idax_dyld_cache_list_modules(IdaxDyldCacheModule** out, size_t* count) {
-    clear_error();
-    auto r = ida::dyld_cache::list_modules();
-    if (!r) return fail(r.error());
-    auto& modules = *r;
-    *count = modules.size();
+namespace {
+
+int copy_dyld_cache_modules(
+    const ida::Result<std::vector<ida::dyld_cache::ModuleInfo>>& module_result,
+    IdaxDyldCacheModule** output_modules,
+    size_t* output_count
+) {
+    if (!module_result)
+        return fail(module_result.error());
+
+    const auto& modules = *module_result;
+    *output_count = modules.size();
     if (modules.empty()) {
-        *out = nullptr;
+        *output_modules = nullptr;
         return 0;
     }
 
-    *out = static_cast<IdaxDyldCacheModule*>(
+    *output_modules = static_cast<IdaxDyldCacheModule*>(
         std::calloc(modules.size(), sizeof(IdaxDyldCacheModule)));
-    if (*out == nullptr) return fail(ida::Error::internal("malloc failed"));
+    if (*output_modules == nullptr)
+        return fail(ida::Error::internal("malloc failed"));
 
-    for (size_t i = 0; i < modules.size(); ++i) {
-        (*out)[i].load_address = modules[i].load_address;
-        (*out)[i].path = dup_string(modules[i].path);
-        if ((*out)[i].path == nullptr && !modules[i].path.empty()) {
-            idax_dyld_cache_list_modules_free(*out, i + 1);
-            *out = nullptr;
-            *count = 0;
+    for (size_t module_index = 0; module_index < modules.size(); ++module_index) {
+        (*output_modules)[module_index].load_address = modules[module_index].load_address;
+        (*output_modules)[module_index].path = dup_string(modules[module_index].path);
+        if ((*output_modules)[module_index].path == nullptr
+            && !modules[module_index].path.empty()) {
+            idax_dyld_cache_list_modules_free(*output_modules, module_index + 1);
+            *output_modules = nullptr;
+            *output_count = 0;
             return fail(ida::Error::internal("malloc failed"));
         }
     }
     return 0;
 }
 
-void idax_dyld_cache_list_modules_free(IdaxDyldCacheModule* modules, size_t count) {
+}  // namespace
+
+int idax_dyld_cache_list_modules(
+    IdaxDyldCacheModule** output_modules,
+    size_t* module_count
+) {
+    clear_error();
+    if (output_modules == nullptr || module_count == nullptr)
+        return fail(ida::Error::validation("Module output pointers cannot be null"));
+    auto module_result = ida::dyld_cache::list_modules();
+    return copy_dyld_cache_modules(module_result, output_modules, module_count);
+}
+
+int idax_dyld_cache_list_modules_at_path(
+    const char* cache_path,
+    IdaxDyldCacheModule** output_modules,
+    size_t* module_count
+) {
+    clear_error();
+    if (cache_path == nullptr)
+        return fail(ida::Error::validation("Dyld shared cache path is null"));
+    if (output_modules == nullptr || module_count == nullptr)
+        return fail(ida::Error::validation("Module output pointers cannot be null"));
+    auto module_result = ida::dyld_cache::list_modules(cache_path);
+    return copy_dyld_cache_modules(module_result, output_modules, module_count);
+}
+
+void idax_dyld_cache_list_modules_free(
+    IdaxDyldCacheModule* modules,
+    size_t module_count
+) {
     if (modules == nullptr) return;
-    for (size_t i = 0; i < count; ++i)
-        std::free(modules[i].path);
+    for (size_t module_index = 0; module_index < module_count; ++module_index)
+        std::free(modules[module_index].path);
     std::free(modules);
 }
 

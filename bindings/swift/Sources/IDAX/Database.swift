@@ -217,6 +217,14 @@ public enum Database {
         try checkStatus(idax_database_save(), "database.save")
     }
 
+    /// Save the current database to a new file path.
+    public static func save(to outputDatabasePath: String) throws(IDAError) {
+        try checkStatus(
+            outputDatabasePath.withCString { idax_database_save_to($0) },
+            "database.saveTo"
+        )
+    }
+
     public static func close(save: Bool = false) throws(IDAError) {
         try checkStatus(idax_database_close(save ? 1 : 0), "database.close")
     }

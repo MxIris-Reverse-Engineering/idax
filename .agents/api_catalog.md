@@ -165,7 +165,8 @@ This section captures the intended public API semantics at a concrete level so i
 - Metadata pull/push wrappers for function-address batches
 - Connection-state query helpers with explicit unsupported close semantics in this runtime
 
-### 17.25 `ida::database` processor-context metadata extensions
+### 17.25 `ida::database` extensions
+- 通过 `save_to` 显式保存到指定输出路径，并保持 Swift `Database.save(to:)`、Node `database.saveTo` 与 Rust `database::save_to` 的接口一致性
 - `ProcessorId` enum + typed `processor()` helper
 - `ProcessorId` tracks full current SDK `PLFM_*` coverage (through `PLFM_MCORE`)
 - Architecture-shaping helpers: `address_bitness()`, `set_address_bitness(bits)`, `is_big_endian()`, `abi_name()`
@@ -175,6 +176,7 @@ This section captures the intended public API semantics at a concrete level so i
 - Programmatic driver for IDA's bundled "dscu" (dyld shared cache utils) plugin
 - Availability probe (`is_available`) — gated on a database opened from a dyld shared cache with the "single module" option
 - Module enumeration (`list_modules`) via direct DSC header parsing (old `image_info` + newer `image_text_info` layouts)
+- Pre-open cache-file enumeration (`list_modules(cache_path)`) with Swift `DyldCache.listModules(in:)` parity，用于在 database 打开前解析 image name
 - Single-item loading: `load_module`, `load_section` (auto-detected region kind), `load_dyld_header`
 - Bulk loading: `load_branch_islands`, `load_branch_mappings`, `load_global_offset_tables`, `load_gaps` — netnode pre-population bypasses the GUI chooser so the operations work headless
 - Companion `ida::plugin` invocation helpers: `is_plugin_available`, `run_plugin` (wrap SDK `find_plugin` / `load_and_run_plugin`)

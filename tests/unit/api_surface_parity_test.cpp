@@ -608,6 +608,7 @@ void check_database_surface() {
     using ImportModulesFn = ida::Result<std::vector<ida::database::ImportModule>>(*)();
     using ProcessorEnumFn = ida::Result<ida::database::ProcessorId>(*)();
     using IdbPathFn = ida::Result<std::string>(*)();
+    using SaveToFunction = ida::Status (*)(std::string_view);
 
     (void)static_cast<InitBasicFn>(&ida::database::init);
     (void)static_cast<InitWithOptionsFn>(&ida::database::init);
@@ -617,6 +618,7 @@ void check_database_surface() {
     (void)static_cast<OpenIntentFn>(&ida::database::open);
     (void)static_cast<OpenBinaryFn>(&ida::database::open_binary);
     (void)static_cast<OpenNonBinaryFn>(&ida::database::open_non_binary);
+    (void)static_cast<SaveToFunction>(&ida::database::save_to);
     (void)static_cast<BoundsFn>(&ida::database::address_bounds);
     (void)static_cast<SpanFn>(&ida::database::address_span);
     (void)static_cast<FileTypeNameFn>(&ida::database::file_type_name);
@@ -1907,22 +1909,26 @@ void check_dyld_cache_surface() {
     (void)module_info.path;
     (void)module_info.load_address;
 
-    using IsAvailableFn = bool(*)();
-    using ListModulesFn = ida::Result<std::vector<ida::dyld_cache::ModuleInfo>>(*)();
-    using LoadModuleFn = ida::Status(*)(std::string_view);
-    using LoadSectionFn = ida::Status(*)(ida::Address);
-    using LoadDyldHeaderFn = ida::Status(*)();
-    using LoadCountFn = ida::Result<std::size_t>(*)();
+    using IsAvailableFunction = bool(*)();
+    using ListCurrentDatabaseModulesFunction =
+        ida::Result<std::vector<ida::dyld_cache::ModuleInfo>>(*)();
+    using ListCacheFileModulesFunction =
+        ida::Result<std::vector<ida::dyld_cache::ModuleInfo>>(*)(std::string_view);
+    using LoadModuleFunction = ida::Status(*)(std::string_view, bool);
+    using LoadSectionFunction = ida::Status(*)(ida::Address, bool);
+    using LoadDynamicLinkerHeaderFunction = ida::Status(*)(bool);
+    using LoadRegionCountFunction = ida::Result<std::size_t>(*)(bool);
 
-    (void)static_cast<IsAvailableFn>(&ida::dyld_cache::is_available);
-    (void)static_cast<ListModulesFn>(&ida::dyld_cache::list_modules);
-    (void)static_cast<LoadModuleFn>(&ida::dyld_cache::load_module);
-    (void)static_cast<LoadSectionFn>(&ida::dyld_cache::load_section);
-    (void)static_cast<LoadDyldHeaderFn>(&ida::dyld_cache::load_dyld_header);
-    (void)static_cast<LoadCountFn>(&ida::dyld_cache::load_branch_islands);
-    (void)static_cast<LoadCountFn>(&ida::dyld_cache::load_branch_mappings);
-    (void)static_cast<LoadCountFn>(&ida::dyld_cache::load_global_offset_tables);
-    (void)static_cast<LoadCountFn>(&ida::dyld_cache::load_gaps);
+    (void)static_cast<IsAvailableFunction>(&ida::dyld_cache::is_available);
+    (void)static_cast<ListCurrentDatabaseModulesFunction>(&ida::dyld_cache::list_modules);
+    (void)static_cast<ListCacheFileModulesFunction>(&ida::dyld_cache::list_modules);
+    (void)static_cast<LoadModuleFunction>(&ida::dyld_cache::load_module);
+    (void)static_cast<LoadSectionFunction>(&ida::dyld_cache::load_section);
+    (void)static_cast<LoadDynamicLinkerHeaderFunction>(&ida::dyld_cache::load_dyld_header);
+    (void)static_cast<LoadRegionCountFunction>(&ida::dyld_cache::load_branch_islands);
+    (void)static_cast<LoadRegionCountFunction>(&ida::dyld_cache::load_branch_mappings);
+    (void)static_cast<LoadRegionCountFunction>(&ida::dyld_cache::load_global_offset_tables);
+    (void)static_cast<LoadRegionCountFunction>(&ida::dyld_cache::load_gaps);
 }
 
 } // namespace surface_check
