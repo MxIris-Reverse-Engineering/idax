@@ -1034,3 +1034,15 @@
   - **19.27.1. Decision:** Every function in `idax_shim.cpp` whose declaration in the central header carries `__counted_by(N)` / `__noescape` repeats the same annotations on its definition. The central header keeps the conditional include of `<ptrcheck.h>` (real attributes on Apple Clang 21+, no-op fallback elsewhere).
   - **19.27.2. Rationale:** Apple Clang 21+ treats `__counted_by` as a real attribute that participates in function type identity. A declaration with the attribute and a definition without it produces a "conflicting types" error during the C shim build. Repeating the attribute on the definition restores type-identity agreement on Apple Clang, and on every other toolchain the attributes degrade to no-op macros (the `__counted_by` fallback inside `<ptrcheck.h>` and the central header's own fallback), so the definitions remain valid C/C++ on every supported platform.
   - **19.27.3. Side benefit:** Swift's SE-0447 `Span<T>`/`Span<UInt8>` overload synthesis (enabled by `-enable-experimental-feature SafeInteropWrappers` on the IDAX Swift target) continues to work — without the attributes the Swift binding's `Lumina.swift`/`Storage.swift`/`Data.swift` ergonomic `Span<UInt8>` call sites would have to fall back to two-argument `(UnsafePointer<UInt8>, Int)` calls.
+
+- **19.28. 决策 D-SWIFT-DYLD-CACHE-DATABASE-CREATOR**：提供基于 Swift Argument Parser、支持检查式显式路径保存的命令行工具
+  - **19.28.1. 决策：** 新增 Swift Package product `idax-dyld-cache-database-creator`。命令实现放在可测试的 `IDAXDyldCacheDatabaseCreatorCore` target，依赖 `swift-argument-parser` 1.8.2，executable target 只保留最小入口。
+  - **19.28.2. 输入约定（已由 19.29 替代）：** 初版 `--image` 可重复传入，但必须是 cache 内的完整路径；19.29 增加 pre-open cache-file enumeration 后，当前 contract 已迁移到列表形式的 `--image-name` / `--image-path`。
+  - **19.28.3. 分析约定：** image 和可选 region 加载时不逐项等待分析；除非传入 `--skip-final-analysis`，最后统一执行一次 `Analysis.wait()`。`--load-dyld-header` 独立执行其所需的首次等待。
+  - **19.28.4. 输出约定：** 新增经过错误检查的 `ida::database::save_to` 并保持各 binding 一致。默认文件名使用所有 image basename 以 `+` 连接；显式输出没有扩展名时才补 `.i64`；只有全部 cache 内容加载成功后才移除需要覆盖的旧输出。
+
+- **19.29. 决策 D-DYLD-CACHE-IMAGE-SELECTORS**：以 name/path 列表取代旧的单值 `--image`
+  - **19.29.1. CLI contract：** 移除 `--image`，新增 `.upToNextOption` 数组选项 `--image-name` 与 `--image-path`，使 `--image-name AppKit SwiftUI SwiftUICore` 这类单 option 多值输入成为一等用法。
+  - **19.29.2. Name matching：** `--image-name` 与 cache 内 image path 的最后一个 component 去掉最后一层 extension 后做大小写敏感的精确匹配；未匹配时报错。多个 path 同名时按 cache enumeration order 选择第一条，若要选择其余同名 image 则使用 `--image-path`。
+  - **19.29.3. Pre-open resolution：** 新增 `ida::dyld_cache::list_modules(cache_path)`、C ABI `idax_dyld_cache_list_modules_at_path` 与 Swift `DyldCache.listModules(in:)`，在 database 打开前解析首个 image 的完整路径。
+  - **19.29.4. Mixed selectors：** 两种 selector 可组合，顺序固定为所有 name 解析结果在前、显式 path 在后；不同 selector 解析到同一 image 时拒绝执行。

@@ -102,6 +102,7 @@ int idax_database_open(const char* path, int auto_analysis);
 int idax_database_open_binary(const char* path, int mode);
 int idax_database_open_non_binary(const char* path, int mode);
 int idax_database_save(void);
+int idax_database_save_to(const char* output_database_path);
 int idax_database_close(int save);
 
 int idax_database_file_to_database(const char* file_path, int64_t file_offset,
@@ -2469,8 +2470,13 @@ typedef struct IdaxDyldCacheModule {
  * safer default in callers is to pass 0 and invoke an explicit analysis
  * wait once a batch of loads is complete. */
 int idax_dyld_cache_is_available(void);
-int idax_dyld_cache_list_modules(IdaxDyldCacheModule** out, size_t* count);
-void idax_dyld_cache_list_modules_free(IdaxDyldCacheModule* modules, size_t count);
+int idax_dyld_cache_list_modules(IdaxDyldCacheModule** output_modules,
+                                  size_t* module_count);
+int idax_dyld_cache_list_modules_at_path(const char* cache_path,
+                                         IdaxDyldCacheModule** output_modules,
+                                         size_t* module_count);
+void idax_dyld_cache_list_modules_free(IdaxDyldCacheModule* modules,
+                                       size_t module_count);
 int idax_dyld_cache_load_module(const char* module_path, int wait_for_analysis);
 int idax_dyld_cache_load_section(uint64_t address, int wait_for_analysis);
 int idax_dyld_cache_load_dyld_header(int wait_for_analysis);

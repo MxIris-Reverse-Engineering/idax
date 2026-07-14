@@ -64,6 +64,12 @@ bool is_available();
 /// any module has been loaded. Use the returned paths with load_module().
 Result<std::vector<ModuleInfo>> list_modules();
 
+/// Enumerate every module in a dyld shared cache file without an open database.
+///
+/// @param cache_path  File-system path to the dyld shared cache.
+/// @return Every image path and load address recorded by the cache header.
+Result<std::vector<ModuleInfo>> list_modules(std::string_view cache_path);
+
 // ── Loading ─────────────────────────────────────────────────────────────
 //
 // Every load_* operation accepts `wait_for_analysis` (default: false).

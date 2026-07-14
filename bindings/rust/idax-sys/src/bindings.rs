@@ -59,6 +59,11 @@ unsafe extern "C" {
     pub fn idax_database_save() -> ::std::os::raw::c_int;
 }
 unsafe extern "C" {
+    pub fn idax_database_save_to(
+        output_database_path: *const ::std::os::raw::c_char,
+    ) -> ::std::os::raw::c_int;
+}
+unsafe extern "C" {
     pub fn idax_database_close(save: ::std::os::raw::c_int) -> ::std::os::raw::c_int;
 }
 unsafe extern "C" {
@@ -5659,4 +5664,43 @@ unsafe extern "C" {
         feature: ::std::os::raw::c_int,
         out: *mut IdaxLuminaBatchResult,
     ) -> ::std::os::raw::c_int;
+}
+#[doc = " A single image (module) inside a dyld shared cache.\n  Free an array returned by idax_dyld_cache_list_modules() with\n  idax_dyld_cache_list_modules_free()."]
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct IdaxDyldCacheModule {
+    pub path: *mut ::std::os::raw::c_char,
+    pub load_address: u64,
+}
+#[allow(clippy::unnecessary_operation, clippy::identity_op)]
+const _: () = {
+    ["Size of IdaxDyldCacheModule"][::std::mem::size_of::<IdaxDyldCacheModule>() - 16usize];
+    ["Alignment of IdaxDyldCacheModule"]
+        [::std::mem::align_of::<IdaxDyldCacheModule>() - 8usize];
+    ["Offset of field: IdaxDyldCacheModule::path"]
+        [::std::mem::offset_of!(IdaxDyldCacheModule, path) - 0usize];
+    ["Offset of field: IdaxDyldCacheModule::load_address"]
+        [::std::mem::offset_of!(IdaxDyldCacheModule, load_address) - 8usize];
+};
+impl Default for IdaxDyldCacheModule {
+    fn default() -> Self {
+        let mut instance = ::std::mem::MaybeUninit::<Self>::uninit();
+        unsafe {
+            ::std::ptr::write_bytes(instance.as_mut_ptr(), 0, 1);
+            instance.assume_init()
+        }
+    }
+}
+unsafe extern "C" {
+    pub fn idax_dyld_cache_list_modules_at_path(
+        cache_path: *const ::std::os::raw::c_char,
+        output_modules: *mut *mut IdaxDyldCacheModule,
+        module_count: *mut usize,
+    ) -> ::std::os::raw::c_int;
+}
+unsafe extern "C" {
+    pub fn idax_dyld_cache_list_modules_free(
+        modules: *mut IdaxDyldCacheModule,
+        module_count: usize,
+    );
 }

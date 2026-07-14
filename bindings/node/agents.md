@@ -45,6 +45,7 @@ Whenever you see these aliases in the documentation, assume the following inputs
 * `openBinary(path: string, mode?: 'analyze'|'skipAnalysis'): void`
 * `openNonBinary(path: string, mode?: 'analyze'|'skipAnalysis'): void`
 * `save(): void` - Flush changes to disk.
+* `saveTo(outputDatabasePath: string): void` - 将当前数据库保存到指定的输出路径。
 * `close(save?: boolean): void` - Close DB (defaults to `save = false`).
 * `fileToDatabase(filePath: string, fileOffset: bigint, ea: Address, size: AddressSize, patchable?: boolean, remote?: boolean): void` - Loads bytes from an external file. Defaults: `patchable=true`, `remote=false`.
 * `memoryToDatabase(data: Buffer | Uint8Array, ea: Address, fileOffset?: bigint): void` - Loads bytes from memory. Default `fileOffset = -1`.

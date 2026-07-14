@@ -33,6 +33,7 @@ Current overall phase status:
 - Phase 20: ~75% (real-IDA CI hardening in progress: deterministic installer resolution + macOS `IDADIR` normalization landed; Node example argv contract fixed; Windows Node import-library fallback hardened; workflow now uses Windows-native shells/runtime path propagation for Rust/Node example execution to avoid Git-Bash linker collisions and missing-DLL runtime failures)
 - Phase 21: 100% (example loader port continuation: completed `sep_firmware_loader.cpp` as a full-functionality idax loader port of the Binary Ninja SEP firmware plugin, covering SEP firmware detection, module-table parsing, Mach-O/raw module mapping, shared-library slide handling, header/load-command annotations, firmware type definitions/application, pointer rewrite passes, entry registration, symbol import, and example build/docs wiring)
 - Phase 22: ~99% (ida-cdump parity closure in progress: wait-box UI, multiline text, typed-form C++ bindings/FormBuilder plus fixed-shape Node/Rust typed-form entrypoints, optional Qt clipboard helpers with Node/Rust wrappers and an IDA-compatible `QT_NAMESPACE=QT` build gate, IDB path, portable path helpers, Hex-Rays popup-population events, scoped Hex-Rays ownership, Local Types action-context type references, lvar/prototype metadata helpers, read-only ctree migration helpers, bulk local type declaration import, host-gated runtime harness and runner script including Hex-Rays scoped-session runtime evidence, compact parity probe example, Qt example build bridge, Node native build/runtime validation, and Rust high-level no-run validation are implemented; the updated remaining queue is interactive modal form and Qt clipboard evidence)
+- Phase 23: 100%（Swift dyld shared cache database 命令行工具、显式输出路径保存、binding parity、测试、打包与文档均已完成）
 
 ### Phase 18 TODO Action Items (Complete)
 
@@ -91,5 +92,16 @@ Current overall phase status:
 - [x] P22.8 Update docs/examples/tests and map each `ida-cdump` gap row to the new idax API. (`docs/codedump_migration_checklist.md` maps every updated gap row; compact parity probe example, local validation, Node native/runtime validation, and Rust no-run validation landed.)
 - [x] P22.9 Add a scoped Hex-Rays initialization/lifetime helper for plugin-host ownership. (C++ API, Node/Rust owned-session wrappers, example lifecycle coverage, and `IDAX_RUN_HEXRAYS_SESSION=1` host runtime execution pass.)
 - [x] P22.10 Add bulk local type declaration import over SDK `parse_decls` for `ida-cdump` metadata-apply migration, with Node/Rust wrappers.
+
+---
+
+### Phase 23 TODO Action Items (Swift Dyld Cache Database Creator)
+
+- [x] P23.1 Add explicit output-path database saving to the C++ API, central C ABI, and Swift/Node/Rust bindings.
+- [x] P23.2 Add a `swift-argument-parser` executable that loads one or more requested dyld shared cache images plus optional header, branch-island, branch-mapping, global-offset-table, and gap regions.
+- [x] P23.3 Add deterministic output naming, overwrite protection, argument validation, and focused unit coverage.
+- [x] P23.4 Rebuild the committed `CIDAX.xcframework` and validate the command against a real dyld shared cache fixture.
+- [x] P23.5 同步公开文档与分布式 `.agents/` protocol 记录。
+- [x] P23.6 将旧 `--image` 替换为支持列表输入的 `--image-name` / `--image-path`，并新增 database 打开前的 cache image name resolution。
 
 ---

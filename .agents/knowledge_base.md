@@ -944,3 +944,21 @@ On Apple Clang 21+, `__counted_by(len)` resolves via `<ptrcheck.h>` to a real `_
 
 ### 35.28. SPM Public Header Path Containment Constraint [F370]
 Swift Package Manager requires every `publicHeadersPath` to be a subdirectory of the target's `path`. A target cannot expose a header that physically lives outside the source tree. When the canonical source of truth for a header lives at a shared location across language bindings, the Swift target needs at least one local `.h` so SPM can generate the module map. The lightest-touch pattern is a one-line thin re-export header (`#include "../../../../c/include/idax_shim.h"`) that documents the canonical location in a comment and exists only to satisfy SPM. The XCFramework packaging script must read the central file directly (not the re-export) so consumer-mode `Headers/` carries the full content, not the indirection.
+
+### 35.29. FetchContent SDK checkout 存在未跟踪生成文件时应隔离 build [F371]
+复用的 checkout 含有 `src/cmake/idasdkConfig.cmake`、`src/cmake/idasdkConfigVersion.cmake` 等未跟踪生成文件时，ida-sdk FetchContent update 可能在 CMake 重新生成期间失败；Git 会在编译开始前拒绝 detach 或切换 revision。不要擅自清理共享 checkout。应创建全新 build directory，并将 `IDASDK` 指向现有 SDK source tree，以保留 checkout 并跳过 FetchContent update/rebase。
+
+### 35.30. Database save wrapper 必须保留 `save_database` 的失败与输出路径语义 [F372]
+IDA `save_database` 返回 `bool` 并接受可选的新输出路径。丢弃结果会把 filesystem、permission 或 serialization 失败误报为成功。`ida::database::save()` 与 `save_to(output_database_path)` 都必须检查返回值并把失败映射为 `Error::sdk`；各 binding 应统一经过这些已检查的 wrapper，而不是独立调用 SDK。
+
+### 35.31. Raw dyld cache 打开时必须在模块枚举前获得第一个 image 完整路径 [F373，已由 F375 扩展]
+raw cache loader 在 `Database.open` 期间消费 `IDA_DYLD_CACHE_MODULE`，而无参数 `DyldCache.listModules()` 从已经打开的数据库取得 cache path。F375 新增 `list_modules(cache_path)` / `DyldCache.listModules(in:)` 后，headless 工具可以在 open 前按 name 解析首个完整 image path，再以 `IDA_DYLD_CACHE_DEPTH=0` 设置环境并加载其余 image。
+
+### 35.32. 自定义 Node native build 环境需要拆分依赖安装与 lifecycle [F374]
+`npm ci` 默认运行 `install` lifecycle，而本项目的 lifecycle 会立刻调用 `cmake-js`。当 native build 依赖显式 `IDADIR`、`IDASDK` 或 `IDAX_BUILD_DIR` 时，安装阶段可能在这些路径准备完成前失败。可复现的验证顺序是先执行 `npm ci --ignore-scripts`，再携带完整环境显式执行 `npm run rebuild`，最后运行 `npm test`。
+
+### 35.33. Image name selector 需要 pre-open dyld cache file enumeration [F375]
+首个 dyld cache image 的完整路径必须在 `Database.open` 读取 `IDA_DYLD_CACHE_MODULE` 前确定；依赖当前 database input path 的无参数 `list_modules()` 无法支持 name-only bootstrap。稳定设计是复用同一 cache header parser 新增 `list_modules(cache_path)`，通过 C ABI 和 Swift 暴露，然后按每个 image path 最后一个 component 去除最后一层 extension 后进行精确 name matching。未匹配应返回明确错误；同名多路径按 cache enumeration order 选择第一条，其他同名 image 通过 `--image-path` 指定。
+
+### 35.34. Derived image name 不是 cache 内的唯一键 [F376]
+按 image path 最后一个 component 去除 extension 得到的 name 可能重复。macOS 26.5.2 cache 中，`SwiftUI` 同时对应主 macOS framework、iOSSupport framework 和 Accessibility bundle。CLI 应保留 `list_modules(cache_path)` 返回顺序并为 `--image-name` 选择第一条，以覆盖最常见的主 cache image；用户需要非首条同名 image 时必须使用完整 `--image-path`。

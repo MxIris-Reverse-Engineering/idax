@@ -172,7 +172,7 @@ describe('Database Namespace Structure', () => {
     });
 
     const EXPECTED_FUNCTIONS = [
-        'init', 'open', 'save', 'close',
+        'init', 'open', 'save', 'saveTo', 'close',
         'inputFilePath', 'idbPath', 'fileTypeName', 'inputMd5',
         'compilerInfo', 'importModules', 'imageBase',
         'processorId', 'processorName', 'addressBitness', 'setAddressBitness',

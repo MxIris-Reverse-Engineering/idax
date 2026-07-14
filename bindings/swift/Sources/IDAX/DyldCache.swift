@@ -34,10 +34,9 @@ public enum DyldCache {
         idax_dyld_cache_is_available() != 0
     }
 
-    /// Enumerate every module (image) contained in the dyld shared cache.
+    /// Enumerate every module contained in the current database's input cache.
     ///
-    /// Parses the cache header of the input file directly, so it works before
-    /// any module has been loaded. Use the returned paths with `loadModule`.
+    /// Use the returned paths with `loadModule`.
     public static func listModules() throws(IDAError) -> [DyldCacheModule] {
         var modulesPointer: UnsafeMutablePointer<IdaxDyldCacheModule>? = nil
         var count: Int = 0
@@ -49,6 +48,30 @@ public enum DyldCache {
         guard let modulesPointer, count > 0 else { return [] }
         return (0..<count).map { index in
             let rawModule = modulesPointer[index]
+            return DyldCacheModule(
+                path: borrowCString(rawModule.path),
+                loadAddress: rawModule.load_address
+            )
+        }
+    }
+
+    /// Enumerate every module directly from a dyld shared cache file.
+    ///
+    /// This overload does not require an open database, which allows callers
+    /// to resolve image names before selecting the first cache image.
+    public static func listModules(in cachePath: String) throws(IDAError) -> [DyldCacheModule] {
+        var modulesPointer: UnsafeMutablePointer<IdaxDyldCacheModule>? = nil
+        var moduleCount: Int = 0
+        let returnCode = cachePath.withCString {
+            idax_dyld_cache_list_modules_at_path($0, &modulesPointer, &moduleCount)
+        }
+        if returnCode != 0 {
+            throw consumeLastError(fallback: "dyldCache.listModulesAtPath")
+        }
+        defer { idax_dyld_cache_list_modules_free(modulesPointer, moduleCount) }
+        guard let modulesPointer, moduleCount > 0 else { return [] }
+        return (0..<moduleCount).map { moduleIndex in
+            let rawModule = modulesPointer[moduleIndex]
             return DyldCacheModule(
                 path: borrowCString(rawModule.path),
                 loadAddress: rawModule.load_address

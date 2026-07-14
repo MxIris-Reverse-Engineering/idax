@@ -77,7 +77,7 @@ idax spans the SDK surface across core analysis, module-authoring, and interacti
 |--------|-----------|---------------|
 | **Addresses** | `ida::address` | Predicates, item traversal, range iteration, predicate search |
 | **Byte access** | `ida::data` | Read/write/patch/define bytes, typed values, string extraction, binary pattern search |
-| **Database** | `ida::database` | Open/save/close, metadata, snapshots, file/memory transfer |
+| **Database** | `ida::database` | Open/save/save-to/close, metadata, snapshots, file/memory transfer |
 | **Paths** | `ida::path` | Portable basename/dirname/directory helpers for plugin workflows |
 | **Segments** | `ida::segment` | CRUD, properties, permissions, iteration |
 | **Functions** | `ida::function` | CRUD, chunks, frames, register variables, callers/callees, prototype export/apply |
@@ -108,6 +108,29 @@ Real-world port parity notes are tracked in
 [`docs/port_gap_audit_examples.md`](docs/port_gap_audit_examples.md), with the
 current ida-cdump migration checklist in
 [`docs/codedump_migration_checklist.md`](docs/codedump_migration_checklist.md).
+
+### Swift dyld cache database creator
+
+The Swift package includes `idax-dyld-cache-database-creator`, a headless tool
+for creating one IDA database from one or more selected dyld shared cache
+images. It supports optional dyld header, branch-island, branch-mapping, global
+offset table, and gap loading.
+
+```bash
+export IDADIR="/Applications/IDA Professional 9.3.app/Contents/MacOS"
+
+swift run idax-dyld-cache-database-creator \
+  --cache /Volumes/DyldSharedCaches/macOS/26.5.2_25F84/dyld_shared_cache_arm64e \
+  --image-name AppKit SwiftUI SwiftUICore \
+  --load-got \
+  --load-gaps
+```
+
+Images can instead be selected by complete cache paths with `--image-path`.
+Without `--output`, this example writes `AppKit+SwiftUI+SwiftUICore.i64` in the
+current directory. See
+[`docs/Tools/DyldCacheDatabaseCreator.md`](docs/Tools/DyldCacheDatabaseCreator.md)
+for all options and operational details.
 
 ---
 
