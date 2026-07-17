@@ -168,7 +168,10 @@ public enum DyldCache {
         }
     }
 
-    /// Load every gap region from the shared cache.
+    /// Load every unknown region from the shared cache.
+    ///
+    /// IDA 9.4 calls these unknown regions. The historical method name is
+    /// preserved for source compatibility with IDA 9.3.
     ///
     /// - Parameter waitForAnalysis: Drain the auto-analysis queue before returning.
     /// - Returns: The number of gap regions loaded.
@@ -178,6 +181,21 @@ public enum DyldCache {
     ) throws(IDAError) -> Int {
         try withOutput("dyldCache.loadGaps", 0) {
             idax_dyld_cache_load_gaps(waitForAnalysis ? 1 : 0, $0)
+        }
+    }
+
+    /// Load every cache-wide data region from the shared cache.
+    ///
+    /// This region type requires IDA SDK 9.4 or newer.
+    ///
+    /// - Parameter waitForAnalysis: Drain the auto-analysis queue before returning.
+    /// - Returns: The number of cache-wide data regions loaded.
+    @discardableResult
+    public static func loadCacheData(
+        waitForAnalysis: Bool = true
+    ) throws(IDAError) -> Int {
+        try withOutput("dyldCache.loadCacheData", 0) {
+            idax_dyld_cache_load_cache_data(waitForAnalysis ? 1 : 0, $0)
         }
     }
 }

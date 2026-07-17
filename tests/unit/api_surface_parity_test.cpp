@@ -1929,6 +1929,7 @@ void check_dyld_cache_surface() {
     (void)static_cast<LoadRegionCountFunction>(&ida::dyld_cache::load_branch_mappings);
     (void)static_cast<LoadRegionCountFunction>(&ida::dyld_cache::load_global_offset_tables);
     (void)static_cast<LoadRegionCountFunction>(&ida::dyld_cache::load_gaps);
+    (void)static_cast<LoadRegionCountFunction>(&ida::dyld_cache::load_cache_data);
 }
 
 } // namespace surface_check

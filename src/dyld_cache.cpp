@@ -2,11 +2,9 @@
 /// \brief Implementation of ida::dyld_cache — a programmatic driver for the
 ///        bundled IDA "dscu" (dyld shared cache utils) plugin.
 ///
-/// The dscu plugin is controlled through a private netnode named "$ dscu":
-/// inputs are staged into specific netnode keys/tags, then one of the
-/// plugin's numeric run modes is triggered via load_and_run_plugin. The
-/// protocol and the region-table format used below were established by
-/// reverse-engineering dscu.dylib.
+/// IDA 9.4 and newer expose the supported dscu_svc_t API from dscu.h. Older
+/// SDKs are supported through the private "$ dscu" netnode protocol that was
+/// established by reverse-engineering dscu.dylib.
 
 // Standard library headers must be included before the SDK bridge: the IDA
 // SDK's pro.h poisons C stdio identifiers (e.g. `fopen` → `dont_use_fopen`)
@@ -22,6 +20,9 @@
 #include <vector>
 
 #include "detail/sdk_bridge.hpp"
+#if IDA_SDK_VERSION >= 940
+#include <dscu.h>
+#endif
 #include <ida/dyld_cache.hpp>
 #include <ida/plugin.hpp>
 
@@ -31,6 +32,7 @@ namespace {
 
 // ── dscu protocol constants ─────────────────────────────────────────────
 
+#if IDA_SDK_VERSION < 940
 constexpr const char* kDscuPlugin  = "dscu";
 constexpr const char* kDscuNetnode = "$ dscu";
 
@@ -58,6 +60,7 @@ constexpr uchar kTagRegion  = 'r';  // region-info table (read-only)
 constexpr std::uint32_t kRegionMapping = 3;
 constexpr std::uint32_t kRegionGap     = 4;
 constexpr std::uint32_t kRegionGot     = 5;
+#endif
 
 // ── small helpers ───────────────────────────────────────────────────────
 
@@ -101,6 +104,8 @@ Status ensure_available() {
     return ida::ok();
 }
 
+#if IDA_SDK_VERSION < 940
+
 /// Open (creating if absent) the "$ dscu" communication netnode.
 netnode dscu_netnode() {
     return netnode(kDscuNetnode, 0, /*do_create=*/true);
@@ -121,7 +126,92 @@ bool run_dscu(std::size_t mode, bool wait_for_analysis) {
     return succeeded;
 }
 
+#endif
+
+#if IDA_SDK_VERSION >= 940
+
+/// Return IDA 9.4's public dyld shared cache service for the current database.
+dscu_svc_t* dynamic_linker_shared_cache_service() {
+    return ::get_dscu_svc();
+}
+
+std::size_t load_request_item_count(const dscu_load_request_t& load_request) {
+    return load_request.images.size()
+         + load_request.islands.size()
+         + load_request.mappings.size()
+         + load_request.gots.size()
+         + load_request.unknown_regions.size()
+         + load_request.cache_data.size();
+}
+
+bool load_request_is_satisfied(const dscu_svc_t& service,
+                               const dscu_load_request_t& load_request) {
+    for (int image_index : load_request.images) {
+        if (!service.is_image_loaded(image_index))
+            return false;
+    }
+    for (int island_index : load_request.islands) {
+        if (!service.is_island_loaded(island_index))
+            return false;
+    }
+    for (ea_t mapping_address : load_request.mappings) {
+        if (!service.is_mapping_loaded(mapping_address))
+            return false;
+    }
+    for (ea_t global_offset_table_address : load_request.gots) {
+        if (!service.is_got_loaded(global_offset_table_address))
+            return false;
+    }
+    for (ea_t unknown_region_address : load_request.unknown_regions) {
+        if (!service.is_unknown_region_loaded(unknown_region_address))
+            return false;
+    }
+    for (ea_t cache_data_address : load_request.cache_data) {
+        if (!service.is_cache_data_loaded(cache_data_address))
+            return false;
+    }
+    return true;
+}
+
+Result<std::size_t> load_all_service_regions(region_type_t requested_region_type,
+                                             bool wait_for_analysis) {
+    dscu_svc_t* service = dynamic_linker_shared_cache_service();
+    if (service == nullptr) {
+        return std::unexpected(Error::unsupported(
+            "IDA 9.4 dyld shared cache services are unavailable for the current database"));
+    }
+
+    region_info_vec_t all_region_information;
+    service->get_regions(&all_region_information);
+
+    dscu_load_request_t load_request(DLRF_DEFAULT);
+    for (const region_info_t& region_information : all_region_information) {
+        if (region_information.type == requested_region_type)
+            load_request.add_region(region_information);
+    }
+
+    if (load_request.empty())
+        return std::size_t{0};
+
+    if (!service->load_regions(load_request)) {
+        return std::unexpected(Error::sdk(
+            "IDA 9.4 dscu failed to load the requested dyld shared cache regions"));
+    }
+    if (wait_for_analysis)
+        ::auto_wait();
+
+    if (!load_request_is_satisfied(*service, load_request)) {
+        return std::unexpected(Error::sdk(
+            "IDA 9.4 dscu reported success but at least one requested region is not loaded"));
+    }
+    return load_request_item_count(load_request);
+}
+
+#endif
+
 // ── DSC input-file parsing ──────────────────────────────────────────────
+
+#if IDA_SDK_VERSION < 940
 
 Result<std::string> input_file_path() {
     char buffer[4096];
@@ -130,6 +220,8 @@ Result<std::string> input_file_path() {
         return std::unexpected(Error::not_found("Input file path is unavailable"));
     return std::string(buffer);  // NUL-terminated by the SDK
 }
+
+#endif
 
 /// Read a NUL-terminated string from `file` starting at absolute `offset`.
 std::string read_file_cstring(std::ifstream& file, std::uint64_t offset,
@@ -194,6 +286,8 @@ std::vector<ModuleInfo> parse_image_text_info(std::ifstream& file,
     return modules;
 }
 
+#if IDA_SDK_VERSION < 940
+
 /// Read the branch-pool count from the DSC header (uint32 at offset 0x74).
 std::uint32_t read_branch_pool_count(const std::string& path) {
     std::ifstream file(path.c_str(), std::ios::binary);
@@ -207,7 +301,11 @@ std::uint32_t read_branch_pool_count(const std::string& path) {
     return read_le32(header + 0x74);
 }
 
+#endif
+
 // ── region table enumeration ────────────────────────────────────────────
+
+#if IDA_SDK_VERSION < 940
 
 struct Region {
     Address start{BadAddress};
@@ -282,20 +380,56 @@ Result<std::size_t> load_all_regions(std::uint32_t region_type,
     return loaded;
 }
 
+#endif
+
 }  // namespace
 
 // ── public API ──────────────────────────────────────────────────────────
 
 bool is_available() {
+#if IDA_SDK_VERSION >= 940
+    return dynamic_linker_shared_cache_service() != nullptr;
+#else
     return ida::plugin::is_plugin_available(kDscuPlugin);
+#endif
 }
 
 Result<std::vector<ModuleInfo>> list_modules() {
+#if IDA_SDK_VERSION >= 940
+    dscu_svc_t* service = dynamic_linker_shared_cache_service();
+    if (service == nullptr) {
+        return std::unexpected(Error::unsupported(
+            "IDA 9.4 dyld shared cache services are unavailable for the current database"));
+    }
+
+    const int image_count = service->get_images_count();
+    if (image_count <= 0)
+        return std::unexpected(Error::not_found("No images found in the dyld shared cache"));
+
+    std::vector<ModuleInfo> modules;
+    modules.reserve(static_cast<std::size_t>(image_count));
+    for (int image_index = 0; image_index < image_count; ++image_index) {
+        qstring image_path;
+        if (!service->get_image_name(&image_path, image_index))
+            continue;
+
+        ModuleInfo module_information;
+        module_information.path = ida::detail::to_string(image_path);
+        module_information.load_address = static_cast<Address>(
+            service->get_image_address(image_index));
+        modules.push_back(std::move(module_information));
+    }
+
+    if (modules.empty())
+        return std::unexpected(Error::not_found("No images found in the dyld shared cache"));
+    return modules;
+#else
     auto path = input_file_path();
     if (!path)
         return std::unexpected(path.error());
 
     return list_modules(*path);
+#endif
 }
 
 Result<std::vector<ModuleInfo>> list_modules(std::string_view cache_path) {
@@ -345,6 +479,32 @@ Status load_module(std::string_view module_path, bool wait_for_analysis) {
     if (auto status = ensure_available(); !status)
         return status;
 
+#if IDA_SDK_VERSION >= 940
+    dscu_svc_t* service = dynamic_linker_shared_cache_service();
+    if (service == nullptr) {
+        return std::unexpected(Error::unsupported(
+            "IDA 9.4 dyld shared cache services are unavailable for the current database"));
+    }
+
+    std::string module_path_string(module_path);
+    const int image_index = service->get_image_index(module_path_string.c_str());
+    if (image_index < 0) {
+        return std::unexpected(Error::not_found(
+            "Module is not present in the dyld shared cache", module_path_string));
+    }
+    if (!service->load_image(image_index, DLRF_DEFAULT)) {
+        return std::unexpected(Error::sdk(
+            "IDA 9.4 dscu failed to load the module", module_path_string));
+    }
+    if (wait_for_analysis)
+        ::auto_wait();
+    if (!service->is_image_loaded(image_index)) {
+        return std::unexpected(Error::sdk(
+            "IDA 9.4 dscu reported success but the module is not loaded",
+            module_path_string));
+    }
+    return ida::ok();
+#else
     // dscu mode 1 validates the input path against the cache state's
     // `dyld_cache_image_info` (old-format) list. On modern macOS caches
     // that list is a backward-compat subset of the actual contents — modules
@@ -375,12 +535,51 @@ Status load_module(std::string_view module_path, bool wait_for_analysis) {
     if (::getseg(static_cast<ea_t>(entry->load_address)) == nullptr)
         return std::unexpected(Error::sdk("dscu failed to load the module", path));
     return ida::ok();
+#endif
 }
 
 Status load_section(Address address, bool wait_for_analysis) {
     if (auto status = ensure_available(); !status)
         return status;
 
+#if IDA_SDK_VERSION >= 940
+    dscu_svc_t* service = dynamic_linker_shared_cache_service();
+    if (service == nullptr) {
+        return std::unexpected(Error::unsupported(
+            "IDA 9.4 dyld shared cache services are unavailable for the current database"));
+    }
+
+    region_info_t region_information;
+    if (!service->get_region_by_ea(
+            &region_information,
+            static_cast<ea_t>(address))) {
+        return std::unexpected(Error::not_found(
+            "No dyld shared cache region contains the address", hex_address(address)));
+    }
+
+    // The IDA 9.4 DSC loader always loads the cache header while creating the
+    // initial database, so there is no additional request to perform here.
+    if (region_information.type == rt_header) {
+        if (wait_for_analysis)
+            ::auto_wait();
+        return ida::ok();
+    }
+
+    dscu_load_request_t load_request(DLRF_DEFAULT);
+    load_request.add_region(region_information);
+    if (load_request.empty() || !service->load_regions(load_request)) {
+        return std::unexpected(Error::sdk(
+            "IDA 9.4 dscu failed to load the region", hex_address(address)));
+    }
+    if (wait_for_analysis)
+        ::auto_wait();
+    if (!load_request_is_satisfied(*service, load_request)) {
+        return std::unexpected(Error::sdk(
+            "IDA 9.4 dscu reported success but the region is not loaded",
+            hex_address(address)));
+    }
+    return ida::ok();
+#else
     netnode node = dscu_netnode();
     // dscu mode 2 reads the target address from altval key 3.
     node.altset(kKeyRegionAddr, static_cast<uval_t>(address));
@@ -393,20 +592,34 @@ Status load_section(Address address, bool wait_for_analysis) {
             "not belong to any cache region", hex_address(address)));
     }
     return ida::ok();
+#endif
 }
 
 Status load_dyld_header(bool wait_for_analysis) {
     if (auto status = ensure_available(); !status)
         return status;
+#if IDA_SDK_VERSION >= 940
+    // IDA 9.4's dedicated DSC loader creates the formatted header as part of
+    // the initial database. Preserve the API as an idempotent operation.
+    if (wait_for_analysis)
+        ::auto_wait();
+    return ida::ok();
+#else
     if (!run_dscu(kModeLoadHeader, wait_for_analysis)) {
         return std::unexpected(Error::sdk(
             "dscu failed to load the dyld cache header; the initial "
             "auto-analysis must have completed first"));
     }
     return ida::ok();
+#endif
 }
 
 Result<std::size_t> load_branch_islands(bool wait_for_analysis) {
+#if IDA_SDK_VERSION >= 940
+    if (auto status = ensure_available(); !status)
+        return std::unexpected(status.error());
+    return load_all_service_regions(rt_island, wait_for_analysis);
+#else
     if (auto status = ensure_available(); !status)
         return std::unexpected(status.error());
 
@@ -426,21 +639,52 @@ Result<std::size_t> load_branch_islands(bool wait_for_analysis) {
     }
     run_dscu(kModeLoadIsland, wait_for_analysis);  // result ignored — headless reports false
     return static_cast<std::size_t>(pool_count);
+#endif
 }
 
 Result<std::size_t> load_branch_mappings(bool wait_for_analysis) {
+#if IDA_SDK_VERSION >= 940
+    if (auto status = ensure_available(); !status)
+        return std::unexpected(status.error());
+    return load_all_service_regions(rt_mapping, wait_for_analysis);
+#else
     return load_all_regions(kRegionMapping, kTagMapping, kModeLoadMapping,
                             wait_for_analysis);
+#endif
 }
 
 Result<std::size_t> load_global_offset_tables(bool wait_for_analysis) {
+#if IDA_SDK_VERSION >= 940
+    if (auto status = ensure_available(); !status)
+        return std::unexpected(status.error());
+    return load_all_service_regions(rt_got, wait_for_analysis);
+#else
     return load_all_regions(kRegionGot, kTagGot, kModeLoadGot,
                             wait_for_analysis);
+#endif
 }
 
 Result<std::size_t> load_gaps(bool wait_for_analysis) {
+#if IDA_SDK_VERSION >= 940
+    if (auto status = ensure_available(); !status)
+        return std::unexpected(status.error());
+    return load_all_service_regions(rt_unknown, wait_for_analysis);
+#else
     return load_all_regions(kRegionGap, kTagGap, kModeLoadGap,
                             wait_for_analysis);
+#endif
+}
+
+Result<std::size_t> load_cache_data(bool wait_for_analysis) {
+#if IDA_SDK_VERSION >= 940
+    if (auto status = ensure_available(); !status)
+        return std::unexpected(status.error());
+    return load_all_service_regions(rt_cache_data, wait_for_analysis);
+#else
+    static_cast<void>(wait_for_analysis);
+    return std::unexpected(Error::unsupported(
+        "Cache-wide data regions require IDA SDK 9.4 or newer"));
+#endif
 }
 
 }  // namespace ida::dyld_cache

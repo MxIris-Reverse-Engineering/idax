@@ -542,3 +542,13 @@ These are to be referenced as [FXX] in the live knowledge base.
 375. **按 image name 选择首个 dyld cache image 需要独立于 database lifecycle 的 cache-file 枚举：** `IDA_DYLD_CACHE_MODULE` 必须在 `Database.open` 前获得完整 image path，而原有无参数 `list_modules()` 依赖当前 database input path。将现有 header parser 抽成 `list_modules(cache_path)` overload，才能先按 path 最后一个 component 去除 extension 后匹配 name，再设置环境变量并打开 database。
 
 376. **dyld shared cache 中同一个 derived image name 可能对应多个 path：** macOS 26.5.2 cache 的 `SwiftUI` 同时匹配 macOS framework、iOSSupport framework 和 Accessibility bundle。name selector 若直接把多重匹配视为错误，会让常见的 `--image-name SwiftUI` 不可用。稳定行为是保留 cache enumeration order 并选择第一条；需要其他同名 path 时由 `--image-path` 显式消歧。
+
+377. **SwiftPM executable 使用 binary framework target 时不能只复制 executable：** consumer build 产出的 `idax-dyld-cache-database-creator` 通过 `@rpath/CIDAX.framework/CIDAX` 链接，并包含 `@loader_path` rpath。只把 executable 放入 `~/.local/bin` 会丢失 framework runtime dependency。稳定的当前用户安装布局是把 executable 与 `CIDAX.framework` 放在同一个 `libexec` directory，再由 `PATH` 中的 launcher `exec` 真实 executable；这样不需要修改 Mach-O install name、追加 rpath 或重新签名。
+
+378. **IDA 9.4 将 DSC programmatic surface 从 private numeric plugin modes 迁移到 public `dscu_svc_t`：** `dscu.h` 提供 image index/name/address query、`region_info_t`、`dscu_load_request_t`、atomic `load_regions` 与 loaded-state verification。9.4 adaptation 应直接使用该 service，不能继续假设 9.3 reverse-engineered mode numbers 与 netnode tags 在新版保持 contract。
+
+379. **IDA 9.4 SDK CMake entry point 已改变：** 9.3 checkout 通过 root `bootstrap.cmake` 引入 build helpers，而 9.4 checkout 提供 `src/cmake/idasdkConfig.cmake`，不再包含 root bootstrap。IDAX configure 必须先识别 config package layout，并只在存在时 include legacy bootstrap。
+
+380. **Dynamic framework 中 exported IDA data stub 会破坏 IDA 9.4 plugin loading：** `CIDAX.framework` 原先导出的 null `callui` / `dbg` / `under_debugger` 会被 dynamic loader 用来 interpose `_ida_dscu.so` 对 libida globals 的引用，导致 `init_library` 从空 call gateway 跳到 address zero。将这些 stub 标记 hidden 后仍可满足 framework 内部链接，同时 9.4 runtime plugin 会绑定真实 libida symbols，初始化和 DSC open 均恢复正常。
+
+381. **IDA 9.4 新增 `rt_cache_data`，且真实 macOS 26.5.2 cache 会返回多个 region：** public load request 为 cache-wide named data 提供独立 `cache_data` vector 与 `is_cache_data_loaded` verification。真实 AppKit database smoke test 加载 6 个 cache-data regions 并成功保存，因此该类型应作为明确 API/CLI option 暴露，而不是归入 unknown regions。

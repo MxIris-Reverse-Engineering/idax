@@ -17,11 +17,10 @@ import Foundation
 struct DyldCacheIntegrationTests {
 
     @Test func dscuDriverWalkthrough() async throws {
-//        guard let databasePath = ProcessInfo.processInfo.environment["IDAX_TEST_DSC_DATABASE"] else {
-//            print("IDAX_TEST_DSC_DATABASE not set — skipping dyld-cache integration test")
-//            return
-//        }
-        let databasePath = "/Volumes/RE/Dyld-Shared-Cache/macOS/26.5/dyld_shared_cache_arm64e"
+        guard let databasePath = ProcessInfo.processInfo.environment["IDAX_TEST_DSC_DATABASE"] else {
+            print("IDAX_TEST_DSC_DATABASE not set — skipping dyld-cache integration test")
+            return
+        }
 
         guard IDARuntime.isAvailable else {
             print("IDA runtime not available — skipping dyld-cache integration test")

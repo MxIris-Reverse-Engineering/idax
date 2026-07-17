@@ -33,7 +33,7 @@ Current overall phase status:
 - Phase 20: ~75% (real-IDA CI hardening in progress: deterministic installer resolution + macOS `IDADIR` normalization landed; Node example argv contract fixed; Windows Node import-library fallback hardened; workflow now uses Windows-native shells/runtime path propagation for Rust/Node example execution to avoid Git-Bash linker collisions and missing-DLL runtime failures)
 - Phase 21: 100% (example loader port continuation: completed `sep_firmware_loader.cpp` as a full-functionality idax loader port of the Binary Ninja SEP firmware plugin, covering SEP firmware detection, module-table parsing, Mach-O/raw module mapping, shared-library slide handling, header/load-command annotations, firmware type definitions/application, pointer rewrite passes, entry registration, symbol import, and example build/docs wiring)
 - Phase 22: ~99% (ida-cdump parity closure in progress: wait-box UI, multiline text, typed-form C++ bindings/FormBuilder plus fixed-shape Node/Rust typed-form entrypoints, optional Qt clipboard helpers with Node/Rust wrappers and an IDA-compatible `QT_NAMESPACE=QT` build gate, IDB path, portable path helpers, Hex-Rays popup-population events, scoped Hex-Rays ownership, Local Types action-context type references, lvar/prototype metadata helpers, read-only ctree migration helpers, bulk local type declaration import, host-gated runtime harness and runner script including Hex-Rays scoped-session runtime evidence, compact parity probe example, Qt example build bridge, Node native build/runtime validation, and Rust high-level no-run validation are implemented; the updated remaining queue is interactive modal form and Qt clipboard evidence)
-- Phase 23: 100%（Swift dyld shared cache database 命令行工具、显式输出路径保存、binding parity、测试、打包与文档均已完成）
+- Phase 23: 100%（Swift dyld shared cache database 命令行工具、显式输出路径保存、binding parity、测试、打包、安装、IDA 9.4 DSC service adaptation 与文档均已完成）
 
 ### Phase 18 TODO Action Items (Complete)
 
@@ -103,5 +103,7 @@ Current overall phase status:
 - [x] P23.4 Rebuild the committed `CIDAX.xcframework` and validate the command against a real dyld shared cache fixture.
 - [x] P23.5 同步公开文档与分布式 `.agents/` protocol 记录。
 - [x] P23.6 将旧 `--image` 替换为支持列表输入的 `--image-name` / `--image-path`，并新增 database 打开前的 cache image name resolution。
+- [x] P23.7 新增当前用户安装脚本，将 release executable 与 `CIDAX.framework` 一并部署，并提供 `PATH` 内可直接调用的 launcher。
+- [x] P23.8 适配 IDA 9.4 public `dscu_svc_t`、新增 cache-data region loading、保留 IDA 9.3 source compatibility，并重建验证 9.4 `CIDAX.xcframework`。
 
 ---

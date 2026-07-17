@@ -2208,3 +2208,20 @@
   - 16.162.7. XcodeBuildMCP CLI 的 package test 会额外链接无关 development-mode example，并因既有 IDA symbol link contract 失败；按四级回退规则使用 consumer XCFramework 执行 `swift test 2>&1 | xcsift`，19 个 focused test 全部通过且无 warning/error。
   - 16.162.8. 真实 cache 验证发现 `SwiftUI` 同时存在 macOS framework、iOSSupport framework 与 Accessibility bundle 三条同名 path；为保证 `--image-name AppKit SwiftUI SwiftUICore` 可直接使用，name selector 固定选择 cache enumeration order 的第一条，非首条要求使用 `--image-path`。该发现记录为 F376 / 35.34。
   - 16.162.9. 使用真实 cache 解析 `--image-name AppKit SwiftUI SwiftUICore` 并额外传入 AppKit 完整 path；命令到达预期 duplicate-selector guard，证明三个 name 均成功完成批量解析且没有打开或写出 database。
+
+- **16.163. P23 当前用户安装脚本完成**
+  - 16.163.1. 新增 `scripts/install_dyld_cache_database_creator.sh`，固定先执行 `swift package update`，再构建 release product，并将 executable 与 SwiftPM 复制出的 `CIDAX.framework` 一并安装到当前用户目录。
+  - 16.163.2. 安装布局为 `~/.local/libexec/idax-dyld-cache-database-creator/` 保存真实 executable 与同目录 framework，`~/.local/bin/idax-dyld-cache-database-creator` 提供透明 launcher；可用 `IDAX_INSTALLATION_PREFIX` 改写 prefix。
+  - 16.163.3. 若 installation prefix 的 `bin` 尚未进入 `PATH`，脚本会幂等写入 `~/.zshrc`；当前设备已预先包含 `~/.local/bin`，因此没有改写 shell 配置。
+  - 16.163.4. 同步更新 `README.md`、`docs/Tools/DyldCacheDatabaseCreator.md` 与 `agents.md`，公开安装方式和 runtime 布局。
+  - 16.163.5. 验证：XcodeBuildMCP release target build 通过；由于 target-only build 不链接 executable product，按构建回退规则使用 `swift build --configuration release --product idax-dyld-cache-database-creator 2>&1 | xcsift` 完成链接且无 warning/error；installer 真实执行成功；从 `PATH` 解析后的全局命令 `--help` 启动成功；在 `/tmp` 启动并启用 `DYLD_PRINT_LIBRARIES=1`，确认实际加载的是安装目录内的 `CIDAX.framework/CIDAX`，没有依赖 repository `.build`；隔离临时 `HOME` 与自定义 prefix 的首次安装也成功写入 `.zshrc` PATH 配置并启动命令。
+
+- **16.164. P23 IDA 9.4 DSC service adaptation 完成**
+  - 16.164.1. 新建 `codex/ida-9.4-dscu` 分支；以 IDA 9.4 official SDK `dscu.h` 为 contract，在 `IDA_SDK_VERSION >= 940` 路径改用 `dscu_svc_t` 完成 image enumeration/loading、region resolution、atomic load request 与 loaded-state verification，保留 9.3 legacy backend。
+  - 16.164.2. CMake 新增 IDA 9.4 `src/cmake/idasdkConfig.cmake` / `cmake/idasdkConfig.cmake` discovery，同时保留 9.3 `bootstrap.cmake`；使用独立 SDK checkout 验证 9.3 与 9.4 `idax` static library 均构建成功。
+  - 16.164.3. 新增 C++ `load_cache_data`、central C ABI、Swift `DyldCache.loadCacheData` 与 CLI `--load-cache-data`；`--load-unknown-region(s)` 作为 9.4 terminology aliases，既有 `--load-gap(s)` 继续兼容。IDA 9.3 build 对 cache-data operation 返回 Unsupported。
+  - 16.164.4. 定位并修复 9.4 `init_library` address-zero crash：framework exported null `callui` / `dbg` / `under_debugger` interpose `_ida_dscu.so` 的 real libida bindings；将 data stubs 改为 hidden visibility 后最小 dlopen、CLI initialization 与 raw cache open 均通过。
+  - 16.164.5. 使用 IDA SDK 9.4 重建 committed universal arm64+x86_64 `CIDAX.xcframework`；`nm` 显示 `_callui` 为 local symbol。Swift focused creator tests 19/19 通过，full suite 83 tests 在未配置 integration fixture 时通过。
+  - 16.164.6. 真实 macOS 26.5.2 cache validation：一次 database 成功加载 AppKit + SwiftUI 并保存；第二次通过 `--load-cache-data` 加载 6 个 cache-wide data regions 并保存 6.1GB `.i64`。两次结束后 cache source directory 均无残留 `.id0/.id1/.nam/.til` 临时文件。
+  - 16.164.7. 修复 CLI `--output` 指向无 extension 的既有 directory 时会先补 `.i64` 而绕过 directory rejection 的 validation gap，并恢复 DSC integration test 只在 `IDAX_TEST_DSC_DATABASE` 显式提供时执行。
+  - 16.164.8. 同步 README、tool guide、独立 adaptation guide、coverage matrix、API catalog、roadmap、decision、findings 与 knowledge base。

@@ -54,22 +54,24 @@ struct DynamicLinkerSharedCacheDatabaseCreatorTests {
 
     @Test func imageNameListAndAliasesParse() throws {
         let command = try DynamicLinkerSharedCacheDatabaseCreator.parse([
-            "--cache", "/Caches/dyld_shared_cache_arm64e",
+            "--cache", "/dev/null",
             "--image-name", "AppKit", "SwiftUI", "SwiftUICore",
             "--load-got",
-            "--load-gap",
+            "--load-unknown-regions",
+            "--load-cache-data",
             "--skip-final-analysis",
         ])
 
         #expect(command.imageNames == ["AppKit", "SwiftUI", "SwiftUICore"])
         #expect(command.loadGlobalOffsetTables)
         #expect(command.loadGaps)
+        #expect(command.loadCacheData)
         #expect(command.skipFinalAnalysis)
     }
 
     @Test func imagePathListParses() throws {
         let command = try DynamicLinkerSharedCacheDatabaseCreator.parse([
-            "--cache", "/Caches/dyld_shared_cache_arm64e",
+            "--cache", "/dev/null",
             "--image-path",
             "/System/Library/Frameworks/AppKit.framework/Versions/C/AppKit",
             "/usr/lib/libobjc.A.dylib",
@@ -226,9 +228,9 @@ struct DynamicLinkerSharedCacheDatabaseCreatorTests {
     @Test func cacheCannotBeOverwrittenByOutputDatabase() {
         #expect(throws: ValidationError.self) {
             try DynamicLinkerSharedCacheDatabaseCreationPlan(
-                cachePath: "/Caches/dyld_shared_cache_arm64e",
+                cachePath: "/Caches/dyld_shared_cache_arm64e.i64",
                 explicitImagePaths: ["/usr/lib/libobjc.A.dylib"],
-                outputDatabasePath: "/Caches/dyld_shared_cache_arm64e",
+                outputDatabasePath: "/Caches/dyld_shared_cache_arm64e.i64",
                 currentDirectoryPath: "/Work"
             )
         }
@@ -248,12 +250,11 @@ struct DynamicLinkerSharedCacheDatabaseCreatorTests {
         )
         #expect(FileManager.default.createFile(atPath: cacheFileURL.path, contents: Data()))
 
-        var command = try DynamicLinkerSharedCacheDatabaseCreator.parse([
-            "--cache", cacheFileURL.path,
-            "--image-path", "/usr/lib/libobjc.A.dylib",
-            "--output", temporaryDirectoryURL.path,
-            "--overwrite",
-        ])
+        var command = DynamicLinkerSharedCacheDatabaseCreator()
+        command.cachePath = cacheFileURL.path
+        command.explicitImagePaths = ["/usr/lib/libobjc.A.dylib"]
+        command.outputDatabasePath = temporaryDirectoryURL.path
+        command.overwriteExistingOutput = true
 
         #expect(throws: ValidationError.self) {
             try command.validate()
