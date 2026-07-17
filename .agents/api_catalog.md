@@ -178,7 +178,7 @@ This section captures the intended public API semantics at a concrete level so i
 - Module enumeration (`list_modules`) via direct DSC header parsing (old `image_info` + newer `image_text_info` layouts)
 - Pre-open cache-file enumeration (`list_modules(cache_path)`) with Swift `DyldCache.listModules(in:)` parity，用于在 database 打开前解析 image name
 - Single-item loading: `load_module`, `load_section` (auto-detected region kind), `load_dyld_header`
-- Bulk loading: `load_branch_islands`, `load_branch_mappings`, `load_global_offset_tables`, `load_gaps` — netnode pre-population bypasses the GUI chooser so the operations work headless
+- Bulk loading: `load_branch_islands`, `load_branch_mappings`, `load_global_offset_tables`, `load_gaps`, `load_cache_data` — IDA 9.4 uses the public `dscu_svc_t` region service; IDA 9.3 source builds retain the headless legacy dscu backend, and `load_cache_data` reports Unsupported there
 - Companion `ida::plugin` invocation helpers: `is_plugin_available`, `run_plugin` (wrap SDK `find_plugin` / `load_and_run_plugin`)
 
 ---

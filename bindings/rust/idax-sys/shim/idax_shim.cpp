@@ -9015,6 +9015,10 @@ int idax_dyld_cache_load_gaps(int wait_for_analysis, size_t* out) {
     RETURN_RESULT_VALUE(ida::dyld_cache::load_gaps(wait_for_analysis != 0));
 }
 
+int idax_dyld_cache_load_cache_data(int wait_for_analysis, size_t* out) {
+    RETURN_RESULT_VALUE(ida::dyld_cache::load_cache_data(wait_for_analysis != 0));
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Plugin invocation
 // ═══════════════════════════════════════════════════════════════════════════

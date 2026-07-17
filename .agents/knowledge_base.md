@@ -962,3 +962,18 @@ raw cache loader 在 `Database.open` 期间消费 `IDA_DYLD_CACHE_MODULE`，而�
 
 ### 35.34. Derived image name 不是 cache 内的唯一键 [F376]
 按 image path 最后一个 component 去除 extension 得到的 name 可能重复。macOS 26.5.2 cache 中，`SwiftUI` 同时对应主 macOS framework、iOSSupport framework 和 Accessibility bundle。CLI 应保留 `list_modules(cache_path)` 返回顺序并为 `--image-name` 选择第一条，以覆盖最常见的主 cache image；用户需要非首条同名 image 时必须使用完整 `--image-path`。
+
+### 35.35. SwiftPM binary framework executable 的用户级安装布局 [F377]
+SwiftPM consumer build 会把 binary framework target 复制到 release products directory，并让 executable 以 `@rpath/CIDAX.framework/CIDAX` 引用它；当前 product 同时带有 `@loader_path` rpath。因此可移植安装必须保留 executable 与 `CIDAX.framework` 的相对同目录关系。推荐把两者一起部署到 `<prefix>/libexec/idax-dyld-cache-database-creator/`，再从 `<prefix>/bin` 的 launcher 转发参数并 `exec` 真实 executable。该布局比只复制 executable 完整，也避免 `install_name_tool` 修改与后续 ad-hoc signing。
+
+### 35.36. IDA 9.4 DSC 应使用 public service backend [F378]
+IDA 9.4 `dscu.h` 已公开 `get_dscu_svc()`、typed image query、`region_info_t`、`dscu_load_request_t`、atomic `load_regions` 与逐类 loaded-state query。IDAX 应在 `IDA_SDK_VERSION >= 940` 使用这一 supported surface，并用 request 内容与 service query 双重验证成功；9.3 才保留 private netnode/numeric-mode compatibility backend。把 9.3 mode numbers 直接沿用到 9.4 不再是可维护 contract。
+
+### 35.37. IDA SDK 9.3 与 9.4 使用不同 CMake discovery layout [F379]
+9.3 SDK 可通过 checkout root `bootstrap.cmake` 引入 ida-cmake；9.4 SDK 移除该入口并提供 `src/cmake/idasdkConfig.cmake`，unpacked source root 也可能直接暴露 `cmake/idasdkConfig.cmake`。Root configure 应按存在性把 config directory 加入 `CMAKE_PREFIX_PATH`，再由既有 `find_package(idasdk REQUIRED)` 解析；只在 legacy bootstrap 实际存在时 include，才能让一个 source tree 同时支持两代 SDK。
+
+### 35.38. IDA SDK data stub 必须在 dynamic framework 内保持 hidden [F380]
+为 `-undefined dynamic_lookup` framework 提供 null `callui` / `dbg` / `under_debugger` definitions 时，symbol visibility 是 runtime correctness 条件。若这些 symbols exported，IDA 9.4 加载 `_ida_dscu.so` 时可能优先绑定 framework stub 而不是真实 libida global，随后通过 null call gateway 跳到 address zero。使用 hidden visibility 可满足 framework 自身引用但阻止跨-image interposition；验证应检查 `nm` 中 symbol 为 local，并真实执行 `init_library` 与 DSC open。
+
+### 35.39. Cache-wide data 是 IDA 9.4 独立 region 类型 [F381]
+`rt_cache_data` 表示 cache 全局命名数据，例如 linkedit subcache mapping；它拥有独立 request vector 与 loaded-state query，不等同于 `rt_unknown`。C++ `load_cache_data`、Swift `DyldCache.loadCacheData` 与 CLI `--load-cache-data` 应保持该语义。IDA SDK 9.3 没有 supported equivalent，调用应返回 Unsupported。macOS 26.5.2 real-cache validation 加载 6 个 regions 并保存成功。

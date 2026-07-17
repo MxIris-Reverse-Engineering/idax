@@ -2484,6 +2484,7 @@ int idax_dyld_cache_load_branch_islands(int wait_for_analysis, size_t* out);
 int idax_dyld_cache_load_branch_mappings(int wait_for_analysis, size_t* out);
 int idax_dyld_cache_load_global_offset_tables(int wait_for_analysis, size_t* out);
 int idax_dyld_cache_load_gaps(int wait_for_analysis, size_t* out);
+int idax_dyld_cache_load_cache_data(int wait_for_analysis, size_t* out);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Plugin invocation (ida::plugin)

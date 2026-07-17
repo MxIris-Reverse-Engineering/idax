@@ -15,9 +15,15 @@
 #include <stddef.h>
 #include <dlfcn.h>
 
-void *callui = NULL;
-void *dbg = NULL;
-int under_debugger = 0;
+#if defined(__GNUC__)
+#define IDAX_PRIVATE_VISIBILITY __attribute__((visibility("hidden")))
+#else
+#define IDAX_PRIVATE_VISIBILITY
+#endif
+
+IDAX_PRIVATE_VISIBILITY void *callui = NULL;
+IDAX_PRIVATE_VISIBILITY void *dbg = NULL;
+IDAX_PRIVATE_VISIBILITY int under_debugger = 0;
 
 void idax_sync_ida_globals(void) {
     // After init_library() populates IDA's data symbols inside libida.dylib,

@@ -8,19 +8,41 @@ loading, analysis control, and explicit output-path saving.
 ## Requirements
 
 - macOS 13 or newer.
-- IDA Professional with idalib support. The current validated runtime is IDA
-  Professional 9.3.
+- IDA Professional with idalib support. The committed framework and current
+  validated runtime use IDA Professional 9.4.
 - `IDADIR` pointing to the IDA runtime directory when IDA is not discoverable
   automatically.
 
 ```bash
-export IDADIR="/Applications/IDA Professional 9.3.app/Contents/MacOS"
+export IDADIR="/Applications/IDA Professional 9.4.app/Contents/MacOS"
 ```
+
+The C++ source remains build-compatible with IDA SDK 9.3. A distributed
+`CIDAX.xcframework` should be built with the SDK matching the destination IDA
+runtime; it does not bundle IDA or an IDA license. IDA 9.4 builds use the public
+`dscu_svc_t` service, while IDA 9.3 builds retain the legacy dscu compatibility
+backend. Cache-wide data regions are available only in IDA 9.4.
 
 ## Build and run
 
 The executable is a Swift Package product and uses
 [`swift-argument-parser`](https://github.com/apple/swift-argument-parser).
+
+To build and install it for the current user:
+
+```bash
+./scripts/install_dyld_cache_database_creator.sh
+idax-dyld-cache-database-creator --help
+```
+
+By default, the installer places the launcher in `~/.local/bin` and the
+executable plus `CIDAX.framework` in
+`~/.local/libexec/idax-dyld-cache-database-creator`. If `~/.local/bin` is not
+already on `PATH`, the installer adds it to `~/.zshrc` for new terminal
+sessions. Set `IDAX_INSTALLATION_PREFIX` to select a different user-writable
+installation prefix.
+
+For a repository-local build instead:
 
 ```bash
 swift package update
@@ -86,11 +108,12 @@ The tool supports these independent flags:
 
 | Option | Effect |
 |---|---|
-| `--load-dyld-header` | Wait for the required initial analysis, then load and format the dyld cache header. |
+| `--load-dyld-header` | Load and format the dyld cache header on IDA 9.3. IDA 9.4 loads it initially, so this flag is idempotent. |
 | `--load-branch-islands` | Load every branch-island region. |
 | `--load-branch-mappings` | Load every branch-mapping region. |
 | `--load-global-offset-tables`, `--load-got` | Load every global offset table region. |
-| `--load-gaps`, `--load-gap` | Load every gap region. |
+| `--load-unknown-regions`, `--load-unknown-region`, `--load-gaps`, `--load-gap` | Load every covered but unidentified region. IDA 9.3 called these gaps. |
+| `--load-cache-data` | Load every cache-wide named data region, such as linkedit subcache mappings. Requires IDA 9.4. |
 
 Image and optional-region operations enqueue auto-analysis without waiting after
 each call. By default the tool drains the queue once before saving. Use
@@ -110,3 +133,8 @@ closes without a second implicit save.
 The underlying C++ API is `ida::database::save_to`; the same operation is
 available as `Database.save(to:)` in Swift, `database.saveTo` in Node, and
 `database::save_to` in Rust.
+
+IDA 9.4 image and region loading is routed through the supported service from
+`dscu.h`. IDA 9.3 source builds route the same IDAX API through the older dscu
+plugin protocol. See [IDA 9.4 Dyld Cache Adaptation](../IDA94DyldCacheAdaptation.md)
+for the compatibility model and migration notes.

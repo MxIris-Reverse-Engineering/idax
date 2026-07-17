@@ -80,10 +80,18 @@ public struct DynamicLinkerSharedCacheDatabaseCreator: ParsableCommand {
         name: [
             .customLong("load-gaps"),
             .customLong("load-gap"),
+            .customLong("load-unknown-regions"),
+            .customLong("load-unknown-region"),
         ],
-        help: "Load every gap region."
+        help: "Load every unknown region (called a gap by IDA 9.3)."
     )
     var loadGaps = false
+
+    @Flag(
+        name: .customLong("load-cache-data"),
+        help: "Load every cache-wide data region (IDA 9.4 or newer)."
+    )
+    var loadCacheData = false
 
     @Flag(
         name: .customLong("skip-final-analysis"),
@@ -100,6 +108,22 @@ public struct DynamicLinkerSharedCacheDatabaseCreator: ParsableCommand {
     public init() {}
 
     public mutating func validate() throws {
+        if let outputDatabasePath {
+            let explicitOutputURL = DynamicLinkerSharedCacheDatabaseCreationPlan.absoluteFileURL(
+                path: outputDatabasePath,
+                currentDirectoryPath: FileManager.default.currentDirectoryPath
+            )
+            var explicitOutputIsDirectory = ObjCBool(false)
+            if FileManager.default.fileExists(
+                atPath: explicitOutputURL.path,
+                isDirectory: &explicitOutputIsDirectory
+            ), explicitOutputIsDirectory.boolValue {
+                throw ValidationError(
+                    "The output database path is a directory: \(explicitOutputURL.path)"
+                )
+            }
+        }
+
         let creationPlan = try makeCreationPlan()
         var cachePathIsDirectory = ObjCBool(false)
         guard FileManager.default.fileExists(
@@ -214,7 +238,12 @@ public struct DynamicLinkerSharedCacheDatabaseCreator: ParsableCommand {
 
         if loadGaps {
             let loadedRegionCount = try DyldCache.loadGaps(waitForAnalysis: false)
-            print("Loaded gap regions: \(loadedRegionCount)")
+            print("Loaded unknown regions: \(loadedRegionCount)")
+        }
+
+        if loadCacheData {
+            let loadedRegionCount = try DyldCache.loadCacheData(waitForAnalysis: false)
+            print("Loaded cache-wide data regions: \(loadedRegionCount)")
         }
 
         if !skipFinalAnalysis {

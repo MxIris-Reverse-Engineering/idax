@@ -114,16 +114,29 @@ current ida-cdump migration checklist in
 The Swift package includes `idax-dyld-cache-database-creator`, a headless tool
 for creating one IDA database from one or more selected dyld shared cache
 images. It supports optional dyld header, branch-island, branch-mapping, global
-offset table, and gap loading.
+offset table, unknown-region, and cache-wide data loading. The committed
+`CIDAX.xcframework` is built against IDA SDK 9.4.
+
+Build and install it for the current user with:
 
 ```bash
-export IDADIR="/Applications/IDA Professional 9.3.app/Contents/MacOS"
+./scripts/install_dyld_cache_database_creator.sh
+idax-dyld-cache-database-creator --help
+```
 
-swift run idax-dyld-cache-database-creator \
+The installer places a launcher in `~/.local/bin` and keeps the executable with
+its `CIDAX.framework` runtime dependency under `~/.local/libexec`. Set
+`IDAX_INSTALLATION_PREFIX` to use a different user-writable prefix.
+
+```bash
+export IDADIR="/Applications/IDA Professional 9.4.app/Contents/MacOS"
+
+idax-dyld-cache-database-creator \
   --cache /Volumes/DyldSharedCaches/macOS/26.5.2_25F84/dyld_shared_cache_arm64e \
   --image-name AppKit SwiftUI SwiftUICore \
   --load-got \
-  --load-gaps
+  --load-unknown-regions \
+  --load-cache-data
 ```
 
 Images can instead be selected by complete cache paths with `--image-path`.
@@ -131,6 +144,11 @@ Without `--output`, this example writes `AppKit+SwiftUI+SwiftUICore.i64` in the
 current directory. See
 [`docs/Tools/DyldCacheDatabaseCreator.md`](docs/Tools/DyldCacheDatabaseCreator.md)
 for all options and operational details.
+
+The C++ sources continue to build against IDA SDK 9.3 through the legacy dscu
+backend. Rebuild `CIDAX.xcframework` with the SDK matching the target IDA
+runtime when distributing a custom build; cache-wide data regions require IDA
+9.4.
 
 ---
 

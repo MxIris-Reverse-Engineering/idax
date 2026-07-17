@@ -6,8 +6,8 @@
 /// when a database is opened from a dyld shared cache using the "single
 /// module" option. This namespace exposes that plugin's functionality as a
 /// typed, programmatic API: enumerate the cache's modules and load modules,
-/// regions, branch islands, branch mappings, global offset tables, gaps, and
-/// the cache header into the database.
+/// regions, branch islands, branch mappings, global offset tables, unknown
+/// regions, cache-wide data, and the cache header into the database.
 ///
 /// All operations are deterministic and require no GUI interaction — the
 /// "load all" operations bypass IDA's interactive chooser dialogs, so they
@@ -100,7 +100,8 @@ Status load_module(std::string_view module_path,
 /// Load the shared-cache region that contains \p address.
 ///
 /// The region kind — a module section, branch island, branch mapping,
-/// global offset table, or gap — is detected automatically from the
+/// global offset table, unknown region, or cache-wide data region — is
+/// detected automatically from the
 /// address. This is the quickest way to resolve a single reference that
 /// shows up as `MEMORY[0x...]` in the disassembly.
 ///
@@ -138,14 +139,27 @@ Result<std::size_t> load_branch_mappings(bool wait_for_analysis = false);
 /// @return The number of global-offset-table regions loaded.
 Result<std::size_t> load_global_offset_tables(bool wait_for_analysis = false);
 
-/// Load every gap region from the shared cache.
+/// Load every unknown region from the shared cache.
 ///
-/// Gaps are unmapped regions between cache modules; loading them can reveal
-/// data or code that IDA did not map initially.
+/// IDA 9.4 calls these unknown regions: their address ranges are covered by
+/// cache mappings, but their contents are not associated with a known image
+/// or auxiliary region type. The historical `load_gaps` name is preserved for
+/// source compatibility with IDA 9.3.
 ///
 /// @param wait_for_analysis  Drain the auto-analysis queue before returning.
 /// @return The number of gap regions loaded.
 Result<std::size_t> load_gaps(bool wait_for_analysis = false);
+
+/// Load every cache-wide data region from the shared cache.
+///
+/// Cache-wide data regions include named data shared by the cache as a whole,
+/// such as linkedit subcache mappings. This region type was introduced by the
+/// public IDA 9.4 DSC service. Builds made with an older IDA SDK return an
+/// Unsupported error.
+///
+/// @param wait_for_analysis  Drain the auto-analysis queue before returning.
+/// @return The number of cache-wide data regions loaded.
+Result<std::size_t> load_cache_data(bool wait_for_analysis = false);
 
 } // namespace ida::dyld_cache
 

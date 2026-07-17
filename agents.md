@@ -1,7 +1,7 @@
 # agents.md - IDA SDK Intuitive Wrapper Program
 
-Last updated: 2026-07-13
-Status: Implementation substantially complete; release candidate ready；Phase 23 Swift dyld cache database creator 已完成
+Last updated: 2026-07-15
+Status: Implementation substantially complete; release candidate ready；Phase 23 Swift dyld cache database creator、当前用户安装脚本与 IDA 9.4 DSC adaptation 已完成
 Primary goal: Build a fully opaque, highly intuitive, self-explanatory wrapper over the IDA SDK for first-time users while preserving full power for expert workflows.
 
 ---
@@ -125,7 +125,7 @@ Program-level:
 Phase completion estimates:
 - Phase 0-10: All ~100% complete
 - Phase 11: ~100% complete (Abyss port API gap closure — 18 gaps closed, lines/decompiler/ui domains expanded, abyss_port_plugin complete)
-- Phase 23: 100%（Swift dyld shared cache database creator、显式输出路径保存与 Swift/Node/Rust binding parity 已完成）
+- Phase 23: 100%（Swift dyld shared cache database creator、显式输出路径保存、Swift/Node/Rust binding parity、当前用户安装与 IDA 9.4 DSC service adaptation 已完成）
 - See `.agents/roadmap.md` for detailed phase status
 
 Blocker status:

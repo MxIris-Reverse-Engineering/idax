@@ -47,18 +47,30 @@ elseif(EXISTS "${IDASDK_BOOTSTRAP_ROOT}/src/ida-cmake/bootstrap.cmake")
 elseif(EXISTS "${IDASDK_BOOTSTRAP_ROOT}/src/cmake/bootstrap.cmake")
     set(IDASDK_BOOTSTRAP_ROOT "${IDASDK_BOOTSTRAP_ROOT}/src")
     set(IDASDK_BOOTSTRAP_FILE "${IDASDK_BOOTSTRAP_ROOT}/cmake/bootstrap.cmake")
+elseif(EXISTS "${IDASDK_BOOTSTRAP_ROOT}/src/cmake/idasdkConfig.cmake")
+    # IDA SDK 9.4 replaced bootstrap.cmake with a conventional CMake package.
+    set(IDASDK_BOOTSTRAP_ROOT "${IDASDK_BOOTSTRAP_ROOT}/src")
+    list(PREPEND CMAKE_PREFIX_PATH "${IDASDK_BOOTSTRAP_ROOT}/cmake")
+elseif(EXISTS "${IDASDK_BOOTSTRAP_ROOT}/cmake/idasdkConfig.cmake")
+    # Support an unpacked SDK whose include/, lib/, and cmake/ directories are
+    # already located at the environment-provided root.
+    list(PREPEND CMAKE_PREFIX_PATH "${IDASDK_BOOTSTRAP_ROOT}/cmake")
 else()
     message(FATAL_ERROR
-        "Could not find ida-cmake bootstrap under IDASDK='${IDASDK_BOOTSTRAP_ROOT}'.\n"
+        "Could not find the IDA SDK CMake package under IDASDK='${IDASDK_BOOTSTRAP_ROOT}'.\n"
         "Expected one of:\n"
         "  ${IDASDK_BOOTSTRAP_ROOT}/ida-cmake/bootstrap.cmake\n"
         "  ${IDASDK_BOOTSTRAP_ROOT}/cmake/bootstrap.cmake\n"
         "  ${IDASDK_BOOTSTRAP_ROOT}/src/ida-cmake/bootstrap.cmake\n"
-        "  ${IDASDK_BOOTSTRAP_ROOT}/src/cmake/bootstrap.cmake")
+        "  ${IDASDK_BOOTSTRAP_ROOT}/src/cmake/bootstrap.cmake\n"
+        "  ${IDASDK_BOOTSTRAP_ROOT}/cmake/idasdkConfig.cmake\n"
+        "  ${IDASDK_BOOTSTRAP_ROOT}/src/cmake/idasdkConfig.cmake")
 endif()
 
 set(ENV{IDASDK} "${IDASDK_BOOTSTRAP_ROOT}")
-include("${IDASDK_BOOTSTRAP_FILE}")
+if(IDASDK_BOOTSTRAP_FILE)
+    include("${IDASDK_BOOTSTRAP_FILE}")
+endif()
 
 # Set IDABIN to build artifacts in a local idax folder instead of vendored ida-sdk
 if(NOT DEFINED IDABIN)

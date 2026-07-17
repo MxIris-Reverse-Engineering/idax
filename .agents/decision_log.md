@@ -1046,3 +1046,15 @@
   - **19.29.2. Name matching：** `--image-name` 与 cache 内 image path 的最后一个 component 去掉最后一层 extension 后做大小写敏感的精确匹配；未匹配时报错。多个 path 同名时按 cache enumeration order 选择第一条，若要选择其余同名 image 则使用 `--image-path`。
   - **19.29.3. Pre-open resolution：** 新增 `ida::dyld_cache::list_modules(cache_path)`、C ABI `idax_dyld_cache_list_modules_at_path` 与 Swift `DyldCache.listModules(in:)`，在 database 打开前解析首个 image 的完整路径。
   - **19.29.4. Mixed selectors：** 两种 selector 可组合，顺序固定为所有 name 解析结果在前、显式 path 在后；不同 selector 解析到同一 image 时拒绝执行。
+
+- **19.30. 决策 D-DYLD-CACHE-CREATOR-USER-INSTALLATION**：以 `libexec` runtime bundle 加 `bin` launcher 提供当前用户安装
+  - **19.30.1. 安装布局：** 默认 prefix 为 `~/.local`；真实 executable 与 `CIDAX.framework` 放在 `libexec/idax-dyld-cache-database-creator/`，同名 launcher 放在 `bin/`。可通过 `IDAX_INSTALLATION_PREFIX` 选择其他 user-writable prefix。
+  - **19.30.2. Runtime 原因：** executable 通过 `@rpath/CIDAX.framework/CIDAX` 链接，SwiftPM release product 提供 `@loader_path` rpath。保持 executable 与 framework 同目录即可直接加载，避免修改 Mach-O、重新签名或依赖 repository `.build` path。
+  - **19.30.3. Shell 可用性：** installer 验证安装后 launcher 的 `--help`；若 prefix 的 `bin` 不在当前 `PATH`，则幂等加入 `~/.zshrc`，使新 terminal session 可直接调用命令。
+
+- **19.31. 决策 D-IDA-94-DSCU-SERVICE-ADAPTATION**：按编译 SDK 版本选择 DSC backend，并将默认 Swift artifact 迁移到 IDA 9.4
+  - **19.31.1. Backend routing：** `IDA_SDK_VERSION >= 940` 时使用 public `dscu_svc_t` / `dscu_load_request_t` 完成 image enumeration、image load、region lookup 与 atomic region load；IDA SDK 9.3 继续使用既有 private netnode/numeric-mode compatibility backend。
+  - **19.31.2. Region semantics：** 既有 `load_gaps` 在 9.4 映射到 `rt_unknown` 并保留 source compatibility；新增 `load_cache_data` / Swift `loadCacheData` / CLI `--load-cache-data` 暴露 `rt_cache_data`，9.3 build 对该 operation 明确返回 Unsupported。
+  - **19.31.3. Artifact contract：** committed universal `CIDAX.xcframework` 改为使用 IDA SDK 9.4 构建。分发时 framework build SDK 应与目标 IDA runtime generation 匹配；目标为 9.3 时从 source 使用 9.3 SDK 重建。
+  - **19.31.4. Symbol isolation：** Swift framework 为满足内部动态查找而定义的 `callui`、`dbg`、`under_debugger` 必须使用 hidden visibility，避免 exported null stub interpose IDA 9.4 `_ida_dscu.so` 对真实 libida global 的绑定并在 `init_library` 期间崩溃。
+  - **19.31.5. Build discovery：** CMake 同时识别 IDA 9.3 root `bootstrap.cmake` 与 IDA 9.4 `src/cmake/idasdkConfig.cmake` / unpacked `cmake/idasdkConfig.cmake` package layout。
