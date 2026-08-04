@@ -8,13 +8,10 @@ This document shows the complete public API surface organized by namespace, with
 ida::                                     (root: type aliases, error model, options)
  |
  |-- ida::address        Predicates, traversal, range iteration          [1 struct, 1 enum, 2 classes, ~12 free fns]
- |-- ida::data           Read/write/patch/define bytes, patterns         [~30 free fns, 2 templates]
  |-- ida::database       Open/save/close, metadata, snapshots            [1 enum, 6 structs, ~25 free fns]
  |-- ida::path           Portable path splitting and directory checks    [~3 free fns]
  |
- |-- ida::segment        CRUD, properties, permissions                   [1 enum, 1 struct, 3 classes, ~13 free fns]
 |-- ida::function       CRUD, chunks, frames, register variables        [3 structs, 4 classes, ~29 free fns]
- |-- ida::instruction    Decode/create, operands, representation         [1 enum, 2 classes, ~25 free fns]
  |-- ida::data           Read/write/patch/define/custom data, strings   [1 enum, 11 structs, ~60 free fns, 2 templates]
  |-- ida::database       Open/save/close, metadata, snapshots            [1 enum, 6 structs, ~25 free fns]
  |-- ida::path           Portable path splitting and directory checks    [~3 free fns]
@@ -46,17 +43,12 @@ ida::                                     (root: type aliases, error model, opti
  |-- ida::lumina         Lumina pull/push and connection control         [3 enums, 1 struct, ~8 free fns]
  |-- ida::undo           Named restore points and undo/redo state        [5 free fns]
  |
- |-- ida::event          Typed IDB subscriptions, generic routing        [1 enum, 1 struct, 1 class, ~10 free fns]
- |-- ida::plugin         Plugin base, actions, menu/toolbar              [3 structs, 1 class, ~4 free fns]
  |-- ida::event          Typed IDB change snapshots, generic routing     [3 enums, 6 structs, 1 class, ~19 free fns]
  |-- ida::plugin         Plugin base, actions, scoped hotkeys, attachments [5 structs, 2 classes, ~14 free fns]
  |-- ida::loader         Loader base, InputFile, registration macro      [2 structs, 2 classes, ~5 free fns]
  |-- ida::processor      Loadable processor bridge, descriptors, typed analysis/output [9 enums, 9 structs, 2 classes, IDAX_PROCESSOR]
  |
  |-- ida::debugger       Process/thread control, backend routing, request queue, events [2 enums, 5 structs, 1 class, ~42 free fns]
-|-- ida::decompiler     Decompile, pseudocode/microcode, ctree, events/cache/helpers [15 enums, 15 structs, 9 classes, ~12 free fns]
- |-- ida::lines          Tagged text, color spans, address-tag helpers     [1 enum, ~6 free fns, constants]
-|-- ida::ui             Messages, dialogs, wait boxes, widgets/viewers   [1 enum, 5 structs, 3 classes, ~31 free fns]
 |-- ida::decompiler     Decompile, owned/call-analyzed microcode graphs, ctree, events/cache/helpers [16 enums, 19 structs, 9 classes, event/free-fn surface]
  |-- ida::lines          Tagged text plus source-file address mappings     [1 enum, 1 struct, ~9 free fns, constants]
 |-- ida::ui             Messages, dialogs, wait boxes, widgets/viewers   [1 enum, 5 structs, 3 classes, widget/event free-fn surface]
@@ -92,12 +84,7 @@ Defined across `error.hpp`, `address.hpp`, and `core.hpp`:
 | Namespace | Primary Focus | Key Types |
 |-----------|---------------|-----------|
 | `ida::address` | Navigation and predicates | `Range`, `ItemRange`, `Predicate` |
-| `ida::data` | Byte-level access | (free functions only) |
-| `ida::database` | Database lifecycle | `ProcessorId`, `Snapshot`, `RuntimeOptions`, `PluginLoadPolicy`, `CompilerInfo`, `ImportModule`, `ImportSymbol` |
 | `ida::path` | Portable path helpers | (free functions only) |
-| `ida::segment` | Segment management | `Segment`, `Permissions`, `Type` (+ default segment-register seeding helpers) |
-| `ida::function` | Function analysis | `Function`, `StackFrame`, `Chunk` |
-| `ida::instruction` | Instruction decoding | `Instruction`, `Operand`, `OperandType` |
 | `ida::data` | Byte-level, registered custom-data, and string-inventory access | `TypedValue`, `StringListOptions`, `StringLiteral`, `CustomDataTypeId`, `CustomDataFormatId`, owned definitions, copied metadata/item snapshots |
 | `ida::database` | Database lifecycle and normalized target metadata | `ProcessorId`, `ProcessorProfile`, `Snapshot`, `RuntimeOptions`, `PluginLoadPolicy`, `CompilerInfo`, `ImportModule`, `ImportSymbol` |
 | `ida::path` | Portable path helpers | (free functions only) |
@@ -148,9 +135,6 @@ Defined across `error.hpp`, `address.hpp`, and `core.hpp`:
 | Namespace | Primary Focus | Key Types |
 |-----------|---------------|-----------|
 | `ida::debugger` | Debugging | `ProcessState`, `BackendInfo`, `ThreadInfo`, `RegisterInfo`, `AppcallRequest`, `AppcallValue`, `AppcallExecutor`, `ScopedSubscription` |
-| `ida::decompiler` | Decompilation | `ScopedSession`, `DecompiledFunction` (pseudocode+microcode), `LvarSnapshot`, `DecompileFailure`, `MaturityEvent`, `PopulatingPopupEvent`, `MicrocodeOpcode`, `MicrocodeOperandKind`, `MicrocodeOperand`, `MicrocodeInstruction`, `MicrocodeInsertPolicy`, `MicrocodeFunctionRole`, `MicrocodeArgumentFlag`, `MicrocodeValue`, `MicrocodeLocationPart`, `MicrocodeValueLocation`, `MicrocodeRegisterRange`, `MicrocodeMemoryRange`, `MicrocodeCallOptions`, `MicrocodeFilter`, `MicrocodeContext`, `ScopedSubscription`, `ScopedMicrocodeFilter` |
-| `ida::lines` | Tagged text/color utilities | `Color`, `kColorOn`, `kColorOff`, `kColorEsc`, `kColorInv`, `kColorAddr`, `kColorAddrSize` |
-| `ida::ui` | User interface | `Widget`, `Chooser`, `WaitBox`, `Progress`, `FormBuilder`, typed form bindings, `Event`, `ShowWidgetOptions`, `ScopedSubscription` |
 | `ida::decompiler` | Decompilation, semantic persisted comments, pseudocode-switch events, and owned graphs with copied register identities plus destination-modification semantics | `ScopedSession`, `DecompiledFunction` (pseudocode+formatted microcode), `CommentPosition`, `PseudocodeComment`, `LvarSnapshot`, `DecompileFailure`, `MaturityEvent`, `PseudocodeEvent`, `PopulatingPopupEvent`, `MicrocodeOpcode`, `MicrocodeOperandKind`, `MicrocodeOperand`, `MicrocodeInstruction`, `MicrocodeMaturity`, `MicrocodeGenerationOptions`, `MicrocodeFunctionArgument`, `MicrocodeBlock`, `MicrocodeFunction`, `MicrocodeInsertPolicy`, `MicrocodeFunctionRole`, `MicrocodeArgumentFlag`, `MicrocodeValue`, `MicrocodeLocationPart`, `MicrocodeValueLocation`, `MicrocodeRegisterRange`, `MicrocodeMemoryRange`, `MicrocodeCallOptions`, `MicrocodeFilter`, `MicrocodeContext`, `ScopedSubscription`, `ScopedMicrocodeFilter` |
 | `ida::lines` | Tagged text/color plus source mappings | `SourceFile`, `Color`, `kColorOn`, `kColorOff`, `kColorEsc`, `kColorInv`, `kColorAddr`, `kColorAddrSize` |
 | `ida::ui` | User interface and current-widget polling | `Widget`, `Chooser`, `WaitBox`, `Progress`, `FormBuilder`, typed form bindings, `Event`, `ShowWidgetOptions`, `ScopedSubscription` |

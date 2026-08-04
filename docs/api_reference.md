@@ -9,13 +9,8 @@ Public headers:
 | `include/ida/core.hpp` | Shared option structs and cross-cutting type aliases |
 | `include/ida/diagnostics.hpp` | Logging levels, counters, diagnostic message helpers |
 | `include/ida/address.hpp` | Address predicates, item traversal, range iteration, predicate search |
-| `include/ida/data.hpp` | Read/write/patch/define bytes, typed values, string extraction, binary pattern search |
-| `include/ida/database.hpp` | Open/save/close, runtime/plugin policy init options, metadata (input path, IDB path, file type/compiler/imports/processor+ABI/endian), snapshots, file/memory transfer |
 | `include/ida/path.hpp` | Portable path helpers (`basename`, `dirname`, `is_directory`) for plugin-side file/path UI workflows |
-| `include/ida/segment.hpp` | Segment CRUD, properties, permissions, iteration, default segment-register seeding |
 | `include/ida/function.hpp` | Function CRUD, chunks, frames, register variables, callers/callees, outlined-flag helpers, prototype export/application |
-| `include/ida/instruction.hpp` | Decode/create, operand access + structured operand metadata (`byte_width`, `register_name`, `register_category`, `is_read`, `is_written`), representation controls (including struct-offset helpers), xref conveniences |
-| `include/ida/name.hpp` | Set/get/force/remove names, demangling, resolution, properties |
 | `include/ida/data.hpp` | Read/write/patch/define bytes, typed values, owned custom type/format lifecycle and creation, configurable copied string-list inventory, binary pattern search |
 | `include/ida/database.hpp` | Open/save/close, runtime/plugin policy init options, metadata (input path, IDB path, file type/compiler/imports, raw/verified processor identity, normalized processor profile), snapshots, file/memory transfer |
 | `include/ida/path.hpp` | Portable path helpers (`basename`, `dirname`, `is_directory`) for plugin-side file/path UI workflows |
@@ -33,18 +28,13 @@ Public headers:
 | `include/ida/problem.hpp` | Typed analysis-problem kinds, copied optional descriptions, ordered lookup, names, recording, removal, and presence |
 | `include/ida/exception.hpp` | Opaque architecture-independent C++/SEH regions with fragmented ranges, semantic handlers, membership, and mutation |
 | `include/ida/lumina.hpp` | Lumina connection helpers and metadata pull/push wrappers |
-| `include/ida/type.hpp` | Type construction, structs/unions/members, apply/retrieve, bulk declaration import/rendering, dependency-ordered declaration snapshots, used-member trimming, DOT type graph rendering, type libraries (`ensure_named_type`, import/apply named helpers) |
 | `include/ida/entry.hpp` | Entry point enumeration, add/rename, forwarders |
 | `include/ida/fixup.hpp` | Fixup descriptors, traversal, custom fixup handlers |
-| `include/ida/plugin.hpp` | Plugin base class, action registration, menu/toolbar/popup attachment, action-context host bridges, Local Types `TypeRef` snapshots |
 | `include/ida/loader.hpp` | Loader base class, InputFile abstraction, registration macro |
 | `include/ida/processor.hpp` | Processor base class, typed analysis details, tokenized output context, switch detection |
 | `include/ida/debugger.hpp` | Process lifecycle, backend discovery/selection, breakpoints, memory, registers, appcall/executor APIs, typed event subscriptions |
-| `include/ida/ui.hpp` | Messages, dialogs (`ask_text`, markup-only and typed `ask_form`, `FormBuilder`; fixed-shape Node/Rust typed-form entrypoints for audited dialog packs), optional Qt clipboard helpers (`IDAX_ENABLE_QT_CLIPBOARD` plus IDA-compatible `QT_NAMESPACE=QT` Qt), wait-box progress UI, choosers, timers, UI event subscriptions, popup-ready attachment helpers for dynamic and already-registered actions |
 | `include/ida/graph.hpp` | Graph objects, node/edge CRUD, flow charts, basic blocks, switch-table metadata |
 | `include/ida/event.hpp` | Typed IDB subscriptions, generic filtering/routing, RAII guards |
-| `include/ida/decompiler.hpp` | Decompile (with structured failure details), referenced-type collection (`collect_referenced_types`), scoped Hex-Rays ownership (`initialize`, `ScopedSession`), pseudocode/microcode extraction, maturity/pseudocode/popup subscriptions (`on_populating_popup`), cache-dirty helpers, typed decompiler-view sessions (`DecompilerView`, `view_from_host`, `view_for_function`, `current_view`), read-only ctree helpers (`ExpressionView::helper_name`, `type_declaration`, `type_byte_width`, `pointed_type_byte_width`, `member_name`, `third`, `is_assignment_lhs`, parent-chain snapshots, stable `LocalVariable::index` and direct variable lookup), lvar user-settings snapshots, serializable lvar user settings (`LocalVariableUserSetting`, `saved_user_lvar_settings`, `apply_user_lvar_setting`), variable comment writeback, microcode-filter registration, typed instruction/operand emission (including nested/block/local-variable forms), policy-aware low-level emits, microblock lifecycle helpers (`block_instruction_count`, `has_instruction_at_index`, `remove_instruction_at_index`, tracked last-emitted query/remove), microcode introspection (`instruction`, `instruction_at_index`, `last_emitted_instruction`), typed helper-call builders (register/operand/micro-operand destinations), and advanced call-shaping/location hints (calling convention, role, return location/type, register-list + visible-memory controls). |
-| `include/ida/lines.hpp` | Tagged text/color helpers (`colstr`, `tag_remove`, `tag_advance`, `tag_strlen`, address-tag encode/decode) used by decompiler/listing filters |
 | `include/ida/undo.hpp` | Opaque named restore points, copied optional action labels, and undo/redo execution |
 | `include/ida/type.hpp` | Type construction, copied pointer details and metadata-preserving shifted-parent copies, explicit forward-declaration classification and ordinal-preserving complete-UDT replacement, structs/unions/members, opaque exact-member persistent informational-reference ensure/readback, metadata-preserving function-argument and return replacement, apply/retrieve, bulk declaration import/rendering, dependency-ordered declaration snapshots, used-member trimming, DOT type graph rendering, type libraries (`ensure_named_type`, import/apply named helpers) |
 | `include/ida/parser.hpp` | Third-party source-parser selection by name/language, copied identity and options, arguments, source/file ingestion, and semantic parse reports/options |

@@ -1,8 +1,7 @@
 # agents.md - IDA SDK Intuitive Wrapper Program
 
 Last updated: 2026-07-15
-Status: Implementation substantially complete; release candidate ready；Phase 23 Swift dyld cache database creator、当前用户安装脚本与 IDA 9.4 DSC adaptation 已完成
-Status: Implementation substantially complete; 27/27 native CTest targets passing; release candidate ready
+Status: Implementation substantially complete; release candidate ready. Merged with upstream 2026-08-04 (42/42 CTest targets passing). Swift bindings, the dyld cache database creator, and the IDA 9.4 DSC adaptation are done.
 Primary goal: Build a fully opaque, highly intuitive, self-explanatory wrapper over the IDA SDK for first-time users while preserving full power for expert workflows.
 
 ---
