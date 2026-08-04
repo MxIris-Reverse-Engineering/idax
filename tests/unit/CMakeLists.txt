@@ -10,6 +10,34 @@ add_test(NAME idax_unit_test COMMAND idax_unit_test)
 # Validates that every public namespace and type in the architecture
 # blueprint is present and compilable. The test is a compile-only check:
 # if it compiles, the API surface contract is satisfied.
+file(READ "${PROJECT_SOURCE_DIR}/include/ida/idax.hpp" IDAX_UMBRELLA_SOURCE)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/api_surface_parity_test.cpp"
+    IDAX_API_SURFACE_SOURCE)
+string(REGEX MATCHALL "#include <ida/[a-z_]+\\.hpp>"
+    IDAX_UMBRELLA_INCLUDES "${IDAX_UMBRELLA_SOURCE}")
+list(LENGTH IDAX_UMBRELLA_INCLUDES IDAX_UMBRELLA_INCLUDE_COUNT)
+if(NOT IDAX_UMBRELLA_INCLUDE_COUNT EQUAL 40)
+    message(FATAL_ERROR
+        "API surface inventory expected 40 authoritative umbrella includes; "
+        "found ${IDAX_UMBRELLA_INCLUDE_COUNT}. Update the parity inventory.")
+endif()
+foreach(IDAX_UMBRELLA_INCLUDE IN LISTS IDAX_UMBRELLA_INCLUDES)
+    string(REGEX REPLACE "#include <ida/([a-z_]+)\\.hpp>" "\\1"
+        IDAX_UMBRELLA_DOMAIN "${IDAX_UMBRELLA_INCLUDE}")
+    if(IDAX_UMBRELLA_DOMAIN STREQUAL "error")
+        set(IDAX_REQUIRED_SURFACE_PROBE "void check_error_categories() {")
+    else()
+        set(IDAX_REQUIRED_SURFACE_PROBE
+            "void check_${IDAX_UMBRELLA_DOMAIN}_surface() {")
+    endif()
+    string(FIND "${IDAX_API_SURFACE_SOURCE}"
+        "${IDAX_REQUIRED_SURFACE_PROBE}" IDAX_SURFACE_PROBE_OFFSET)
+    if(IDAX_SURFACE_PROBE_OFFSET EQUAL -1)
+        message(FATAL_ERROR
+            "API surface inventory has no probe for ida::${IDAX_UMBRELLA_DOMAIN}")
+    endif()
+endforeach()
+
 add_library(idax_api_surface_check OBJECT api_surface_parity_test.cpp)
 target_link_libraries(idax_api_surface_check PRIVATE idax::idax)
 
@@ -40,3 +68,17 @@ add_test(NAME diagnostics_torture COMMAND idax_diagnostics_torture_test)
 add_executable(idax_core_options_torture_test core_options_torture_test.cpp)
 target_link_libraries(idax_core_options_torture_test PRIVATE idax::idax)
 add_test(NAME core_options_torture COMMAND idax_core_options_torture_test)
+
+# Diaphora exact manifest/MD5/matching parity test (offline).
+add_executable(idax_diaphora_exact_core_test diaphora_exact_core_test.cpp)
+target_link_libraries(idax_diaphora_exact_core_test PRIVATE idax::idax)
+add_test(NAME diaphora_exact_core COMMAND idax_diaphora_exact_core_test)
+
+# SDK-private procmod payload validation (offline; no IDA runtime required).
+add_executable(idax_processor_bridge_validation_test
+    processor_bridge_validation_test.cpp)
+target_link_libraries(idax_processor_bridge_validation_test PRIVATE idax::idax)
+target_include_directories(idax_processor_bridge_validation_test
+    PRIVATE "${PROJECT_SOURCE_DIR}/src")
+add_test(NAME processor_bridge_validation
+    COMMAND idax_processor_bridge_validation_test)

@@ -33,17 +33,169 @@ Result<Instruction> from_raw_insn(const void* raw_insn);
 
 namespace ida::decompiler {
 
+const CommentPosition CommentPosition::Default{
+    CommentPositionKind::Default, 0};
+const CommentPosition CommentPosition::ParenthesisOpen{
+    CommentPositionKind::ParenthesisOpen, 0};
+const CommentPosition CommentPosition::Assembly{
+    CommentPositionKind::Assembly, 0};
+const CommentPosition CommentPosition::ElseLine{
+    CommentPositionKind::ElseLine, 0};
+const CommentPosition CommentPosition::DoLine{
+    CommentPositionKind::DoLine, 0};
+const CommentPosition CommentPosition::Semicolon{
+    CommentPositionKind::Semicolon, 0};
+const CommentPosition CommentPosition::OpenBrace{
+    CommentPositionKind::OpenBrace, 0};
+const CommentPosition CommentPosition::CloseBrace{
+    CommentPositionKind::CloseBrace, 0};
+const CommentPosition CommentPosition::ParenthesisClose{
+    CommentPositionKind::ParenthesisClose, 0};
+const CommentPosition CommentPosition::LabelColon{
+    CommentPositionKind::LabelColon, 0};
+const CommentPosition CommentPosition::BlockBefore{
+    CommentPositionKind::BlockBefore, 0};
+const CommentPosition CommentPosition::BlockAfter{
+    CommentPositionKind::BlockAfter, 0};
+const CommentPosition CommentPosition::TryLine{
+    CommentPositionKind::TryLine, 0};
+
+Result<CommentPosition> CommentPosition::argument(std::size_t zero_based_index) {
+    if (zero_based_index >= 64) {
+        return std::unexpected(Error::validation(
+            "Pseudocode comment argument index must be in [0, 63]"));
+    }
+    return CommentPosition(CommentPositionKind::Argument,
+                           static_cast<std::int64_t>(zero_based_index));
+}
+
+Result<CommentPosition> CommentPosition::switch_case(std::int64_t value) {
+    constexpr std::int64_t kMaximumMagnitude = 0x1fffffff;
+    if (value < -kMaximumMagnitude || value > kMaximumMagnitude) {
+        return std::unexpected(Error::validation(
+            "Pseudocode switch-case comment value exceeds the supported range"));
+    }
+    return CommentPosition(CommentPositionKind::SwitchCase, value);
+}
+
+std::optional<std::size_t> CommentPosition::argument_index() const noexcept {
+    if (kind_ != CommentPositionKind::Argument)
+        return std::nullopt;
+    return static_cast<std::size_t>(detail_);
+}
+
+std::optional<std::int64_t> CommentPosition::switch_case_value() const noexcept {
+    if (kind_ != CommentPositionKind::SwitchCase)
+        return std::nullopt;
+    return detail_;
+}
+
 // ── Availability ────────────────────────────────────────────────────────
 
 static bool s_hexrays_initialized = false;
 
 namespace {
 
+Result<item_preciser_t> to_sdk_comment_position(const CommentPosition& position) {
+    switch (position.kind()) {
+    case CommentPositionKind::Default: return ITP_EMPTY;
+    case CommentPositionKind::ParenthesisOpen: return ITP_BRACE1;
+    case CommentPositionKind::Assembly: return ITP_ASM;
+    case CommentPositionKind::ElseLine: return ITP_ELSE;
+    case CommentPositionKind::DoLine: return ITP_DO;
+    case CommentPositionKind::Semicolon: return ITP_SEMI;
+    case CommentPositionKind::OpenBrace: return ITP_CURLY1;
+    case CommentPositionKind::CloseBrace: return ITP_CURLY2;
+    case CommentPositionKind::ParenthesisClose: return ITP_BRACE2;
+    case CommentPositionKind::LabelColon: return ITP_COLON;
+    case CommentPositionKind::BlockBefore: return ITP_BLOCK1;
+    case CommentPositionKind::BlockAfter: return ITP_BLOCK2;
+    case CommentPositionKind::TryLine: return ITP_TRY;
+    case CommentPositionKind::Argument: {
+        const auto index = position.argument_index();
+        if (!index || *index >= 64)
+            return std::unexpected(Error::validation(
+                "Invalid pseudocode comment argument location"));
+        return static_cast<item_preciser_t>(
+            static_cast<int>(ITP_ARG1) + static_cast<int>(*index));
+    }
+    case CommentPositionKind::SwitchCase: {
+        const auto value = position.switch_case_value();
+        constexpr std::int64_t kMaximumMagnitude = 0x1fffffff;
+        if (!value || *value < -kMaximumMagnitude || *value > kMaximumMagnitude)
+            return std::unexpected(Error::validation(
+                "Invalid pseudocode switch-case comment location"));
+        const auto magnitude = static_cast<unsigned>(
+            *value < 0 ? -*value : *value);
+        unsigned encoded = static_cast<unsigned>(ITP_CASE) | magnitude;
+        if (*value < 0)
+            encoded |= static_cast<unsigned>(ITP_SIGN);
+        return static_cast<item_preciser_t>(encoded);
+    }
+    }
+    return std::unexpected(Error::internal("Unknown pseudocode comment position kind"));
+}
+
+Result<CommentPosition> from_sdk_comment_position(item_preciser_t raw) {
+    const int value = static_cast<int>(raw);
+    if (value >= static_cast<int>(ITP_ARG1)
+        && value <= static_cast<int>(ITP_ARG64)) {
+        return CommentPosition::argument(
+            static_cast<std::size_t>(value - static_cast<int>(ITP_ARG1)));
+    }
+    switch (raw) {
+    case ITP_EMPTY: return CommentPosition::Default;
+    case ITP_BRACE1: return CommentPosition::ParenthesisOpen;
+    case ITP_ASM: return CommentPosition::Assembly;
+    case ITP_ELSE: return CommentPosition::ElseLine;
+    case ITP_DO: return CommentPosition::DoLine;
+    case ITP_SEMI: return CommentPosition::Semicolon;
+    case ITP_CURLY1: return CommentPosition::OpenBrace;
+    case ITP_CURLY2: return CommentPosition::CloseBrace;
+    case ITP_BRACE2: return CommentPosition::ParenthesisClose;
+    case ITP_COLON: return CommentPosition::LabelColon;
+    case ITP_BLOCK1: return CommentPosition::BlockBefore;
+    case ITP_BLOCK2: return CommentPosition::BlockAfter;
+    case ITP_TRY: return CommentPosition::TryLine;
+    default: break;
+    }
+
+    const unsigned encoded = static_cast<unsigned>(value);
+    if ((encoded & 0x80000000U) == 0
+        && (encoded & static_cast<unsigned>(ITP_CASE)) != 0) {
+        constexpr unsigned kMagnitudeMask = 0x1fffffffU;
+        const unsigned magnitude = encoded & kMagnitudeMask;
+        const bool negative = (encoded & static_cast<unsigned>(ITP_SIGN)) != 0;
+        if (negative && magnitude == 0) {
+            return std::unexpected(Error::unsupported(
+                "Negative-zero switch-case comment location is not representable"));
+        }
+        const std::int64_t case_value = negative
+            ? -static_cast<std::int64_t>(magnitude)
+            : static_cast<std::int64_t>(magnitude);
+        return CommentPosition::switch_case(case_value);
+    }
+    return std::unexpected(Error::unsupported(
+        "Unknown persisted pseudocode comment location",
+        std::to_string(value)));
+}
+
+std::pair<unsigned, std::int64_t> comment_position_sort_key(
+    const CommentPosition& position) {
+    std::int64_t detail = 0;
+    if (const auto index = position.argument_index())
+        detail = static_cast<std::int64_t>(*index);
+    else if (const auto value = position.switch_case_value())
+        detail = *value;
+    return {static_cast<unsigned>(position.kind()), detail};
+}
+
 std::mutex g_hexrays_lifecycle_mutex;
 std::size_t g_scoped_session_count = 0;
 std::mutex g_subscription_mutex;
 std::unordered_map<Token, std::function<void(const MaturityEvent&)>> g_maturity_callbacks;
 std::unordered_map<Token, std::function<void(const PseudocodeEvent&)>> g_func_printed_callbacks;
+std::unordered_map<Token, std::function<void(const PseudocodeEvent&)>> g_switch_pseudocode_callbacks;
 std::unordered_map<Token, std::function<void(const PseudocodeEvent&)>> g_refresh_pseudocode_callbacks;
 std::unordered_map<Token, std::function<void(const CursorPositionEvent&)>> g_curpos_callbacks;
 std::unordered_map<Token, std::function<HintResult(const HintRequestEvent&)>> g_create_hint_callbacks;
@@ -55,6 +207,7 @@ bool g_hexrays_callback_installed = false;
 bool all_callbacks_empty_locked() {
     return g_maturity_callbacks.empty()
         && g_func_printed_callbacks.empty()
+        && g_switch_pseudocode_callbacks.empty()
         && g_refresh_pseudocode_callbacks.empty()
         && g_curpos_callbacks.empty()
         && g_create_hint_callbacks.empty()
@@ -84,6 +237,11 @@ bool erase_from_any_map_locked(Token token) {
     }
     if (auto it = g_func_printed_callbacks.find(token); it != g_func_printed_callbacks.end()) {
         g_func_printed_callbacks.erase(it);
+        return true;
+    }
+    if (auto it = g_switch_pseudocode_callbacks.find(token);
+        it != g_switch_pseudocode_callbacks.end()) {
+        g_switch_pseudocode_callbacks.erase(it);
         return true;
     }
     if (auto it = g_refresh_pseudocode_callbacks.find(token); it != g_refresh_pseudocode_callbacks.end()) {
@@ -344,6 +502,15 @@ Result<mcode_t> to_sdk_opcode(MicrocodeOpcode opcode) {
         case MicrocodeOpcode::FloatDiv:       return m_fdiv;
         case MicrocodeOpcode::IntegerToFloat: return m_i2f;
         case MicrocodeOpcode::FloatToFloat:   return m_f2f;
+        case MicrocodeOpcode::SignedExtend:   return m_xds;
+        case MicrocodeOpcode::Call:
+        case MicrocodeOpcode::IndirectCall:
+        case MicrocodeOpcode::Goto:
+        case MicrocodeOpcode::IndirectJump:
+        case MicrocodeOpcode::Return:
+        case MicrocodeOpcode::Other:
+            return std::unexpected(Error::unsupported(
+                "Microcode opcode is read-only in the generic emitter"));
     }
     return std::unexpected(Error::validation("Unsupported microcode opcode"));
 }
@@ -372,7 +539,13 @@ Result<MicrocodeOpcode> parse_sdk_opcode(mcode_t op) {
         case m_fdiv: return MicrocodeOpcode::FloatDiv;
         case m_i2f: return MicrocodeOpcode::IntegerToFloat;
         case m_f2f: return MicrocodeOpcode::FloatToFloat;
-        default: return std::unexpected(Error::unsupported("Unsupported SDK opcode", std::to_string(op)));
+        case m_xds: return MicrocodeOpcode::SignedExtend;
+        case m_call: return MicrocodeOpcode::Call;
+        case m_icall: return MicrocodeOpcode::IndirectCall;
+        case m_goto: return MicrocodeOpcode::Goto;
+        case m_ijmp: return MicrocodeOpcode::IndirectJump;
+        case m_ret: return MicrocodeOpcode::Return;
+        default: return MicrocodeOpcode::Other;
     }
 }
 
@@ -382,6 +555,9 @@ Result<MicrocodeOperand> parse_sdk_operand(const mop_t& mop) {
     MicrocodeOperand result;
     result.byte_width = mop.size;
     if (mop.is_udt()) result.mark_user_defined_type = true;
+    qstring operand_text;
+    mop.print(&operand_text, SHINS_SHORT | SHINS_VALNUM);
+    result.text = ida::detail::to_string(operand_text);
 
     switch (mop.t) {
         case mop_z:
@@ -390,6 +566,7 @@ Result<MicrocodeOperand> parse_sdk_operand(const mop_t& mop) {
         case mop_r:
             result.kind = MicrocodeOperandKind::Register;
             result.register_id = mop.r;
+            result.processor_register_id = mreg2reg(mop.r, mop.size);
             break;
         case mop_n:
             result.kind = MicrocodeOperandKind::UnsignedImmediate;
@@ -441,8 +618,38 @@ Result<MicrocodeOperand> parse_sdk_operand(const mop_t& mop) {
                 return std::unexpected(Error::unsupported("Unsupported register pair format"));
             }
             break;
+        case mop_a:
+            result.kind = MicrocodeOperandKind::AddressReference;
+            if (mop.a != nullptr) {
+                auto referenced = parse_sdk_operand(static_cast<const mop_t&>(*mop.a));
+                if (!referenced) return std::unexpected(referenced.error());
+                result.referenced_operand =
+                    std::make_shared<MicrocodeOperand>(std::move(*referenced));
+            }
+            break;
+        case mop_f:
+            result.kind = MicrocodeOperandKind::CallArguments;
+            if (mop.f != nullptr) {
+                result.call_target = mop.f->callee == BADADDR
+                    ? BadAddress
+                    : static_cast<Address>(mop.f->callee);
+                result.call_arguments.reserve(mop.f->args.size());
+                for (const auto& argument : mop.f->args) {
+                    auto parsed = parse_sdk_operand(static_cast<const mop_t&>(argument));
+                    if (!parsed) return std::unexpected(parsed.error());
+                    result.call_arguments.push_back(std::move(*parsed));
+                }
+            }
+            break;
+        case mop_str:
+            result.kind = MicrocodeOperandKind::StringConstant;
+            break;
+        case mop_fn:
+            result.kind = MicrocodeOperandKind::FloatingPointConstant;
+            break;
         default:
-            return std::unexpected(Error::unsupported("Unsupported SDK micro-operand type", std::to_string(mop.t)));
+            result.kind = MicrocodeOperandKind::Other;
+            break;
     }
     return result;
 }
@@ -467,6 +674,90 @@ Result<MicrocodeInstruction> parse_sdk_instruction(const minsn_t* minsn) {
     result.destination = *dest_res;
 
     result.floating_point_instruction = minsn->is_fpinsn();
+    result.modifies_destination = minsn->modifies_d();
+    result.address = minsn->ea == BADADDR
+        ? BadAddress
+        : static_cast<Address>(minsn->ea);
+    qstring instruction_text;
+    minsn->print(&instruction_text, SHINS_SHORT | SHINS_VALNUM);
+    result.text = ida::detail::to_string(instruction_text);
+    return result;
+}
+
+Result<mba_maturity_t> to_sdk_microcode_maturity(MicrocodeMaturity maturity) {
+    switch (maturity) {
+        case MicrocodeMaturity::Generated: return MMAT_GENERATED;
+        case MicrocodeMaturity::Preoptimized: return MMAT_PREOPTIMIZED;
+        case MicrocodeMaturity::LocallyOptimized: return MMAT_LOCOPT;
+        case MicrocodeMaturity::CallsAnalyzed: return MMAT_CALLS;
+        case MicrocodeMaturity::GloballyOptimized1: return MMAT_GLBOPT1;
+        case MicrocodeMaturity::GloballyOptimized2: return MMAT_GLBOPT2;
+        case MicrocodeMaturity::GloballyOptimized3: return MMAT_GLBOPT3;
+        case MicrocodeMaturity::LocalVariables: return MMAT_LVARS;
+    }
+    return std::unexpected(Error::validation("Invalid microcode maturity"));
+}
+
+MicrocodeMaturity from_sdk_microcode_maturity(mba_maturity_t maturity) {
+    switch (maturity) {
+        case MMAT_PREOPTIMIZED: return MicrocodeMaturity::Preoptimized;
+        case MMAT_LOCOPT: return MicrocodeMaturity::LocallyOptimized;
+        case MMAT_CALLS: return MicrocodeMaturity::CallsAnalyzed;
+        case MMAT_GLBOPT1: return MicrocodeMaturity::GloballyOptimized1;
+        case MMAT_GLBOPT2: return MicrocodeMaturity::GloballyOptimized2;
+        case MMAT_GLBOPT3: return MicrocodeMaturity::GloballyOptimized3;
+        case MMAT_LVARS: return MicrocodeMaturity::LocalVariables;
+        case MMAT_ZERO:
+        case MMAT_GENERATED:
+        default: return MicrocodeMaturity::Generated;
+    }
+}
+
+MicrocodeValueLocation copy_microcode_location(const argloc_t& location) {
+    MicrocodeValueLocation result;
+    if (location.is_reg1()) {
+        result.kind = location.regoff() == 0
+            ? MicrocodeValueLocationKind::Register
+            : MicrocodeValueLocationKind::RegisterWithOffset;
+        result.register_id = location.reg1();
+        result.register_offset = location.regoff();
+    } else if (location.is_reg2()) {
+        result.kind = MicrocodeValueLocationKind::RegisterPair;
+        result.register_id = location.reg1();
+        result.second_register_id = location.reg2();
+    } else if (location.is_stkoff()) {
+        result.kind = MicrocodeValueLocationKind::StackOffset;
+        result.stack_offset = static_cast<std::int64_t>(location.stkoff());
+    } else if (location.is_ea()) {
+        result.kind = MicrocodeValueLocationKind::StaticAddress;
+        result.static_address = static_cast<Address>(location.get_ea());
+    } else if (location.is_rrel()) {
+        result.kind = MicrocodeValueLocationKind::RegisterRelative;
+        result.register_id = location.get_rrel().reg;
+        result.register_relative_offset =
+            static_cast<std::int64_t>(location.get_rrel().off);
+    } else if (location.is_scattered()) {
+        result.kind = MicrocodeValueLocationKind::Scattered;
+        result.scattered_parts.reserve(location.scattered().size());
+        for (const auto& source_part : location.scattered()) {
+            const auto copied = copy_microcode_location(source_part);
+            MicrocodeLocationPart part;
+            part.kind = copied.kind;
+            part.register_id = copied.register_id;
+            part.second_register_id = copied.second_register_id;
+            part.register_offset = copied.register_offset;
+            part.register_relative_offset = copied.register_relative_offset;
+            part.stack_offset = copied.stack_offset;
+            part.static_address = copied.static_address;
+            part.byte_offset = source_part.bad_offset()
+                ? -1
+                : static_cast<int>(source_part.off);
+            part.byte_size = source_part.bad_size()
+                ? 0
+                : static_cast<int>(source_part.size);
+            result.scattered_parts.push_back(std::move(part));
+        }
+    }
     return result;
 }
 
@@ -688,6 +979,15 @@ Result<mop_t> build_typed_instruction_operand(const MicrocodeOperand& operand,
                                instruction_address,
                                0);
             break;
+
+        case MicrocodeOperandKind::AddressReference:
+        case MicrocodeOperandKind::CallArguments:
+        case MicrocodeOperandKind::StringConstant:
+        case MicrocodeOperandKind::FloatingPointConstant:
+        case MicrocodeOperandKind::Other:
+            return std::unexpected(Error::unsupported(
+                "Microcode operand kind is read-only in the generic emitter",
+                std::string(role)));
     }
 
     if (operand.mark_user_defined_type)
@@ -2032,6 +2332,27 @@ ssize_t idaapi hexrays_event_bridge(void*, hexrays_event_t event, va_list va) {
         return 0;
     }
 
+    case hxe_switch_pseudocode: {
+        vdui_t* vu = va_arg(va, vdui_t*);
+
+        PseudocodeEvent evt;
+        if (vu != nullptr && vu->cfunc != nullptr) {
+            evt.function_address = static_cast<Address>(vu->cfunc->entry_ea);
+            evt.cfunc_handle = static_cast<void*>(&*vu->cfunc);
+        }
+
+        std::vector<std::function<void(const PseudocodeEvent&)>> callbacks;
+        {
+            std::lock_guard<std::mutex> lock(g_subscription_mutex);
+            callbacks.reserve(g_switch_pseudocode_callbacks.size());
+            for (const auto& [_, cb] : g_switch_pseudocode_callbacks)
+                callbacks.push_back(cb);
+        }
+        for (const auto& cb : callbacks)
+            cb(evt);
+        return 0;
+    }
+
     case hxe_curpos: {
         vdui_t* vu = va_arg(va, vdui_t*);
 
@@ -2228,6 +2549,24 @@ Result<Token> on_refresh_pseudocode(std::function<void(const PseudocodeEvent&)> 
 
     const Token token = g_next_token.fetch_add(1, std::memory_order_relaxed);
     g_refresh_pseudocode_callbacks.emplace(token, std::move(callback));
+    return token;
+}
+
+Result<Token> on_switch_pseudocode(std::function<void(const PseudocodeEvent&)> callback) {
+    if (!callback)
+        return std::unexpected(Error::validation("switch_pseudocode callback cannot be empty"));
+
+    auto st = ensure_hexrays();
+    if (!st)
+        return std::unexpected(st.error());
+
+    std::lock_guard<std::mutex> lock(g_subscription_mutex);
+    st = ensure_callback_installed_locked();
+    if (!st)
+        return std::unexpected(st.error());
+
+    const Token token = g_next_token.fetch_add(1, std::memory_order_relaxed);
+    g_switch_pseudocode_callbacks.emplace(token, std::move(callback));
     return token;
 }
 
@@ -3707,6 +4046,12 @@ Result<ExpressionView> ExpressionView::right() const {
         return std::unexpected(Error::validation("Expression has no right operand"));
     if (e->x == nullptr || e->y == nullptr)
         return std::unexpected(Error::validation("Expression has no right operand"));
+    // Guard: for calls, y is actually `a` (arglist), not a cexpr_t*
+    if (e->op == cot_call)
+        return std::unexpected(Error::validation("Use call_argument() for call expressions"));
+    // Guard: for member access, y is `m` (uint32), not a cexpr_t*
+    if (e->op == cot_memref || e->op == cot_memptr)
+        return std::unexpected(Error::validation("Use member_offset() for member access expressions"));
     return ExpressionView(ExpressionView::Tag{}, e->y,
                           append_parent(parents_, static_cast<citem_t*>(e)),
                           e);
@@ -4690,9 +5035,16 @@ Status DecompiledFunction::set_comment(Address ea, std::string_view text,
                                        CommentPosition pos) {
     CHECK_IMPL();
 
+    if (text.find('\0') != std::string_view::npos)
+        return std::unexpected(Error::validation(
+            "Pseudocode comment cannot contain embedded NUL bytes"));
+    auto sdk_position = to_sdk_comment_position(pos);
+    if (!sdk_position)
+        return std::unexpected(sdk_position.error());
+
     treeloc_t loc;
     loc.ea = ea;
-    loc.itp = static_cast<item_preciser_t>(static_cast<int>(pos));
+    loc.itp = *sdk_position;
 
     if (text.empty()) {
         impl_->cfunc->set_user_cmt(loc, nullptr);
@@ -4707,14 +5059,55 @@ Result<std::string> DecompiledFunction::get_comment(Address ea,
                                                      CommentPosition pos) const {
     CHECK_IMPL();
 
+    auto sdk_position = to_sdk_comment_position(pos);
+    if (!sdk_position)
+        return std::unexpected(sdk_position.error());
+
     treeloc_t loc;
     loc.ea = ea;
-    loc.itp = static_cast<item_preciser_t>(static_cast<int>(pos));
+    loc.itp = *sdk_position;
 
     const char* cmt = impl_->cfunc->get_user_cmt(loc, RETRIEVE_ALWAYS);
     if (cmt == nullptr)
         return std::string{};
     return std::string(cmt);
+}
+
+Result<std::vector<PseudocodeComment>> DecompiledFunction::comments() const {
+    CHECK_IMPL();
+
+    user_cmts_t* restored = restore_user_cmts(impl_->cfunc->entry_ea);
+    if (restored == nullptr)
+        return std::vector<PseudocodeComment>{};
+    const auto release = [](user_cmts_t* comments) {
+        if (comments != nullptr)
+            user_cmts_free(comments);
+    };
+    std::unique_ptr<user_cmts_t, decltype(release)> owner(restored, release);
+
+    std::vector<PseudocodeComment> result;
+    result.reserve(user_cmts_size(restored));
+    for (auto iterator = user_cmts_begin(restored), end = user_cmts_end(restored);
+         iterator != end; iterator = user_cmts_next(iterator)) {
+        const treeloc_t& location = user_cmts_first(iterator);
+        auto position = from_sdk_comment_position(location.itp);
+        if (!position)
+            return std::unexpected(position.error());
+        const citem_cmt_t& comment = user_cmts_second(iterator);
+        if (comment.empty())
+            continue;
+        result.push_back({location.ea, std::move(*position), comment.c_str()});
+    }
+    std::sort(result.begin(), result.end(), [](const auto& left, const auto& right) {
+        if (left.address != right.address)
+            return left.address < right.address;
+        const auto left_key = comment_position_sort_key(left.position);
+        const auto right_key = comment_position_sort_key(right.position);
+        if (left_key != right_key)
+            return left_key < right_key;
+        return left.text < right.text;
+    });
+    return result;
 }
 
 Status DecompiledFunction::save_comments() const {
@@ -4859,6 +5252,174 @@ Result<DecompiledFunction> decompile(Address ea) {
     return decompile(ea, nullptr);
 }
 
+Result<MicrocodeFunction>
+generate_microcode(Address function_address,
+                   const MicrocodeGenerationOptions& options) {
+    auto ready = ensure_hexrays();
+    if (!ready)
+        return std::unexpected(ready.error());
+
+    if (function_address == BadAddress)
+        return std::unexpected(Error::validation(
+            "Microcode function address must not be BadAddress"));
+
+    auto requested_maturity = to_sdk_microcode_maturity(options.maturity);
+    if (!requested_maturity)
+        return std::unexpected(requested_maturity.error());
+
+    func_t* function = ::get_func(static_cast<ea_t>(function_address));
+    if (function == nullptr)
+        return std::unexpected(Error::not_found(
+            "No function at microcode address", std::to_string(function_address)));
+
+    // Match the source-audited Symless workflow: force one full decompilation
+    // first so inferred function arguments and their ABI locations are ready.
+    hexrays_failure_t decompile_failure;
+    cfuncptr_t decompiled = ::decompile_func(function,
+                                             &decompile_failure,
+                                             DECOMP_NO_WAIT);
+    if (decompiled == nullptr) {
+        const std::string description =
+            ida::detail::to_string(decompile_failure.desc());
+        return std::unexpected(Error::sdk(
+            "Decompilation before microcode generation failed: " + description,
+            std::to_string(function->start_ea)));
+    }
+
+    hexrays_failure_t generation_failure;
+    mba_ranges_t ranges(function);
+    std::unique_ptr<mba_t> native(::gen_microcode(ranges,
+                                                  &generation_failure,
+                                                  nullptr,
+                                                  DECOMP_NO_WAIT,
+                                                  *requested_maturity));
+    if (native == nullptr) {
+        const std::string description =
+            ida::detail::to_string(generation_failure.desc());
+        return std::unexpected(Error::sdk(
+            "Microcode generation failed: " + description,
+            std::to_string(function->start_ea)));
+    }
+
+    if (native->maturity < MMAT_LOCOPT) {
+        const merror_t graph_status = native->build_graph();
+        if (graph_status != MERR_OK) {
+            qstring description;
+            const ea_t error_address =
+                ::get_merror_desc(&description, graph_status, native.get());
+            return std::unexpected(Error::sdk(
+                "Microcode graph construction failed: "
+                    + ida::detail::to_string(description),
+                std::to_string(error_address)));
+        }
+    }
+
+    if (options.analyze_calls && !native->callinfo_built()) {
+        // Match Symless's call-analysis preparation: decompile direct callees
+        // referenced by still-unknown calls so their inferred prototypes are
+        // available before Hex-Rays constructs mcallinfo_t argument lists.
+        for (int block_index = 0; block_index < native->qty; ++block_index) {
+            mblock_t* block = native->get_mblock(block_index);
+            if (block == nullptr)
+                continue;
+            for (minsn_t* instruction = block->head;
+                 instruction != nullptr;
+                 instruction = instruction->next) {
+                if (!instruction->is_unknown_call()
+                    || instruction->l.t != mop_v) {
+                    continue;
+                }
+                func_t* callee = ::get_func(instruction->l.g);
+                if (callee == nullptr || callee->start_ea != instruction->l.g)
+                    continue;
+                hexrays_failure_t callee_failure;
+                (void)::decompile_func(callee,
+                                       &callee_failure,
+                                       DECOMP_NO_WAIT);
+            }
+        }
+        const int analyzed_calls = native->analyze_calls(ACFL_GUESS);
+        if (analyzed_calls < 0) {
+            return std::unexpected(Error::sdk(
+                "Microcode call analysis failed",
+                std::to_string(function->start_ea)));
+        }
+    }
+
+    MicrocodeFunction result;
+    result.entry_address = native->entry_ea == BADADDR
+        ? BadAddress
+        : static_cast<Address>(native->entry_ea);
+    result.maturity = from_sdk_microcode_maturity(native->maturity);
+
+    tinfo_t function_type;
+    func_type_data_t function_details;
+    if (decompiled->get_func_type(&function_type)
+        && function_type.get_func_details(&function_details)) {
+        result.arguments.reserve(function_details.size());
+        for (const auto& source_argument : function_details) {
+            MicrocodeFunctionArgument argument;
+            argument.name = ida::detail::to_string(source_argument.name);
+            const std::size_t argument_size = source_argument.type.get_size();
+            argument.byte_width = argument_size == BADSIZE
+                ? 0
+                : static_cast<int>(argument_size);
+            const vdloc_t native_location = native->idaloc2vd(
+                source_argument.argloc,
+                argument.byte_width);
+            argument.location = copy_microcode_location(native_location);
+            result.arguments.push_back(std::move(argument));
+        }
+
+        if (!function_details.retloc.is_badloc()) {
+            const std::size_t return_size = function_details.rettype.get_size();
+            const int return_width = return_size == BADSIZE
+                ? 0
+                : static_cast<int>(return_size);
+            const vdloc_t native_return = native->idaloc2vd(
+                function_details.retloc,
+                return_width);
+            result.return_location = copy_microcode_location(native_return);
+        }
+    }
+
+    result.blocks.reserve(static_cast<std::size_t>(native->qty));
+    for (int block_index = 0; block_index < native->qty; ++block_index) {
+        const mblock_t* native_block = native->get_mblock(block_index);
+        if (native_block == nullptr)
+            return std::unexpected(Error::internal(
+                "Microcode block is unavailable", std::to_string(block_index)));
+
+        MicrocodeBlock block;
+        block.index = native_block->serial;
+        block.start_address = native_block->start == BADADDR
+            ? BadAddress
+            : static_cast<Address>(native_block->start);
+        block.end_address = native_block->end == BADADDR
+            ? BadAddress
+            : static_cast<Address>(native_block->end);
+
+        block.predecessors.reserve(static_cast<std::size_t>(native_block->npred()));
+        for (int index = 0; index < native_block->npred(); ++index)
+            block.predecessors.push_back(native_block->pred(index));
+        block.successors.reserve(static_cast<std::size_t>(native_block->nsucc()));
+        for (int index = 0; index < native_block->nsucc(); ++index)
+            block.successors.push_back(native_block->succ(index));
+
+        for (const minsn_t* instruction = native_block->head;
+             instruction != nullptr;
+             instruction = instruction->next) {
+            auto copied = parse_sdk_instruction(instruction);
+            if (!copied)
+                return std::unexpected(copied.error());
+            block.instructions.push_back(std::move(*copied));
+        }
+        result.blocks.push_back(std::move(block));
+    }
+
+    return result;
+}
+
 Result<std::string> DecompilerView::function_name() const {
     if (function_address_ == BadAddress)
         return std::unexpected(Error::validation("DecompilerView has invalid function address"));
@@ -4935,11 +5496,18 @@ Status DecompilerView::set_comment(Address address,
 }
 
 Result<std::string> DecompilerView::get_comment(Address address,
-                                                CommentPosition pos) const {
+                                                 CommentPosition pos) const {
     auto function = decompiled_function();
     if (!function)
         return std::unexpected(function.error());
     return function->get_comment(address, pos);
+}
+
+Result<std::vector<PseudocodeComment>> DecompilerView::comments() const {
+    auto function = decompiled_function();
+    if (!function)
+        return std::unexpected(function.error());
+    return function->comments();
 }
 
 Status DecompilerView::save_comments() const {

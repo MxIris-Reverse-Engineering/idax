@@ -9,6 +9,8 @@
 #include <ida/idax.hpp>
 #include <cstdio>
 #include <cstring>
+#include <memory>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -316,6 +318,7 @@ public:
     ida::Result<ida::processor::AnalyzeDetails>
     analyze_with_details(ida::Address) override {
         ida::processor::AnalyzeDetails details;
+        details.instruction_code = 1;
         details.size = 4;
 
         ida::processor::AnalyzeOperand operand;
@@ -369,10 +372,15 @@ void test_processor_output_context() {
     MnemonicHookProcessor mnemonic_proc;
     ida::processor::OutputContext mnemonic_out;
     auto mnemonic_res = mnemonic_proc.output_instruction_with_context(0x1000, mnemonic_out);
-    CHECK(mnemonic_res == ida::processor::OutputInstructionResult::Success,
-          "default instruction formatter uses mnemonic hook when provided");
-    CHECK(mnemonic_out.text() == "hooked",
-          "mnemonic hook text is returned");
+    CHECK(mnemonic_res == ida::processor::OutputInstructionResult::NotImplemented,
+          "default full formatter remains unimplemented for mnemonic-only hooks");
+    CHECK(mnemonic_out.empty(),
+          "default full formatter does not conflate mnemonic and full output");
+    auto direct_mnemonic_res =
+        mnemonic_proc.output_mnemonic_with_context(0x1000, mnemonic_out);
+    CHECK(direct_mnemonic_res == ida::processor::OutputInstructionResult::Success,
+          "mnemonic hook independently reports success");
+    CHECK(mnemonic_out.text() == "hooked", "mnemonic hook text is returned");
 }
 
 void test_processor_analyze_details() {
@@ -385,6 +393,8 @@ void test_processor_analyze_details() {
         return;
 
     CHECK(details->size == 4, "typed analyze details include size");
+    CHECK(details->instruction_code == 1,
+          "typed analyze details include instruction code");
     CHECK(details->operands.size() == 1, "typed analyze details include operand");
 
     const auto& operand = details->operands.front();
@@ -610,6 +620,199 @@ void test_plugin_detach_helpers() {
     CHECK(!dp.has_value(), "detach_from_popup reports missing widget/attachment");
     CHECK(dp.error().category == ida::ErrorCategory::NotFound,
           "detach_from_popup missing -> NotFound");
+
+    constexpr std::string_view action_id = "idax:test:detach_lifecycle";
+    ida::plugin::Action action{
+        .id = std::string(action_id),
+        .label = "idax detach lifecycle probe",
+        .handler = [] { return ida::ok(); },
+    };
+
+    auto registered = ida::plugin::register_action(action);
+    CHECK(registered.has_value(), "detach lifecycle action registers");
+    if (!registered)
+        return;
+
+    auto attached = ida::plugin::attach_to_menu("Edit/Plugins/", action_id);
+    CHECK(attached.has_value(), "detach lifecycle action attaches to menu");
+    bool attached_for_unregister = false;
+    if (attached) {
+        auto detached = ida::plugin::detach_from_menu("Edit/Plugins/", action_id);
+        CHECK(detached.has_value(), "tracked menu attachment detaches");
+
+        auto detached_again = ida::plugin::detach_from_menu("Edit/Plugins/", action_id);
+        CHECK(!detached_again.has_value(), "second menu detach reports missing attachment");
+        if (!detached_again) {
+            CHECK(detached_again.error().category == ida::ErrorCategory::NotFound,
+                  "second menu detach -> NotFound");
+        }
+
+        auto reattached = ida::plugin::attach_to_menu("Edit/Plugins/", action_id);
+        CHECK(reattached.has_value(), "detach lifecycle action reattaches");
+        attached_for_unregister = reattached.has_value();
+    }
+
+    auto unregistered = ida::plugin::unregister_action(action_id);
+    CHECK(unregistered.has_value(), "detach lifecycle action unregisters");
+    if (attached_for_unregister) {
+        auto detached_after_unregister =
+            ida::plugin::detach_from_menu("Edit/Plugins/", action_id);
+        CHECK(!detached_after_unregister.has_value(),
+              "unregister clears tracked menu attachments");
+        if (!detached_after_unregister) {
+            CHECK(detached_after_unregister.error().category == ida::ErrorCategory::NotFound,
+                  "detach after unregister -> NotFound");
+        }
+    }
+}
+
+void test_plugin_action_and_hotkey_lifecycle() {
+    std::printf("[section] plugin: owned actions and scoped hotkeys\n");
+
+    constexpr std::string_view action_id = "idax:test:owned_action";
+    int action_hits = 0;
+    auto retained = std::make_shared<int>(17);
+    std::weak_ptr<int> retained_observer = retained;
+
+    ida::plugin::Action action{
+        .id = std::string(action_id),
+        .label = "idax owned-action probe",
+        .handler = [&, retained] {
+            ++action_hits;
+            return ida::ok();
+        },
+    };
+
+    auto registered = ida::plugin::register_action(action);
+    CHECK(registered.has_value(), "owned action registers");
+    if (registered) {
+        action.handler = {};
+        retained.reset();
+        CHECK(!retained_observer.expired(),
+              "registered adapter retains callback state");
+
+        auto activated = ida::plugin::activate_action(action_id);
+        if (activated) {
+            CHECK(action_hits == 1, "registered action callback invoked once");
+        } else {
+            SKIP("headless host does not dispatch process_ui_action");
+        }
+
+        auto unregistered = ida::plugin::unregister_action(action_id);
+        CHECK(unregistered.has_value(), "owned action unregisters");
+        CHECK(retained_observer.expired(),
+              "owned adapter releases callback state on unregister");
+    }
+
+    constexpr std::string_view throwing_id = "idax:test:throwing_action";
+    bool throwing_callback_entered = false;
+    ida::plugin::Action throwing_action{
+        .id = std::string(throwing_id),
+        .label = "idax exception-barrier probe",
+        .handler = [&]() -> ida::Status {
+            throwing_callback_entered = true;
+            throw std::runtime_error("action callback probe");
+        },
+    };
+    auto throwing_registered = ida::plugin::register_action(throwing_action);
+    CHECK(throwing_registered.has_value(), "throwing action registers");
+    if (throwing_registered) {
+        bool escaped = false;
+        try {
+            (void)ida::plugin::activate_action(throwing_id);
+        } catch (...) {
+            escaped = true;
+        }
+        CHECK(!escaped, "action exception does not cross host ABI boundary");
+        if (throwing_callback_entered) {
+            CHECK(true, "throwing callback was contained by adapter boundary");
+        } else {
+            SKIP("headless host does not dispatch exception-barrier action");
+        }
+        CHECK(ida::plugin::unregister_action(throwing_id).has_value(),
+              "throwing action unregisters");
+    }
+
+    auto empty_hotkey = ida::plugin::register_hotkey("", [] { return ida::ok(); });
+    CHECK(!empty_hotkey.has_value(), "empty hotkey is rejected");
+    if (!empty_hotkey) {
+        CHECK(empty_hotkey.error().category == ida::ErrorCategory::Validation,
+              "empty hotkey -> Validation");
+    }
+
+    auto empty_callback = ida::plugin::register_hotkey("Ctrl-Shift-F12", {});
+    CHECK(!empty_callback.has_value(), "empty hotkey callback is rejected");
+    if (!empty_callback) {
+        CHECK(empty_callback.error().category == ida::ErrorCategory::Validation,
+              "empty hotkey callback -> Validation");
+    }
+
+    int hotkey_hits = 0;
+    auto hotkey_state = std::make_shared<int>(23);
+    std::weak_ptr<int> hotkey_state_observer = hotkey_state;
+    auto hotkey_result = ida::plugin::register_hotkey(
+        "Ctrl-Shift-F12",
+        [&, hotkey_state] {
+            ++hotkey_hits;
+            return ida::ok();
+        });
+    CHECK(hotkey_result.has_value(), "scoped hotkey registers");
+    if (!hotkey_result)
+        return;
+
+    hotkey_state.reset();
+    ida::plugin::ScopedHotkey hotkey = std::move(*hotkey_result);
+    CHECK(hotkey.active(), "scoped hotkey is active after registration");
+    CHECK(hotkey.hotkey() == "Ctrl-Shift-F12", "scoped hotkey preserves shortcut");
+    CHECK(!hotkey_result->active(), "moved-from scoped hotkey is inactive");
+    CHECK(!hotkey_state_observer.expired(), "scoped hotkey retains callback state");
+
+    auto hotkey_activated = hotkey.activate();
+    if (hotkey_activated) {
+        CHECK(hotkey_hits == 1, "scoped hotkey callback invoked once");
+    } else {
+        SKIP("headless host does not dispatch scoped hotkey action");
+    }
+
+    ida::plugin::ScopedHotkey moved_hotkey;
+    moved_hotkey = std::move(hotkey);
+    CHECK(!hotkey.active(), "move assignment deactivates source hotkey");
+    CHECK(moved_hotkey.active(), "move assignment transfers hotkey ownership");
+
+    auto released = moved_hotkey.release();
+    CHECK(released.has_value(), "scoped hotkey releases explicitly");
+    CHECK(!moved_hotkey.active(), "released scoped hotkey is inactive");
+    CHECK(hotkey_state_observer.expired(),
+          "hotkey callback state releases with registration");
+
+    auto released_again = moved_hotkey.release();
+    CHECK(!released_again.has_value(), "second hotkey release reports inactive");
+    if (!released_again) {
+        CHECK(released_again.error().category == ida::ErrorCategory::NotFound,
+              "second hotkey release -> NotFound");
+    }
+    auto activate_released = moved_hotkey.activate();
+    CHECK(!activate_released.has_value(), "released hotkey cannot activate");
+    if (!activate_released) {
+        CHECK(activate_released.error().category == ida::ErrorCategory::NotFound,
+              "released hotkey activation -> NotFound");
+    }
+
+    auto destructor_state = std::make_shared<int>(31);
+    std::weak_ptr<int> destructor_state_observer = destructor_state;
+    {
+        auto destructor_hotkey = ida::plugin::register_hotkey(
+            "Ctrl-Alt-Shift-F12",
+            [destructor_state] { return ida::ok(); });
+        CHECK(destructor_hotkey.has_value(), "destructor-owned hotkey registers");
+        destructor_state.reset();
+        if (destructor_hotkey) {
+            CHECK(!destructor_state_observer.expired(),
+                  "destructor-owned hotkey retains callback state");
+        }
+    }
+    CHECK(destructor_state_observer.expired(),
+          "scoped hotkey destructor releases callback state");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -772,19 +975,23 @@ void test_feature_flag_composition() {
     CHECK((change1_use2 & static_cast<std::uint32_t>(IF::Stop)) == 0,
           "Stop bit NOT set in composition");
 
-    // All six Change and Use pairs don't overlap.
+    // All eight Change and Use pairs don't overlap.
     auto all_change = static_cast<std::uint32_t>(IF::Change1) |
                       static_cast<std::uint32_t>(IF::Change2) |
                       static_cast<std::uint32_t>(IF::Change3) |
                       static_cast<std::uint32_t>(IF::Change4) |
                       static_cast<std::uint32_t>(IF::Change5) |
-                      static_cast<std::uint32_t>(IF::Change6);
+                      static_cast<std::uint32_t>(IF::Change6) |
+                      static_cast<std::uint32_t>(IF::Change7) |
+                      static_cast<std::uint32_t>(IF::Change8);
     auto all_use = static_cast<std::uint32_t>(IF::Use1) |
                    static_cast<std::uint32_t>(IF::Use2) |
                    static_cast<std::uint32_t>(IF::Use3) |
                    static_cast<std::uint32_t>(IF::Use4) |
                    static_cast<std::uint32_t>(IF::Use5) |
-                   static_cast<std::uint32_t>(IF::Use6);
+                   static_cast<std::uint32_t>(IF::Use6) |
+                   static_cast<std::uint32_t>(IF::Use7) |
+                   static_cast<std::uint32_t>(IF::Use8);
     CHECK((all_change & all_use) == 0, "Change and Use bits are disjoint");
 
     // Processor flags: compose multiple.
@@ -796,6 +1003,19 @@ void test_feature_flag_composition() {
     CHECK((pf & static_cast<std::uint32_t>(PF::Use64)) != 0, "Use64 in proc flags");
     CHECK((pf & static_cast<std::uint32_t>(PF::Use32)) == 0, "Use32 NOT in proc flags");
     CHECK((pf & static_cast<std::uint32_t>(PF::DefaultSeg64)) != 0, "DefaultSeg64 set");
+    CHECK(static_cast<std::uint32_t>(PF::DefaultSeg32) == 0x000004,
+          "DefaultSeg32 matches PR_DEFSEG32");
+    CHECK(static_cast<std::uint32_t>(PF::Use64) == 0x002000,
+          "Use64 matches PR_USE64");
+    CHECK(static_cast<std::uint32_t>(PF::TypeInfo) == 0x001000,
+          "TypeInfo matches PR_TYPEINFO");
+    CHECK(static_cast<std::uint32_t>(PF::UseArgTypes) == 0x200000,
+          "UseArgTypes matches PR_USE_ARG_TYPES");
+    CHECK(static_cast<std::uint32_t>(PF::ConditionalInsns) == 0x4000000,
+          "ConditionalInsns matches PR_CNDINSNS");
+    CHECK(static_cast<std::uint32_t>(ida::processor::ProcessorFlag2::Code16Bit)
+              == 0x000008,
+          "ProcessorFlag2 Code16Bit matches PR2_CODE16_BIT");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1014,6 +1234,7 @@ int main(int argc, char** argv) {
     test_processor_analyze_details();
     test_plugin_action_types();
     test_plugin_detach_helpers();
+    test_plugin_action_and_hotkey_lifecycle();
     test_processor_optional_callback_defaults();
     test_switch_description_edge_cases();
     test_feature_flag_composition();

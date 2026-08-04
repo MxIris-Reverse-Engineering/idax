@@ -2,6 +2,7 @@
 
 Last updated: 2026-07-15
 Status: Implementation substantially complete; release candidate ready；Phase 23 Swift dyld cache database creator、当前用户安装脚本与 IDA 9.4 DSC adaptation 已完成
+Status: Implementation substantially complete; 27/27 native CTest targets passing; release candidate ready
 Primary goal: Build a fully opaque, highly intuitive, self-explanatory wrapper over the IDA SDK for first-time users while preserving full power for expert workflows.
 
 ---
@@ -49,6 +50,8 @@ Each `.agents/` file uses hierarchical numbered sections. To add a new entry:
    - The corresponding entry in `.agents/progress_ledger.md`
 6. Any blocker must be captured with impact and mitigation plan in `.agents/active_work.md`.
 7. Any design change must be captured in `.agents/decision_log.md` with rationale.
+8. `.agents/active_work.md` must contain only active, queued, or blocked work. Remove an item in the same protocol update that records its completion; completed and retired work belongs in `.agents/progress_ledger.md`, not `.agents/active_work.md`.
+9. Never commit identity-bearing absolute host paths. Use semantic tokens such as `<repo-root>`, `<ida-sdk-root>`, `<ida-runtime>`, and `<upstream-source>` in documentation/evidence; audit both tracked text and binary strings before push.
 
 MANDATORY UPDATE PROTOCOL (must always be followed):
 - Step 1: Update task checkbox/status in `.agents/roadmap.md` as soon as it changes.
@@ -56,6 +59,7 @@ MANDATORY UPDATE PROTOCOL (must always be followed):
 - Step 3: If a technical insight was discovered, add it to `.agents/findings.md` AND `.agents/knowledge_base.md`.
 - Step 4: If architecture changed, add it to `.agents/decision_log.md`.
 - Step 5: If blocked, add/update `.agents/active_work.md` with next action.
+- Step 6: When work completes or is retired, remove it from `.agents/active_work.md` in the same closure update.
 
 ---
 
@@ -117,7 +121,7 @@ If any of the above changes and the corresponding file is not updated immediatel
 
 Program-level:
 - Architecture definition: complete
-- Implementation: complete — all core domains implemented; 16/16 test targets passing (232/232 smoke checks + 15 dedicated integration/unit suites); release candidate ready
+- Implementation: complete — all core domains implemented; 26/26 native test targets, 232/232 Node structural checks, and 93/93 Rust initialized-host checks passing; release candidate ready
 - Documentation baseline file: complete
 - Build system: working (CMake + ida-cmake, C++23, static library, install/export/CPack packaging)
 - Test infrastructure: working (idalib-based integration tests with real IDA dylibs; compile-only API surface parity check)
@@ -126,6 +130,8 @@ Phase completion estimates:
 - Phase 0-10: All ~100% complete
 - Phase 11: ~100% complete (Abyss port API gap closure — 18 gaps closed, lines/decompiler/ui domains expanded, abyss_port_plugin complete)
 - Phase 23: 100%（Swift dyld shared cache database creator、显式输出路径保存、Swift/Node/Rust binding parity、当前用户安装与 IDA 9.4 DSC service adaptation 已完成）
+- Phase 0-21 and 23-36: complete
+- Phase 22: ~99% complete; remaining evidence requires interactive modal-form and clipboard hosts
 - See `.agents/roadmap.md` for detailed phase status
 
 Blocker status:

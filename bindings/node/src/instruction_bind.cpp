@@ -7,6 +7,8 @@
 #include "helpers.hpp"
 #include <ida/instruction.hpp>
 
+#include <limits>
+
 namespace idax_node {
 namespace {
 
@@ -65,7 +67,7 @@ ida::instruction::OperandFormat ParseOperandFormat(const std::string& s) {
 /// Convert an Operand to a JS object.
 v8::Local<v8::Object> OperandToObject(const ida::instruction::Operand& op) {
     auto isolate = v8::Isolate::GetCurrent();
-    return ObjectBuilder()
+    auto object = ObjectBuilder()
         .setInt("index", op.index())
         .setStr("type", OperandTypeToString(op.type()))
         .setBool("isRegister", op.is_register())
@@ -76,8 +78,19 @@ v8::Local<v8::Object> OperandToObject(const ida::instruction::Operand& op) {
         .setAddr("targetAddress", op.target_address())
         .set("displacement", v8::BigInt::New(isolate, op.displacement()))
         .setInt("byteWidth", op.byte_width())
-        .setStr("registerName", op.register_name())
+        .setStr("registerName", op.register_name());
+    if (auto offset = op.encoded_value_byte_offset())
+        object.setSize("encodedValueByteOffset", *offset);
+    else
+        object.setNull("encodedValueByteOffset");
+    if (auto offset = op.secondary_encoded_value_byte_offset())
+        object.setSize("secondaryEncodedValueByteOffset", *offset);
+    else
+        object.setNull("secondaryEncodedValueByteOffset");
+    return object
         .setStr("registerCategory", RegisterCategoryToString(op.register_category()))
+        .setBool("isRead", op.is_read())
+        .setBool("isWritten", op.is_written())
         .build();
 }
 
@@ -195,34 +208,73 @@ NAN_METHOD(SetOperandOffset) {
     IDAX_CHECK_STATUS(ida::instruction::set_operand_offset(addr, n, base));
 }
 
-// setOperandStructOffset(address, n, structName_or_structId, delta?)
-// Overloaded: if arg 2 is string → by name, if number/BigInt → by id
+// setOperandEnum(address, n, enumName, serial?)
+NAN_METHOD(SetOperandEnum) {
+    ida::Address addr;
+    if (!GetAddressArg(info, 0, addr)) return;
+    int n = GetOptionalInt(info, 1, 0);
+    std::string enumName;
+    if (!GetStringArg(info, 2, enumName)) return;
+    int serial = GetOptionalInt(info, 3, 0);
+    if (serial < 0 || serial > 255) {
+        Nan::ThrowRangeError("Enum serial must be in 0..255");
+        return;
+    }
+    IDAX_CHECK_STATUS(ida::instruction::set_operand_enum(
+        addr, n, enumName, static_cast<std::uint8_t>(serial)));
+}
+
+// operandEnum(address, n) -> { name, serial }
+NAN_METHOD(OperandEnum) {
+    ida::Address addr;
+    if (!GetAddressArg(info, 0, addr)) return;
+    int n = GetOptionalInt(info, 1, 0);
+    IDAX_UNWRAP(auto value, ida::instruction::operand_enum(addr, n));
+    info.GetReturnValue().Set(ObjectBuilder()
+        .setStr("name", value.name)
+        .setInt("serial", value.serial)
+        .build());
+}
+
+// setOperandStructOffset(address, n, structureName, delta?)
 NAN_METHOD(SetOperandStructOffset) {
     ida::Address addr;
     if (!GetAddressArg(info, 0, addr)) return;
     int n = GetOptionalInt(info, 1, 0);
 
-    if (info.Length() < 3 || info[2]->IsUndefined()) {
-        Nan::ThrowTypeError("Missing structName or structId argument");
+    if (info.Length() < 3 || !info[2]->IsString()) {
+        Nan::ThrowTypeError("Expected structureName string");
         return;
     }
 
     ida::AddressDelta delta = GetOptionalInt64(info, 3, 0);
+    IDAX_CHECK_STATUS(ida::instruction::set_operand_struct_offset(
+        addr, n, ToString(info[2]), delta));
+}
 
-    if (info[2]->IsString()) {
-        std::string structName = ToString(info[2]);
-        IDAX_CHECK_STATUS(
-            ida::instruction::set_operand_struct_offset(addr, n, structName, delta));
-    } else {
-        // Treat as numeric structure id (BigInt or number)
-        ida::Address structId;
-        if (!ToAddress(info[2], structId)) {
-            Nan::ThrowTypeError("Expected structName (string) or structId (number/BigInt)");
-            return;
-        }
-        IDAX_CHECK_STATUS(
-            ida::instruction::set_operand_struct_offset(addr, n, static_cast<std::uint64_t>(structId), delta));
+// ensureOperandStructMemberOffset(address, n, structureName, memberByteOffset, delta?)
+NAN_METHOD(EnsureOperandStructMemberOffset) {
+    ida::Address addr;
+    if (!GetAddressArg(info, 0, addr)) return;
+    int n = GetOptionalInt(info, 1, 0);
+    if (info.Length() < 3 || !info[2]->IsString()) {
+        Nan::ThrowTypeError("Expected structureName string");
+        return;
     }
+    ida::Address raw_offset;
+    if (!GetAddressArg(info, 3, raw_offset)) return;
+    if (raw_offset > std::numeric_limits<std::size_t>::max()) {
+        Nan::ThrowRangeError("memberByteOffset is outside size_t range");
+        return;
+    }
+    const ida::AddressDelta delta = GetOptionalInt64(info, 4, 0);
+    IDAX_UNWRAP(auto added, ida::instruction::ensure_operand_struct_member_offset(
+        addr,
+        n,
+        ToString(info[2]),
+        static_cast<std::size_t>(raw_offset),
+        delta));
+    info.GetReturnValue().Set(Nan::New(added));
 }
 
 // setOperandBasedStructOffset(address, n, operandValue, base)
@@ -240,7 +292,7 @@ NAN_METHOD(SetOperandBasedStructOffset) {
         ida::instruction::set_operand_based_struct_offset(addr, n, operandValue, base));
 }
 
-// operandStructOffsetPath(address, n) -> { structureIds: BigInt[], delta: BigInt }
+// operandStructOffsetPath(address, n) -> { structureName, memberNames, delta }
 NAN_METHOD(OperandStructOffsetPath) {
     ida::Address addr;
     if (!GetAddressArg(info, 0, addr)) return;
@@ -248,15 +300,9 @@ NAN_METHOD(OperandStructOffsetPath) {
 
     IDAX_UNWRAP(auto path, ida::instruction::operand_struct_offset_path(addr, n));
 
-    auto isolate = v8::Isolate::GetCurrent();
-    auto idsArr = Nan::New<v8::Array>(static_cast<int>(path.structure_ids.size()));
-    for (std::size_t i = 0; i < path.structure_ids.size(); ++i) {
-        Nan::Set(idsArr, static_cast<uint32_t>(i),
-                 v8::BigInt::NewFromUnsigned(isolate, path.structure_ids[i]));
-    }
-
     auto result = ObjectBuilder()
-        .set("structureIds", idsArr)
+        .setStr("structureName", path.structure_name)
+        .set("memberNames", StringVectorToArray(path.member_names))
         .set("delta", FromAddressDelta(path.delta))
         .build();
     info.GetReturnValue().Set(result);
@@ -477,9 +523,12 @@ void InitInstruction(v8::Local<v8::Object> target) {
     SetMethod(ns, "setOperandFloat",     SetOperandFloat);
     SetMethod(ns, "setOperandFormat",    SetOperandFormat);
     SetMethod(ns, "setOperandOffset",    SetOperandOffset);
+    SetMethod(ns, "setOperandEnum",      SetOperandEnum);
+    SetMethod(ns, "operandEnum",         OperandEnum);
 
     // Struct offset operations
     SetMethod(ns, "setOperandStructOffset",      SetOperandStructOffset);
+    SetMethod(ns, "ensureOperandStructMemberOffset", EnsureOperandStructMemberOffset);
     SetMethod(ns, "setOperandBasedStructOffset", SetOperandBasedStructOffset);
     SetMethod(ns, "operandStructOffsetPath",      OperandStructOffsetPath);
     SetMethod(ns, "operandStructOffsetPathNames", OperandStructOffsetPathNames);

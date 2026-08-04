@@ -274,11 +274,14 @@ void test_operand_error_paths() {
     CHECK_IS_ERR(ida::instruction::set_operand_decimal(ida::BadAddress, 0));
     CHECK_IS_ERR(ida::instruction::operand_text(ida::BadAddress, 0));
     CHECK_IS_ERR(ida::instruction::operand_byte_width(ida::BadAddress, 0));
+    CHECK_IS_ERR(ida::instruction::operand_struct_offset_path(
+        ida::BadAddress, 0));
 
     // Out-of-range operand index
     auto addr = first_function_address();
     if (addr != ida::BadAddress) {
         CHECK_IS_ERR(ida::instruction::operand_text(addr, 99));
+        CHECK_IS_ERR(ida::instruction::operand_struct_offset_path(addr, 99));
     }
 }
 
@@ -299,22 +302,120 @@ void test_operand_struct_offset_workflow() {
         return;
     }
 
-    // Try to set struct offset by name
+    // Root-only compatibility path remains name-based and opaque.
     auto result = ida::instruction::set_operand_struct_offset(
         imm.address, imm.operand_index, "idax_test_struct_offset", 0);
-    // May fail if the operand value doesn't make sense as a struct offset — that's OK
     if (result.has_value()) {
-        // Read back the path
         auto path = ida::instruction::operand_struct_offset_path(
             imm.address, imm.operand_index);
         auto names = ida::instruction::operand_struct_offset_path_names(
             imm.address, imm.operand_index);
-        (void)path;
-        (void)names;
+        CHECK(path.has_value());
+        if (path) {
+            CHECK_EQ(path->structure_name, std::string("idax_test_struct_offset"));
+            CHECK(path->member_names.empty());
+            CHECK_EQ(path->delta, 0);
+        }
+        CHECK(names.has_value());
+        if (names) {
+            CHECK_EQ(names->size(), std::size_t{1});
+            CHECK_EQ((*names)[0], std::string("idax_test_struct_offset"));
+        }
+    }
+    ida::instruction::clear_operand_representation(imm.address, imm.operand_index);
+
+    // A defined non-stroff representation is incompatible and must survive.
+    auto decimal = ida::instruction::set_operand_decimal(
+        imm.address, imm.operand_index);
+    CHECK_OK(decimal);
+    if (decimal) {
+        auto before = ida::instruction::operand_text(
+            imm.address, imm.operand_index);
+        auto incompatible_format =
+            ida::instruction::ensure_operand_struct_member_offset(
+                imm.address, imm.operand_index,
+                "idax_test_struct_offset", 4, -4);
+        CHECK_ERR(incompatible_format, ida::ErrorCategory::Conflict);
+        auto after = ida::instruction::operand_text(
+            imm.address, imm.operand_index);
+        CHECK(before.has_value());
+        CHECK(after.has_value());
+        if (before && after) CHECK_EQ(*after, *before);
+        CHECK_OK(ida::instruction::clear_operand_representation(
+            imm.address, imm.operand_index));
+    }
+
+    // Exact-member application uses no public native type/member identities.
+    auto exact = ida::instruction::ensure_operand_struct_member_offset(
+        imm.address, imm.operand_index, "idax_test_struct_offset", 4, -4);
+    CHECK(exact.has_value());
+    if (exact) {
+        CHECK(*exact);
+        auto path = ida::instruction::operand_struct_offset_path(
+            imm.address, imm.operand_index);
+        CHECK(path.has_value());
+        if (path) {
+            CHECK_EQ(path->structure_name, std::string("idax_test_struct_offset"));
+            CHECK_EQ(path->member_names.size(), std::size_t{1});
+            CHECK_EQ(path->member_names[0], std::string("field_y"));
+            CHECK_EQ(path->delta, -4);
+        }
+        auto repeated = ida::instruction::ensure_operand_struct_member_offset(
+            imm.address, imm.operand_index, "idax_test_struct_offset", 4, -4);
+        CHECK(repeated.has_value());
+        if (repeated) CHECK(!*repeated);
+        auto incompatible = ida::instruction::ensure_operand_struct_member_offset(
+            imm.address, imm.operand_index, "idax_test_struct_offset", 0, -4);
+        CHECK_ERR(incompatible, ida::ErrorCategory::Conflict);
     }
 
     // Clear
     ida::instruction::clear_operand_representation(imm.address, imm.operand_index);
+}
+
+void test_operand_enum_workflow() {
+    SECTION("instruction: named operand enum workflow");
+
+    const std::vector<ida::type::EnumMember> members{
+        {"IDAX_ENUM_ZERO", 0, ""},
+        {"IDAX_ENUM_VALUE", 1, ""},
+        {"IDAX_ENUM_OTHER", 2, ""},
+    };
+    auto enum_type = ida::type::TypeInfo::enum_type(members, 4, false);
+    CHECK_OK(enum_type);
+    if (!enum_type) return;
+    CHECK_OK(enum_type->save_as("idax_operand_enum"));
+
+    auto imm = find_immediate();
+    if (imm.address == ida::BadAddress) {
+        SKIP("no suitable immediate operand for enum test");
+        return;
+    }
+
+    CHECK_OK(ida::instruction::set_operand_enum(
+        imm.address, imm.operand_index, "idax_operand_enum", 0));
+    auto readback = ida::instruction::operand_enum(imm.address, imm.operand_index);
+    CHECK_OK(readback);
+    if (readback) {
+        CHECK(readback->name == "idax_operand_enum");
+        CHECK(readback->serial == 0);
+    }
+
+    auto all_readback = ida::instruction::operand_enum(imm.address, -1);
+    CHECK_OK(all_readback);
+    if (all_readback)
+        CHECK(all_readback->name == "idax_operand_enum");
+
+    CHECK_IS_ERR(ida::instruction::set_operand_enum(
+        imm.address, imm.operand_index, "", 0));
+    CHECK_IS_ERR(ida::instruction::set_operand_enum(
+        imm.address, 99, "idax_operand_enum", 0));
+    CHECK_IS_ERR(ida::instruction::set_operand_enum(
+        imm.address, imm.operand_index, "idax_missing_enum", 0));
+
+    CHECK_OK(ida::instruction::clear_operand_representation(
+        imm.address, imm.operand_index));
+    CHECK_IS_ERR(ida::instruction::operand_enum(imm.address, imm.operand_index));
 }
 
 // ===========================================================================
@@ -635,6 +736,7 @@ int main(int argc, char* argv[]) {
     test_operand_offset();
     test_operand_forced_text_roundtrip();
     test_operand_error_paths();
+    test_operand_enum_workflow();
     test_operand_struct_offset_workflow();
     test_operand_stack_variable();
 

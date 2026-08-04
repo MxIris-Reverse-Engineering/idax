@@ -10,6 +10,7 @@ permissions:
 
 env:
   IDA_SDK_REPO: HexRaysSA/ida-sdk
+  IDA_SDK_REF: 6929db6868a524496eb66e76e4ec6c9d720a0594 # IDA 9.4.0 release patch
   BUILD_TYPE: Release
 
 jobs:
@@ -32,44 +33,50 @@ jobs:
             platform: darwin
             arch: arm64
             msvc_arch: ''
-          - os: macos-13
+          - os: macos-15-intel
             platform: darwin
             arch: x64
             msvc_arch: ''
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           submodules: recursive
 
       - name: Checkout IDA SDK
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           repository: ${{ env.IDA_SDK_REPO }}
+          ref: ${{ env.IDA_SDK_REF }}
           path: ida-sdk
           submodules: recursive
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.28"
+          github-token: ${{ github.token }}
 
       - name: Install IDA Pro
         env:
           HCLI_API_KEY: ${{ secrets.HCLI_KEY }}
         shell: bash
         run: |
-          LICENSE_ID=$(uvx --from ida-hcli hcli --disable-updates license list | grep -oE "[0-9A-F]{2}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{2}" | head -n 1)
-          echo "Using license ID: $LICENSE_ID"
+          LICENSE_OUTPUT=$(uvx --from ida-hcli hcli --disable-updates license list)
+          LICENSE_ID=$(printf '%s\n' "$LICENSE_OUTPUT" | python3 scripts/select_hcli_license.py)
+          echo "::add-mask::$LICENSE_ID"
+          echo "Selected active named IDA product license"
           
           if [[ "$RUNNER_OS" == "Windows" ]]; then
-            ASSET_KEY="release/9.3/ida-pro/ida-pro_93_x64win.exe"
+            ASSET_KEY="release/9.4/ida-pro/ida-pro_94_x64win.exe"
           elif [[ "$RUNNER_OS" == "Linux" ]]; then
-            ASSET_KEY="release/9.3/ida-pro/ida-pro_93_x64linux.run"
+            ASSET_KEY="release/9.4/ida-pro/ida-pro_94_x64linux.run"
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
             if [[ "$(uname -m)" == "arm64" ]]; then
-              ASSET_KEY="release/9.3/ida-pro/ida-pro_93_armmac.app.zip"
+              ASSET_KEY="release/9.4/ida-pro/ida-pro_94_armmac.app.zip"
             else
-              ASSET_KEY="release/9.3/ida-pro/ida-pro_93_x64mac.app.zip"
+              ASSET_KEY="release/9.4/ida-pro/ida-pro_94_x64mac.app.zip"
             fi
           fi
           
@@ -86,9 +93,10 @@ jobs:
           uvx --from ida-hcli hcli --disable-updates ida install --set-default --accept-eula --yes --license-id "$LICENSE_ID" "$INSTALLER_FILE"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20'
+          package-manager-cache: false
 
       - name: Resolve IDASDK and IDADIR paths
         shell: bash
@@ -96,14 +104,14 @@ jobs:
           SDK_ROOT="${GITHUB_WORKSPACE}/ida-sdk"
           if [[ -f "${SDK_ROOT}/ida-cmake/bootstrap.cmake" ]]; then
             echo "IDASDK=${SDK_ROOT}" >> "$GITHUB_ENV"
-          elif [[ -f "${SDK_ROOT}/src/cmake/bootstrap.cmake" ]]; then
+          elif [[ -f "${SDK_ROOT}/src/cmake/bootstrap.cmake" || -f "${SDK_ROOT}/src/cmake/idasdkConfig.cmake" ]]; then
             echo "IDASDK=${SDK_ROOT}/src" >> "$GITHUB_ENV"
           elif [[ -f "${SDK_ROOT}/src/ida-cmake/bootstrap.cmake" ]]; then
             echo "IDASDK=${SDK_ROOT}/src" >> "$GITHUB_ENV"
-          elif [[ -f "${SDK_ROOT}/cmake/bootstrap.cmake" ]]; then
+          elif [[ -f "${SDK_ROOT}/cmake/bootstrap.cmake" || -f "${SDK_ROOT}/cmake/idasdkConfig.cmake" ]]; then
             echo "IDASDK=${SDK_ROOT}" >> "$GITHUB_ENV"
           else
-            echo "error: unable to locate SDK bootstrap.cmake in SDK checkout"
+            echo "error: unable to locate SDK CMake entry point in SDK checkout"
             exit 1
           fi
 
@@ -115,7 +123,7 @@ jobs:
 
       - name: Setup MSVC (Windows)
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ./.github/actions/setup-msvc
         with:
           arch: ${{ matrix.msvc_arch }}
 
@@ -136,7 +144,7 @@ jobs:
         working-directory: bindings/node
         run: |
           npm install --ignore-scripts
-          npx cmake-js compile -v $(node -v | sed 's/v//')
+          npx cmake-js compile -v "$(node -v | sed 's/v//')"
 
       - name: Rename and Stage Artifact
         shell: bash
@@ -145,7 +153,7 @@ jobs:
           cp bindings/node/build/Release/idax_native.node addon-artifact/${{ matrix.platform }}-${{ matrix.arch }}/idax_native.node
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: prebuilds-${{ matrix.platform }}-${{ matrix.arch }}
           path: addon-artifact/
@@ -157,15 +165,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '20'
+          package-manager-cache: false
 
       - name: Download all prebuilds
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: prebuilds-*
           merge-multiple: true
@@ -189,7 +198,7 @@ jobs:
           mv idax-*.tgz idax-node-plugin.tgz
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@1c214ab373197cfdedb8c44482a8faf4608192d7 # Node 24 snapshot after v2.6.2
         with:
           files: |
             bindings/node/idax-node-plugin.tgz

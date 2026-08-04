@@ -43,6 +43,114 @@ impl Maturity {
     }
 }
 
+/// Semantic location of a persisted pseudocode comment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum CommentPosition {
+    #[default]
+    Default,
+    Argument(usize),
+    ParenthesisOpen,
+    Assembly,
+    ElseLine,
+    DoLine,
+    Semicolon,
+    OpenBrace,
+    CloseBrace,
+    ParenthesisClose,
+    LabelColon,
+    BlockBefore,
+    BlockAfter,
+    TryLine,
+    SwitchCase(i64),
+}
+
+impl CommentPosition {
+    fn to_raw(self) -> Result<idax_sys::IdaxDecompilerCommentPosition> {
+        let (kind, value) = match self {
+            Self::Default => (0, 0),
+            Self::Argument(index) => {
+                if index >= 64 {
+                    return Err(Error::validation(
+                        "pseudocode comment argument index must be in [0, 63]",
+                    ));
+                }
+                let value = i64::try_from(index)
+                    .map_err(|_| Error::validation("comment argument index overflow"))?;
+                (1, value)
+            }
+            Self::ParenthesisOpen => (2, 0),
+            Self::Assembly => (3, 0),
+            Self::ElseLine => (4, 0),
+            Self::DoLine => (5, 0),
+            Self::Semicolon => (6, 0),
+            Self::OpenBrace => (7, 0),
+            Self::CloseBrace => (8, 0),
+            Self::ParenthesisClose => (9, 0),
+            Self::LabelColon => (10, 0),
+            Self::BlockBefore => (11, 0),
+            Self::BlockAfter => (12, 0),
+            Self::TryLine => (13, 0),
+            Self::SwitchCase(value) => {
+                if !(-0x1fff_ffff..=0x1fff_ffff).contains(&value) {
+                    return Err(Error::validation(
+                        "pseudocode switch-case comment value exceeds the supported range",
+                    ));
+                }
+                (14, value)
+            }
+        };
+        Ok(idax_sys::IdaxDecompilerCommentPosition { kind, value })
+    }
+
+    fn from_raw(raw: idax_sys::IdaxDecompilerCommentPosition) -> Result<Self> {
+        let simple = |position| {
+            if raw.value == 0 {
+                Ok(position)
+            } else {
+                Err(Error::validation(
+                    "simple pseudocode comment position has nonzero value",
+                ))
+            }
+        };
+        match raw.kind {
+            0 => simple(Self::Default),
+            1 => {
+                let index = usize::try_from(raw.value)
+                    .map_err(|_| Error::validation("invalid comment argument index"))?;
+                if index >= 64 {
+                    return Err(Error::validation("invalid comment argument index"));
+                }
+                Ok(Self::Argument(index))
+            }
+            2 => simple(Self::ParenthesisOpen),
+            3 => simple(Self::Assembly),
+            4 => simple(Self::ElseLine),
+            5 => simple(Self::DoLine),
+            6 => simple(Self::Semicolon),
+            7 => simple(Self::OpenBrace),
+            8 => simple(Self::CloseBrace),
+            9 => simple(Self::ParenthesisClose),
+            10 => simple(Self::LabelColon),
+            11 => simple(Self::BlockBefore),
+            12 => simple(Self::BlockAfter),
+            13 => simple(Self::TryLine),
+            14 if (-0x1fff_ffff..=0x1fff_ffff).contains(&raw.value) => {
+                Ok(Self::SwitchCase(raw.value))
+            }
+            14 => Err(Error::validation("invalid switch-case comment value")),
+            _ => Err(Error::unsupported("unknown pseudocode comment position")),
+        }
+    }
+}
+
+/// One copied persisted pseudocode comment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PseudocodeComment {
+    pub address: Address,
+    pub position: CommentPosition,
+    pub text: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[repr(i32)]
 pub enum ItemType {
@@ -138,11 +246,19 @@ pub enum MicrocodeOpcode {
     FloatDiv = 17,
     IntegerToFloat = 18,
     FloatToFloat = 19,
+    SignedExtend = 20,
+    Call = 21,
+    IndirectCall = 22,
+    Goto = 23,
+    IndirectJump = 24,
+    Return = 25,
+    Other = 26,
 }
 
 impl MicrocodeOpcode {
     fn from_raw(raw: i32) -> Self {
         match raw {
+            0 => Self::NoOperation,
             1 => Self::Move,
             2 => Self::Add,
             3 => Self::Subtract,
@@ -162,7 +278,13 @@ impl MicrocodeOpcode {
             17 => Self::FloatDiv,
             18 => Self::IntegerToFloat,
             19 => Self::FloatToFloat,
-            _ => Self::NoOperation,
+            20 => Self::SignedExtend,
+            21 => Self::Call,
+            22 => Self::IndirectCall,
+            23 => Self::Goto,
+            24 => Self::IndirectJump,
+            25 => Self::Return,
+            _ => Self::Other,
         }
     }
 }
@@ -181,11 +303,17 @@ pub enum MicrocodeOperandKind {
     NestedInstruction = 8,
     UnsignedImmediate = 9,
     SignedImmediate = 10,
+    AddressReference = 11,
+    CallArguments = 12,
+    StringConstant = 13,
+    FloatingPointConstant = 14,
+    Other = 15,
 }
 
 impl MicrocodeOperandKind {
     fn from_raw(raw: i32) -> Self {
         match raw {
+            0 => Self::Empty,
             1 => Self::Register,
             2 => Self::LocalVariable,
             3 => Self::RegisterPair,
@@ -196,7 +324,11 @@ impl MicrocodeOperandKind {
             8 => Self::NestedInstruction,
             9 => Self::UnsignedImmediate,
             10 => Self::SignedImmediate,
-            _ => Self::Empty,
+            11 => Self::AddressReference,
+            12 => Self::CallArguments,
+            13 => Self::StringConstant,
+            14 => Self::FloatingPointConstant,
+            _ => Self::Other,
         }
     }
 }
@@ -205,6 +337,7 @@ impl MicrocodeOperandKind {
 pub struct MicrocodeOperand {
     pub kind: MicrocodeOperandKind,
     pub register_id: i32,
+    pub processor_register_id: i32,
     pub local_variable_index: i32,
     pub local_variable_offset: i64,
     pub second_register_id: i32,
@@ -217,6 +350,10 @@ pub struct MicrocodeOperand {
     pub signed_immediate: i64,
     pub byte_width: i32,
     pub mark_user_defined_type: bool,
+    pub referenced_operand: Option<Box<MicrocodeOperand>>,
+    pub call_arguments: Vec<MicrocodeOperand>,
+    pub call_target: Address,
+    pub text: String,
 }
 
 #[derive(Debug, Clone)]
@@ -226,6 +363,145 @@ pub struct MicrocodeInstruction {
     pub right: MicrocodeOperand,
     pub destination: MicrocodeOperand,
     pub floating_point_instruction: bool,
+    pub modifies_destination: bool,
+    pub address: Address,
+    pub text: String,
+}
+
+/// Requested and observed maturity for an owned function-level microcode graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(i32)]
+pub enum MicrocodeMaturity {
+    Generated = 1,
+    Preoptimized = 2,
+    LocallyOptimized = 3,
+    CallsAnalyzed = 4,
+    GloballyOptimized1 = 5,
+    GloballyOptimized2 = 6,
+    GloballyOptimized3 = 7,
+    LocalVariables = 8,
+}
+
+impl MicrocodeMaturity {
+    fn from_raw(raw: i32) -> Result<Self> {
+        match raw {
+            1 => Ok(Self::Generated),
+            2 => Ok(Self::Preoptimized),
+            3 => Ok(Self::LocallyOptimized),
+            4 => Ok(Self::CallsAnalyzed),
+            5 => Ok(Self::GloballyOptimized1),
+            6 => Ok(Self::GloballyOptimized2),
+            7 => Ok(Self::GloballyOptimized3),
+            8 => Ok(Self::LocalVariables),
+            _ => Err(Error::internal(format!(
+                "unknown microcode maturity returned by shim: {raw}"
+            ))),
+        }
+    }
+}
+
+/// Options for generating an SDK-independent microcode graph snapshot.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MicrocodeGenerationOptions {
+    pub maturity: MicrocodeMaturity,
+    pub analyze_calls: bool,
+}
+
+impl Default for MicrocodeGenerationOptions {
+    fn default() -> Self {
+        Self {
+            maturity: MicrocodeMaturity::Preoptimized,
+            analyze_calls: false,
+        }
+    }
+}
+
+/// Kind of ABI-level storage location for one microcode value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(i32)]
+pub enum MicrocodeValueLocationKind {
+    Unspecified = 0,
+    Register = 1,
+    RegisterWithOffset = 2,
+    RegisterPair = 3,
+    RegisterRelative = 4,
+    StackOffset = 5,
+    StaticAddress = 6,
+    Scattered = 7,
+}
+
+impl MicrocodeValueLocationKind {
+    fn from_raw(raw: i32) -> Result<Self> {
+        match raw {
+            0 => Ok(Self::Unspecified),
+            1 => Ok(Self::Register),
+            2 => Ok(Self::RegisterWithOffset),
+            3 => Ok(Self::RegisterPair),
+            4 => Ok(Self::RegisterRelative),
+            5 => Ok(Self::StackOffset),
+            6 => Ok(Self::StaticAddress),
+            7 => Ok(Self::Scattered),
+            _ => Err(Error::internal(format!(
+                "unknown microcode location kind returned by shim: {raw}"
+            ))),
+        }
+    }
+}
+
+/// One fragment of a scattered microcode value location.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MicrocodeLocationPart {
+    pub kind: MicrocodeValueLocationKind,
+    pub register_id: i32,
+    pub second_register_id: i32,
+    pub register_offset: i32,
+    pub register_relative_offset: i64,
+    pub stack_offset: i64,
+    pub static_address: Address,
+    pub byte_offset: i32,
+    pub byte_size: i32,
+}
+
+/// Copied ABI-level storage location for a function argument or return value.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MicrocodeValueLocation {
+    pub kind: MicrocodeValueLocationKind,
+    pub register_id: i32,
+    pub second_register_id: i32,
+    pub register_offset: i32,
+    pub register_relative_offset: i64,
+    pub stack_offset: i64,
+    pub static_address: Address,
+    pub scattered_parts: Vec<MicrocodeLocationPart>,
+}
+
+/// One copied function argument and its microcode storage location.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MicrocodeFunctionArgument {
+    pub name: String,
+    pub location: MicrocodeValueLocation,
+    pub byte_width: i32,
+}
+
+/// One copied microcode basic block.
+#[derive(Debug, Clone)]
+pub struct MicrocodeBlock {
+    pub index: i32,
+    pub start_address: Address,
+    pub end_address: Address,
+    pub predecessors: Vec<i32>,
+    pub successors: Vec<i32>,
+    pub instructions: Vec<MicrocodeInstruction>,
+}
+
+/// Complete SDK-independent snapshot of one function-level microcode graph.
+#[derive(Debug, Clone)]
+pub struct MicrocodeFunction {
+    pub entry_address: Address,
+    pub maturity: MicrocodeMaturity,
+    pub arguments: Vec<MicrocodeFunctionArgument>,
+    pub return_location: Option<MicrocodeValueLocation>,
+    pub blocks: Vec<MicrocodeBlock>,
 }
 
 #[derive(Debug)]
@@ -739,14 +1015,64 @@ impl DecompiledFunction {
     pub fn set_comment(&self, ea: Address, text: &str, position: i32) -> Status {
         let c = CString::new(text).map_err(|_| Error::validation("invalid text"))?;
         let ret =
-            unsafe { idax_sys::idax_decompiled_set_comment(self.handle, ea, c.as_ptr(), position) };
+            unsafe { idax_sys::idax_decompiled_capture_user_lvar_settings(self.handle, &mut out) };
+        if ret != 0 || out.is_null() {
+            Err(error::consume_last_error(
+                "capture_user_lvar_settings failed",
+            ))
+        } else {
+            Ok(LvarSnapshot { handle: out })
+        }
+    }
+
+    pub fn restore_user_lvar_settings(&self, snapshot: &LvarSnapshot) -> Status {
+        let ret = unsafe {
+            idax_sys::idax_decompiled_restore_user_lvar_settings(self.handle, snapshot.handle)
+        };
+        error::int_to_status(ret, "restore_user_lvar_settings failed")
+    }
+
+    pub fn set_variable_comment_by_name(&self, variable_name: &str, comment: &str) -> Status {
+        let c_name =
+            CString::new(variable_name).map_err(|_| Error::validation("invalid variable name"))?;
+        let c_comment = CString::new(comment).map_err(|_| Error::validation("invalid comment"))?;
+        let ret = unsafe {
+            idax_sys::idax_decompiled_set_variable_comment_by_name(
+                self.handle,
+                c_name.as_ptr(),
+                c_comment.as_ptr(),
+            )
+        };
+        error::int_to_status(ret, "set_variable_comment_by_name failed")
+    }
+
+    pub fn set_variable_comment_by_index(&self, variable_index: usize, comment: &str) -> Status {
+        let c_comment = CString::new(comment).map_err(|_| Error::validation("invalid comment"))?;
+        let ret = unsafe {
+            idax_sys::idax_decompiled_set_variable_comment_by_index(
+                self.handle,
+                variable_index,
+                c_comment.as_ptr(),
+            )
+        };
+        error::int_to_status(ret, "set_variable_comment_by_index failed")
+    }
+
+    pub fn set_comment(&self, ea: Address, text: &str, position: CommentPosition) -> Status {
+        let c = CString::new(text).map_err(|_| Error::validation("invalid text"))?;
+        let raw_position = position.to_raw()?;
+        let ret = unsafe {
+            idax_sys::idax_decompiled_set_comment(self.handle, ea, c.as_ptr(), &raw_position)
+        };
         error::int_to_status(ret, "set_comment failed")
     }
 
-    pub fn get_comment(&self, ea: Address, position: i32) -> Result<String> {
+    pub fn get_comment(&self, ea: Address, position: CommentPosition) -> Result<String> {
+        let raw_position = position.to_raw()?;
         unsafe {
             let mut ptr: *mut c_char = std::ptr::null_mut();
-            let ret = idax_sys::idax_decompiled_get_comment(self.handle, ea, position, &mut ptr);
+            let ret =
+                idax_sys::idax_decompiled_get_comment(self.handle, ea, &raw_position, &mut ptr);
             if ret != 0 {
                 return Err(error::consume_last_error("get_comment failed"));
             }
@@ -754,9 +1080,69 @@ impl DecompiledFunction {
         }
     }
 
+    pub fn comments(&self) -> Result<Vec<PseudocodeComment>> {
+        unsafe {
+            let mut ptr: *mut idax_sys::IdaxPseudocodeComment = std::ptr::null_mut();
+            let mut count = 0usize;
+            let ret = idax_sys::idax_decompiled_comments(self.handle, &mut ptr, &mut count);
+            if ret != 0 {
+                return Err(error::consume_last_error("comments failed"));
+            }
+            if count == 0 {
+                return Ok(Vec::new());
+            }
+            if ptr.is_null() {
+                return Err(Error::internal("comments returned a null array"));
+            }
+            let converted = (|| {
+                let mut comments = Vec::with_capacity(count);
+                for raw in std::slice::from_raw_parts(ptr, count) {
+                    let position = CommentPosition::from_raw(raw.position)?;
+                    if raw.text.is_null() {
+                        return Err(Error::internal("comment text is null"));
+                    }
+                    let text = CStr::from_ptr(raw.text)
+                        .to_str()
+                        .map_err(|_| Error::validation("comment text is not UTF-8"))?
+                        .to_owned();
+                    comments.push(PseudocodeComment {
+                        address: raw.address,
+                        position,
+                        text,
+                    });
+                }
+                Ok(comments)
+            })();
+            idax_sys::idax_decompiled_comments_free(ptr, count);
+            converted
+        }
+    }
+
     pub fn save_comments(&self) -> Status {
         let ret = unsafe { idax_sys::idax_decompiled_save_comments(self.handle) };
         error::int_to_status(ret, "save_comments failed")
+    }
+
+    pub fn has_orphan_comments(&self) -> Result<bool> {
+        let mut out = 0;
+        let ret = unsafe { idax_sys::idax_decompiled_has_orphan_comments(self.handle, &mut out) };
+        if ret != 0 {
+            Err(error::consume_last_error("has_orphan_comments failed"))
+        } else {
+            Ok(out != 0)
+        }
+    }
+
+    pub fn remove_orphan_comments(&self) -> Result<usize> {
+        let mut out = 0;
+        let ret =
+            unsafe { idax_sys::idax_decompiled_remove_orphan_comments(self.handle, &mut out) };
+        if ret != 0 {
+            Err(error::consume_last_error("remove_orphan_comments failed"))
+        } else {
+            usize::try_from(out)
+                .map_err(|_| Error::internal("negative orphan comment removal count"))
+        }
     }
 
     pub fn entry_address(&self) -> Result<Address> {
@@ -1204,6 +1590,39 @@ pub fn decompile(ea: Address) -> Result<DecompiledFunction> {
     }
 }
 
+/// Generate a complete owned microcode graph for one function.
+///
+/// The returned value contains no SDK pointers and remains valid after the
+/// native microcode array used to produce it has been destroyed.
+pub fn generate_microcode(
+    function_address: Address,
+    options: MicrocodeGenerationOptions,
+) -> Result<MicrocodeFunction> {
+    unsafe {
+        let mut raw: *mut idax_sys::IdaxMicrocodeFunction = std::ptr::null_mut();
+        let ret = idax_sys::idax_decompiler_generate_microcode(
+            function_address,
+            options.maturity as i32,
+            i32::from(options.analyze_calls),
+            &mut raw,
+        );
+        if ret != 0 {
+            return Err(error::consume_last_error(
+                "decompiler::generate_microcode failed",
+            ));
+        }
+        if raw.is_null() {
+            return Err(Error::internal(
+                "decompiler::generate_microcode returned a null graph",
+            ));
+        }
+
+        let parsed = microcode_function_from_ffi(&*raw);
+        idax_sys::idax_decompiler_microcode_function_free(raw);
+        parsed
+    }
+}
+
 pub fn mark_dirty(function_address: Address, close_views: bool) -> Status {
     let ret = unsafe {
         idax_sys::idax_decompiler_mark_dirty(function_address, if close_views { 1 } else { 0 })
@@ -1417,6 +1836,32 @@ where
         unsafe { drop(Box::from_raw(raw)) };
         return Err(error::consume_last_error(
             "decompiler::on_refresh_pseudocode failed",
+        ));
+    }
+    save_context(&SUB_CONTEXTS, token, raw);
+    Ok(token)
+}
+
+/// Subscribe when an existing pseudocode view switches to another function.
+pub fn on_switch_pseudocode<F>(callback: F) -> Result<Token>
+where
+    F: FnMut(PseudocodeEvent) + Send + 'static,
+{
+    let raw = Box::into_raw(Box::new(PseudocodeContext {
+        callback: Box::new(callback),
+    }));
+    let mut token: Token = 0;
+    let ret = unsafe {
+        idax_sys::idax_decompiler_on_switch_pseudocode(
+            Some(pseudocode_trampoline),
+            raw as *mut c_void,
+            &mut token,
+        )
+    };
+    if ret != 0 {
+        unsafe { drop(Box::from_raw(raw)) };
+        return Err(error::consume_last_error(
+            "decompiler::on_switch_pseudocode failed",
         ));
     }
     save_context(&SUB_CONTEXTS, token, raw);
@@ -1645,9 +2090,30 @@ unsafe fn microcode_operand_from_ffi(
         }))
     };
 
+    let referenced_operand = if raw.referenced_operand.is_null() {
+        None
+    } else {
+        Some(Box::new(unsafe {
+            microcode_operand_from_ffi(&*raw.referenced_operand)?
+        }))
+    };
+
+    let raw_call_arguments = unsafe {
+        checked_ffi_slice(
+            raw.call_arguments,
+            raw.call_argument_count,
+            "microcode call arguments",
+        )?
+    };
+    let mut call_arguments = Vec::with_capacity(raw_call_arguments.len());
+    for argument in raw_call_arguments {
+        call_arguments.push(unsafe { microcode_operand_from_ffi(argument)? });
+    }
+
     Ok(MicrocodeOperand {
         kind: MicrocodeOperandKind::from_raw(raw.kind),
         register_id: raw.register_id,
+        processor_register_id: raw.processor_register_id,
         local_variable_index: raw.local_variable_index,
         local_variable_offset: raw.local_variable_offset,
         second_register_id: raw.second_register_id,
@@ -1660,6 +2126,10 @@ unsafe fn microcode_operand_from_ffi(
         signed_immediate: raw.signed_immediate,
         byte_width: raw.byte_width,
         mark_user_defined_type: raw.mark_user_defined_type != 0,
+        referenced_operand,
+        call_arguments,
+        call_target: raw.call_target,
+        text: cstr_opt(raw.text),
     })
 }
 
@@ -1672,6 +2142,138 @@ unsafe fn microcode_instruction_from_ffi(
         right: unsafe { microcode_operand_from_ffi(&raw.right)? },
         destination: unsafe { microcode_operand_from_ffi(&raw.destination)? },
         floating_point_instruction: raw.floating_point_instruction != 0,
+        modifies_destination: raw.modifies_destination != 0,
+        address: raw.address,
+        text: cstr_opt(raw.text),
+    })
+}
+
+unsafe fn checked_ffi_slice<'a, T>(ptr: *const T, count: usize, label: &str) -> Result<&'a [T]> {
+    if count == 0 {
+        return Ok(&[]);
+    }
+    if ptr.is_null() {
+        return Err(Error::internal(format!(
+            "{label} returned a null array with a nonzero count"
+        )));
+    }
+    let element_size = std::mem::size_of::<T>();
+    if element_size != 0 && count > (isize::MAX as usize) / element_size {
+        return Err(Error::internal(format!(
+            "{label} array size exceeds Rust slice limits"
+        )));
+    }
+    Ok(unsafe { std::slice::from_raw_parts(ptr, count) })
+}
+
+unsafe fn microcode_location_from_ffi(
+    raw: &idax_sys::IdaxMicrocodeValueLocation,
+) -> Result<MicrocodeValueLocation> {
+    let raw_parts = unsafe {
+        checked_ffi_slice(
+            raw.scattered_parts,
+            raw.scattered_part_count,
+            "microcode scattered location parts",
+        )?
+    };
+    let mut scattered_parts = Vec::with_capacity(raw_parts.len());
+    for part in raw_parts {
+        scattered_parts.push(MicrocodeLocationPart {
+            kind: MicrocodeValueLocationKind::from_raw(part.kind)?,
+            register_id: part.register_id,
+            second_register_id: part.second_register_id,
+            register_offset: part.register_offset,
+            register_relative_offset: part.register_relative_offset,
+            stack_offset: part.stack_offset,
+            static_address: part.static_address,
+            byte_offset: part.byte_offset,
+            byte_size: part.byte_size,
+        });
+    }
+
+    Ok(MicrocodeValueLocation {
+        kind: MicrocodeValueLocationKind::from_raw(raw.kind)?,
+        register_id: raw.register_id,
+        second_register_id: raw.second_register_id,
+        register_offset: raw.register_offset,
+        register_relative_offset: raw.register_relative_offset,
+        stack_offset: raw.stack_offset,
+        static_address: raw.static_address,
+        scattered_parts,
+    })
+}
+
+unsafe fn microcode_function_from_ffi(
+    raw: &idax_sys::IdaxMicrocodeFunction,
+) -> Result<MicrocodeFunction> {
+    let raw_arguments = unsafe {
+        checked_ffi_slice(
+            raw.arguments,
+            raw.argument_count,
+            "microcode function arguments",
+        )?
+    };
+    let mut arguments = Vec::with_capacity(raw_arguments.len());
+    for argument in raw_arguments {
+        arguments.push(MicrocodeFunctionArgument {
+            name: cstr_opt(argument.name),
+            location: unsafe { microcode_location_from_ffi(&argument.location)? },
+            byte_width: argument.byte_width,
+        });
+    }
+
+    let return_location = if raw.has_return_location != 0 {
+        Some(unsafe { microcode_location_from_ffi(&raw.return_location)? })
+    } else {
+        None
+    };
+
+    let raw_blocks = unsafe { checked_ffi_slice(raw.blocks, raw.block_count, "microcode blocks")? };
+    let mut blocks = Vec::with_capacity(raw_blocks.len());
+    for block in raw_blocks {
+        let predecessors = unsafe {
+            checked_ffi_slice(
+                block.predecessors,
+                block.predecessor_count,
+                "microcode block predecessors",
+            )?
+        }
+        .to_vec();
+        let successors = unsafe {
+            checked_ffi_slice(
+                block.successors,
+                block.successor_count,
+                "microcode block successors",
+            )?
+        }
+        .to_vec();
+        let raw_instructions = unsafe {
+            checked_ffi_slice(
+                block.instructions,
+                block.instruction_count,
+                "microcode block instructions",
+            )?
+        };
+        let mut instructions = Vec::with_capacity(raw_instructions.len());
+        for instruction in raw_instructions {
+            instructions.push(unsafe { microcode_instruction_from_ffi(instruction)? });
+        }
+        blocks.push(MicrocodeBlock {
+            index: block.index,
+            start_address: block.start_address,
+            end_address: block.end_address,
+            predecessors,
+            successors,
+            instructions,
+        });
+    }
+
+    Ok(MicrocodeFunction {
+        entry_address: raw.entry_address,
+        maturity: MicrocodeMaturity::from_raw(raw.maturity)?,
+        arguments,
+        return_location,
+        blocks,
     })
 }
 

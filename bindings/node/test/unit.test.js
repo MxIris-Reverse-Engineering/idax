@@ -54,8 +54,9 @@ describe('Namespace Exports', () => {
 
     const EXPECTED_NAMESPACES = [
         'database', 'address', 'segment', 'function', 'instruction',
-        'name', 'xref', 'comment', 'data', 'search', 'analysis',
+        'name', 'xref', 'offset', 'comment', 'data', 'search', 'analysis',
         'type', 'entry', 'fixup', 'event', 'storage', 'diagnostics',
+        'undo', 'problem', 'bookmark', 'navigation', 'exception', 'parser', 'script', 'directory', 'registry', 'registers',
         'lumina', 'lines', 'ui', 'decompiler', 'path',
     ];
 
@@ -76,7 +77,7 @@ describe('UI Namespace Structure', () => {
     });
 
     const EXPECTED_FUNCTIONS = [
-        'copyToClipboard', 'readClipboard', 'clipboardBackend', 'askText',
+        'copyToClipboard', 'readClipboard', 'clipboardBackend', 'currentWidget', 'askText',
         'askFormSvalBitset', 'askFormSvalPathBitset', 'askFormPathBitset',
         'askFormRadioSvalPathBitset', 'askFormThreeSvalsPathTwoBitsets',
     ];
@@ -108,7 +109,7 @@ describe('UI Namespace Structure', () => {
         expect(error.category).toBe(category);
     }
 
-    it('should expose deterministic default clipboard unsupported behavior', () => {
+    it('should expose deterministic clipboard backend behavior', () => {
         if (!ui) return;
         const backend = ui.clipboardBackend();
         expect(typeof backend).toBe('string');
@@ -172,10 +173,11 @@ describe('Database Namespace Structure', () => {
     });
 
     const EXPECTED_FUNCTIONS = [
-        'init', 'open', 'save', 'saveTo', 'close',
+        'init', 'open', 'save', 'close',
         'inputFilePath', 'idbPath', 'fileTypeName', 'inputMd5',
         'compilerInfo', 'importModules', 'imageBase',
-        'processorId', 'processorName', 'addressBitness', 'setAddressBitness',
+        'processorId', 'processorIdFromRaw', 'processor', 'processorProfile',
+        'processorName', 'addressBitness', 'setAddressBitness',
         'isBigEndian', 'abiName',
         'minAddress', 'maxAddress', 'addressBounds', 'addressSpan',
     ];
@@ -186,6 +188,15 @@ describe('Database Namespace Structure', () => {
             expect(typeof db[fn]).toBe('function');
         });
     }
+
+    it('should normalize only verified public processor IDs', () => {
+        if (!db) return;
+        expect(db.processorIdFromRaw(0)).toBe(0);
+        expect(db.processorIdFromRaw(76)).toBe(76);
+        expect(db.processorIdFromRaw(-1)).toBeNull();
+        expect(db.processorIdFromRaw(77)).toBeNull();
+        expect(db.processorIdFromRaw(0x8001)).toBeNull();
+    });
 });
 
 // ── Address Namespace Functions ──────────────────────────────────────────
@@ -227,6 +238,13 @@ describe('Segment Namespace Structure', () => {
     const EXPECTED_FUNCTIONS = [
         'create', 'remove', 'at', 'byName', 'byIndex', 'count',
         'setName', 'setClass', 'setType', 'setPermissions', 'setBitness',
+        'segmentRegisters', 'segmentRegisterValue',
+        'defaultSegmentRegisterValue', 'segmentRegisterRange',
+        'previousSegmentRegisterRange', 'segmentRegisterRanges',
+        'segmentRegisterRangeIndex', 'splitSegmentRegisterRange',
+        'removeSegmentRegisterRange', 'setDefaultSegmentRegister',
+        'setDefaultSegmentRegisterForAll', 'setDefaultDataSegment',
+        'setSegmentRegisterAtNextCode', 'copySegmentRegisterRanges',
         'comment', 'setComment', 'resize', 'move',
         'all', 'first', 'last', 'next', 'prev',
     ];
@@ -237,6 +255,12 @@ describe('Segment Namespace Structure', () => {
             expect(typeof seg[fn]).toBe('function');
         });
     }
+
+    it('should reject malformed legacy segment-register defaults locally', () => {
+        if (!seg) return;
+        expect(() => seg.setDefaultSegmentRegister(0n, 1.5, 0n)).toThrow();
+        expect(() => seg.setDefaultSegmentRegister(0n, 1, null)).toThrow();
+    });
 });
 
 // ── Function Namespace Functions ────────────────────────────────────────
@@ -253,7 +277,7 @@ describe('Function Namespace Structure', () => {
         'setStart', 'setEnd', 'update', 'reanalyze',
         'comment', 'setComment',
         'callers', 'callees', 'chunks', 'tailChunks',
-        'setPrototype', 'applyDecl',
+        'setPrototype', 'applyDecl', 'declaration',
         'frame', 'all',
         'itemAddresses', 'codeAddresses',
     ];
@@ -278,6 +302,9 @@ describe('Instruction Namespace Structure', () => {
     const EXPECTED_FUNCTIONS = [
         'decode', 'create', 'text',
         'setOperandHex', 'setOperandDecimal',
+        'setOperandEnum', 'operandEnum',
+        'setOperandStructOffset', 'ensureOperandStructMemberOffset',
+        'operandStructOffsetPath', 'operandStructOffsetPathNames',
         'operandText', 'operandByteWidth',
         'codeRefsFrom', 'dataRefsFrom', 'callTargets',
         'isCall', 'isReturn', 'isJump',
@@ -290,6 +317,21 @@ describe('Instruction Namespace Structure', () => {
             expect(typeof insn[fn]).toBe('function');
         });
     }
+
+    it('should declare operand access-mode metadata', () => {
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('isRead: boolean');
+        expect(dts).toContain('isWritten: boolean');
+        expect(dts).toContain('withFunctionArgumentType(index: number, replacement: TypeInfo): TypeInfo');
+        expect(dts).toContain('function operandEnum(address: Address, n?: number): OperandEnum');
+        expect(dts).toContain('structureName: string');
+        expect(dts).toContain('memberNames: string[]');
+        expect(dts).toContain('function ensureOperandStructMemberOffset(');
+        expect(dts).toContain('processorRegisterId: number');
+        expect(dts).toContain('modifiesDestination: boolean');
+    });
 });
 
 // ── Name, Comment, XRef Namespace Functions ─────────────────────────────
@@ -333,11 +375,28 @@ describe('Data Namespace Structure', () => {
     });
 
     const EXPECTED_FUNCTIONS = [
-        'readByte', 'readWord', 'readDword', 'readQword', 'readBytes',
+        'readByte', 'readWord', 'readDword', 'readQword', 'readBytes', 'readString',
+        'stringListOptions', 'configureStringList', 'rebuildStringList',
+        'clearStringList', 'stringLiterals',
         'writeByte', 'writeWord', 'writeDword', 'writeQword', 'writeBytes',
         'patchByte', 'patchWord', 'patchDword',
         'revertPatch', 'originalByte',
-        'defineByte', 'defineWord', 'defineDword',
+        'defineByte', 'defineWord', 'defineDword', 'defineQword',
+        'defineOword', 'defineYword', 'defineZword', 'tbyteElementSize',
+        'defineTbyte', 'packedRealElementSize', 'definePackedReal',
+        'defineFloat', 'defineDouble',
+        'registerCustomDataType', 'unregisterCustomDataType',
+        'customDataType', 'findCustomDataType', 'customDataTypes',
+        'registerCustomDataFormat', 'unregisterCustomDataFormat',
+        'customDataFormat', 'findCustomDataFormat', 'customDataFormats',
+        'standardCustomDataFormats', 'attachCustomDataFormat',
+        'detachCustomDataFormat', 'isCustomDataFormatAttached',
+        'attachCustomDataFormatToStandardTypes',
+        'detachCustomDataFormatFromStandardTypes',
+        'isCustomDataFormatAttachedToStandardTypes',
+        'customDataItemSize', 'defineCustom', 'defineCustomInferred',
+        'customDataAt', 'renderCustomData', 'scanCustomData',
+        'analyzeCustomData',
         'undefine', 'findBinaryPattern',
     ];
 
@@ -388,7 +447,13 @@ describe('Search/Analysis/Entry/Fixup/Event Structure', () => {
 
     it('should have event functions', () => {
         if (!idax) return;
-        for (const fn of ['onSegmentAdded', 'onFunctionAdded', 'onRenamed', 'onBytePatched', 'unsubscribe']) {
+        for (const fn of [
+            'onSegmentAdded', 'onSegmentDeleted', 'onFunctionAdded', 'onFunctionDeleted',
+            'onRenamed', 'onBytePatched', 'onCommentChanged', 'onSegmentMoved',
+            'onFunctionUpdated', 'onItemTypeChanged', 'onOperandTypeChanged',
+            'onCodeCreated', 'onDataCreated', 'onItemsDestroyed',
+            'onExtraCommentChanged', 'onLocalTypesChanged', 'onEvent', 'unsubscribe',
+        ]) {
             expect(typeof idax.event[fn]).toBe('function');
         }
     });
@@ -424,6 +489,36 @@ describe('Type/Storage/Decompiler/Lines/Diagnostics/Lumina Structure', () => {
         expect(error.category).toBe('Validation');
     });
 
+    it('should document rich TypeInfo layout/introspection methods', () => {
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        for (const signature of [
+            'isBool(): boolean',
+            'isChar(): boolean',
+            'isUnsignedChar(): boolean',
+            'isSigned(): boolean',
+            'isForwardDeclaration(): boolean',
+            'forwardDeclarationKind(): TypeKind',
+            'kind(): TypeKind',
+            'name(): string',
+            'declaration(declaratorName?: string): string',
+            'pointerDetails(): PointerDetails',
+            'withShiftedParent(parent: TypeInfo, byteDelta: number): TypeInfo',
+            'functionDetails(): FunctionDetails',
+            'withFunctionArgumentName(index: number, name: string): TypeInfo',
+            'withFunctionReturnType(replacement: TypeInfo): TypeInfo',
+            'enumDetails(): EnumDetails',
+            'udtDetails(): UdtDetails',
+            'setUdtSemantics(isCppObject: boolean, isVftable: boolean): void',
+            'memberReferences(byteOffset: number): Address[]',
+            'ensureMemberReference(byteOffset: number, sourceAddress: Address): boolean',
+            'replaceForwardDeclaration(name: string): TypeInfo',
+        ]) {
+            expect(dts).toContain(signature);
+        }
+    });
+
     it('should have storage functions', () => {
         if (!idax) return;
         for (const fn of ['open', 'openById']) {
@@ -442,9 +537,11 @@ describe('Type/Storage/Decompiler/Lines/Diagnostics/Lumina Structure', () => {
             'markDirtyWithCallers',
             'registerMicrocodeFilter',
             'unregisterMicrocodeFilter',
+            'generateMicrocode',
             'onMaturityChanged',
             'onFuncPrinted',
             'onRefreshPseudocode',
+            'onSwitchPseudocode',
             'onPopulatingPopup',
         ]) {
             expect(typeof idax.decompiler[fn]).toBe('function');
@@ -454,6 +551,39 @@ describe('Type/Storage/Decompiler/Lines/Diagnostics/Lumina Structure', () => {
         expect(typeof idax.decompiler.ScopedSession.prototype.close).toBe('function');
     });
 
+    it('should document call-analysis microcode generation options', () => {
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('analyzeCalls?: boolean');
+        expect(dts).toContain(
+            'maturityOrOptions?: MicrocodeMaturity | MicrocodeGenerationOptions',
+        );
+    });
+
+    it('should document semantic pseudocode comment positions', () => {
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        for (const declaration of [
+            "{ kind: 'argument'; index: number }",
+            "{ kind: 'switchCase'; value: number }",
+            'comments(): PseudocodeComment[]',
+            'hasOrphanComments(): boolean',
+            'removeOrphanComments(): number',
+        ]) {
+            expect(dts).toContain(declaration);
+        }
+    });
+
+    it('should reject a non-boolean call-analysis option before generation', () => {
+        if (!idax) return;
+        expect(() => idax.decompiler.generateMicrocode(
+            0n,
+            { analyzeCalls: 'yes' },
+        )).toThrow(/analyzeCalls must be boolean/);
+    });
+
     it('should validate onPopulatingPopup callback argument shape', () => {
         if (!idax) return;
         expect(() => idax.decompiler.onPopulatingPopup(123)).toThrow(/callback function/);
@@ -461,9 +591,23 @@ describe('Type/Storage/Decompiler/Lines/Diagnostics/Lumina Structure', () => {
 
     it('should have lines functions', () => {
         if (!idax) return;
-        for (const fn of ['colstr', 'tagRemove', 'tagAdvance', 'tagStrlen', 'makeAddrTag', 'decodeAddrTag']) {
+        for (const fn of [
+            'addSourceFile', 'sourceFileAt', 'removeSourceFile',
+            'colstr', 'tagRemove', 'tagAdvance', 'tagStrlen',
+            'makeAddrTag', 'decodeAddrTag',
+        ]) {
             expect(typeof idax.lines[fn]).toBe('function');
         }
+    });
+
+    it('should declare owned string-list and source-file metadata', () => {
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('interface StringListOptions');
+        expect(dts).toContain('function stringLiterals(rebuild?: boolean): StringLiteral[]');
+        expect(dts).toContain('interface SourceFileRange');
+        expect(dts).toContain('function sourceFileAt(address: Address): SourceFile');
     });
 
     it('should have diagnostics functions', () => {
@@ -478,6 +622,258 @@ describe('Type/Storage/Decompiler/Lines/Diagnostics/Lumina Structure', () => {
         for (const fn of ['hasConnection', 'closeConnection', 'closeAllConnections', 'pull', 'push']) {
             expect(typeof idax.lumina[fn]).toBe('function');
         }
+    });
+
+    it('should have undo functions and declarations', () => {
+        if (!idax) return;
+        for (const fn of [
+            'createPoint', 'undoActionLabel', 'redoActionLabel',
+            'performUndo', 'performRedo',
+        ]) {
+            expect(typeof idax.undo[fn]).toBe('function');
+        }
+        expect(() => idax.undo.createPoint(1, 'label')).toThrow(/string arguments/);
+        expect(() => idax.undo.createPoint('bad\0action', 'label')).toThrow(/embedded NUL/);
+        expect(() => idax.undo.createPoint('action', 'bad\0label')).toThrow(/embedded NUL/);
+
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('export namespace undo');
+        expect(dts).toContain('function undoActionLabel(): string | null');
+    });
+
+    it('should have typed problem-list functions and declarations', () => {
+        if (!idax) return;
+        for (const fn of [
+            'description', 'remember', 'next', 'remove', 'name', 'contains',
+        ]) {
+            expect(typeof idax.problem[fn]).toBe('function');
+        }
+        expect(() => idax.problem.name('unknownKind')).toThrow(/Unknown problem kind/);
+        expect(() => idax.problem.name(12)).toThrow(/must be a string/);
+        expect(() => idax.problem.remember('attention', 0n, 'bad\0message'))
+            .toThrow(/embedded NUL/);
+
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('export namespace problem');
+        expect(dts).toContain("| 'flairIndecision';");
+        expect(dts).toContain('function next(kind: Kind, atOrAfter?: Address | null): Address | null');
+    });
+
+    it('should have opaque address-bookmark functions and declarations', () => {
+        if (!idax) return;
+        expect(idax.bookmark.maxSlots).toBe(1024);
+        for (const fn of ['all', 'at', 'atSlot', 'set', 'remove', 'removeSlot'])
+            expect(typeof idax.bookmark[fn]).toBe('function');
+        expect(() => idax.bookmark.atSlot(-1)).toThrow(/unsigned 32-bit/);
+        expect(() => idax.bookmark.atSlot(1.5)).toThrow(/unsigned 32-bit/);
+        expect(() => idax.bookmark.atSlot(1024)).toThrow(/outside the supported range/);
+        expect(() => idax.bookmark.set(0n, 'bad\0description'))
+            .toThrow(/embedded NUL/);
+
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('export namespace bookmark');
+        expect(dts).toContain('function atSlot(slot: number): Bookmark | null');
+        expect(dts).toContain('slot?: number | null): Bookmark');
+    });
+
+    it('should have an opaque address-navigation factory and declarations', () => {
+        if (!idax) return;
+        expect(typeof idax.navigation.open).toBe('function');
+        const entry = { address: 0n, channel: 'alpha', metadata: '' };
+        expect(() => idax.navigation.open('', entry)).toThrow(/cannot be empty/);
+        expect(() => idax.navigation.open('bad\0name', entry))
+            .toThrow(/embedded NUL/);
+        expect(() => idax.navigation.open('bad-address', {
+            address: idax.BadAddress,
+            channel: 'alpha',
+            metadata: '',
+        })).toThrow(/BadAddress/);
+        expect(() => idax.navigation.open('bad-channel', {
+            address: 0n,
+            channel: 'bad\0channel',
+            metadata: '',
+        })).toThrow(/embedded NUL/);
+
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('export namespace navigation');
+        expect(dts).toContain('transferChannelTo(destination: History');
+        expect(dts).toContain('function open(name: string, initial: Entry): History');
+    });
+
+    it('should have opaque offset/reference functions and declarations', () => {
+        if (!idax) return;
+        for (const fn of [
+            'referenceTypes', 'defaultReferenceType', 'referenceInfo',
+            'applyReference', 'removeReference', 'renderStoredExpression',
+            'renderExpression', 'possibleOffset32Target',
+            'calculateOffsetBase', 'probableBase', 'calculateReference',
+            'addOperandDataReferences', 'calculateBaseValue',
+        ]) {
+            expect(typeof idax.offset[fn]).toBe('function');
+        }
+        expect(() => idax.offset.referenceInfo(0n, { index: -1 }))
+            .toThrow(/nonnegative safe integer/);
+        expect(() => idax.offset.referenceInfo(0n, { index: 1e100 }))
+            .toThrow(/nonnegative safe integer/);
+        expect(() => idax.offset.referenceInfo(0n, { index: 0, outer: 'yes' }))
+            .toThrow(/must be a boolean/);
+
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('export namespace offset');
+        expect(dts).toContain('interface ReferenceInfo');
+        expect(dts).toContain('function renderExpression(');
+    });
+
+    it('should have opaque register-tracking functions and declarations', () => {
+        if (!idax) return;
+        for (const fn of [
+            'track', 'constantAt', 'stackDeltaAt', 'nearestAt',
+            'clearControlFlowCache', 'clearDataReferenceCache',
+            'controlFlowReferenceChanged', 'dataReferenceChanged',
+        ]) {
+            expect(typeof idax.registers[fn]).toBe('function');
+        }
+        expect(() => idax.registers.track(idax.BadAddress, 'x0'))
+            .toThrow(/BadAddress/);
+        expect(() => idax.registers.track(0n, 'x0', 'deep'))
+            .toThrow(/depth must be an integer/);
+        expect(() => idax.registers.dataReferenceChanged(0n, 'unknown'))
+            .toThrow(/must be 'added' or 'removed'/);
+
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('export namespace registers');
+        expect(dts).toContain("| 'stackPointerDelta';");
+        expect(dts).toContain('function nearestAt(');
+    });
+
+    it('should have semantic exception-region functions and declarations', () => {
+        if (!idax) return;
+        for (const fn of ['list', 'remove', 'add', 'systemRegionStart', 'contains']) {
+            expect(typeof idax.exception[fn]).toBe('function');
+        }
+        expect(() => idax.exception.list({ start: 0n, end: 'bad' }))
+            .toThrow(/must be addresses/);
+        expect(() => idax.exception.contains(0n, 'unknownLocation'))
+            .toThrow(/Unknown exception location/);
+
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('export namespace exception');
+        expect(dts).toContain("| 'cppTry'");
+        expect(dts).toContain('function systemRegionStart(address: Address): Address | null');
+    });
+
+    it('should have semantic source-parser functions and declarations', () => {
+        if (!idax) return;
+        for (const fn of [
+            'select', 'selectFor', 'selectedName', 'setArguments',
+            'parseFor', 'parseWith', 'parseWithOptions', 'option', 'setOption',
+        ]) {
+            expect(typeof idax.parser[fn]).toBe('function');
+        }
+        expect(() => idax.parser.selectFor([])).toThrow(/cannot be empty/);
+        expect(() => idax.parser.selectFor('unknown')).toThrow(/Unknown source language/);
+        expect(() => idax.parser.setArguments('clang', 'bad\0argument'))
+            .toThrow(/embedded NUL/);
+        expect(() => idax.parser.parseWithOptions(
+            'clang', 'struct ignored {};', { packAlignment: 3 }))
+            .toThrow(/Pack alignment/);
+        expect(() => idax.parser.parseWithOptions(
+            'clang', 'struct ignored {};', {
+                assumeHighLevel: true,
+                lowerPrototypes: true,
+            })).toThrow(/mutually exclusive/);
+        expect(() => idax.parser.parseWithOptions(
+            'clang', 'struct ignored {};', { packAlignment: 1e100 }))
+            .toThrow(/representable/);
+
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('export namespace parser');
+        expect(dts).toContain("type InputKind = 'sourceText' | 'filePath'");
+        expect(dts).toContain('function selectedName(): string | null');
+    });
+
+    it('should have opaque IDC value and execution functions and declarations', () => {
+        if (!idax) return;
+        for (const fn of [
+            'integer', 'floating', 'string', 'object', 'evaluate', 'evaluateIdc',
+            'evaluateInteger', 'compileFile', 'compileText', 'compileSnippet',
+            'call', 'executeScript', 'evaluateSnippet', 'setIncludePaths',
+            'appendIncludePaths', 'resolveFile', 'executeSystemScript',
+            'functionNames', 'global', 'setGlobal', 'referenceGlobal',
+        ]) {
+            expect(typeof idax.script[fn]).toBe('function');
+        }
+        const integer = idax.script.integer(42n);
+        expect(integer.kind()).toBe('integer');
+        expect(integer.asInteger()).toBe(42n);
+        const zero = new idax.script.Value();
+        expect(zero.kind()).toBe('integer');
+        expect(zero.asInteger()).toBe(0n);
+        expect(integer.copy().asInteger()).toBe(42n);
+        expect(() => integer.asString()).toThrow(/exact kind/);
+        expect(() => idax.script.integer(1e100)).toThrow(/safe integer/);
+        expect(() => idax.script.evaluateIdc('1\0+2')).toThrow(/embedded NUL/);
+        expect(() => idax.script.compileText('return VALUE;', {
+            resolvedNames: [{ name: 'VALUE', value: 0xFFFFFFFFFFFFFFFFn }],
+        })).toThrow(/unresolved sentinel/);
+        expect(() => idax.script.functionNames('', 0)).toThrow(/\[1, INT_MAX\]/);
+        expect(() => integer.attribute('missing', 1)).toThrow(/must be boolean/);
+        expect(() => integer.setAttribute('value', zero, 'yes')).toThrow(/must be boolean/);
+        expect(() => idax.script.executeSystemScript('missing.idc', 1))
+            .toThrow(/must be boolean/);
+
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('export namespace script');
+        expect(dts).toContain("| 'opaquePointer' | 'reference'");
+        expect(dts).toContain('function evaluateIdc(');
+    });
+
+    it('should have an opaque standard directory-tree factory and declarations', () => {
+        if (!idax) return;
+        expect(typeof idax.directory.open).toBe('function');
+        expect(() => idax.directory.open('unknownKind'))
+            .toThrow(/Unknown standard directory-tree kind/);
+        expect(() => idax.directory.open(1)).toThrow(/must be a string/);
+
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('export namespace directory');
+        expect(dts).toContain("| 'snippets';");
+        expect(dts).toContain('function open(kind: Kind): Tree');
+    });
+
+    it('should have an opaque scoped registry factory and declarations', () => {
+        if (!idax) return;
+        expect(typeof idax.registry.open).toBe('function');
+        expect(() => idax.registry.open('')).toThrow(/cannot be empty/);
+        expect(() => idax.registry.open('bad\0key')).toThrow(/embedded NUL/);
+        expect(() => idax.registry.open(1)).toThrow(/Expected string/);
+
+        const fs = require('fs');
+        const path = require('path');
+        const dts = fs.readFileSync(path.join(__dirname, '../lib/index.d.ts'), 'utf8');
+        expect(dts).toContain('export namespace registry');
+        expect(dts).toContain("type ValueKind = 'string' | 'binary' | 'integer'");
+        expect(dts).toContain('function open(key: string): Store');
     });
 });
 

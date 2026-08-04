@@ -554,8 +554,9 @@ pub fn ask_form_three_svals_path_two_bitsets(
 
 /// Copy text to the host clipboard.
 ///
-/// The native idax library must be built with Qt clipboard support, otherwise
-/// this returns an unsupported error.
+/// Uses the native idax Qt backend when enabled, otherwise common host
+/// clipboard commands such as `wl-copy`, `xclip`, `xsel`, `pbcopy`, or
+/// `clip.exe`.
 pub fn copy_to_clipboard(text: &str) -> Status {
     let c_text = CString::new(text).map_err(|_| Error::validation("invalid clipboard text"))?;
     let rc = unsafe { idax_sys::idax_ui_copy_to_clipboard(c_text.as_ptr()) };
@@ -576,7 +577,7 @@ pub fn read_clipboard() -> Result<String> {
     Ok(unsafe { error::consume_c_string(out) })
 }
 
-/// Clipboard backend name, such as `"Qt"` or `"unsupported"`.
+/// Clipboard backend name, such as `"Qt"`, `"external:xclip"`, or `"unsupported"`.
 pub fn clipboard_backend() -> String {
     let ptr = unsafe { idax_sys::idax_ui_clipboard_backend() };
     if ptr.is_null() {
@@ -591,7 +592,7 @@ fn clipboard_error(fallback_msg: &str) -> Error {
     if err.category == crate::error::ErrorCategory::SdkFailure
         && clipboard_backend() == "unsupported"
     {
-        Error::unsupported("Qt clipboard support is disabled")
+        Error::unsupported("clipboard support is unavailable")
     } else {
         err
     }
@@ -628,6 +629,23 @@ pub fn selection() -> Result<Range> {
         return Err(error::consume_last_error("ui::selection failed"));
     }
     Ok(Range { start, end })
+}
+
+/// Snapshot the currently active IDA widget.
+///
+/// Returns `None` when no UI widget is active, including headless sessions.
+pub fn current_widget() -> Result<Option<WidgetRef>> {
+    let mut raw: *mut c_void = std::ptr::null_mut();
+    let mut id = 0;
+    let rc = unsafe { idax_sys::idax_ui_current_widget(&mut raw, &mut id) };
+    if rc != 0 {
+        return Err(error::consume_last_error("ui::current_widget failed"));
+    }
+    if raw.is_null() {
+        Ok(None)
+    } else {
+        Ok(Some(WidgetRef { raw, id }))
+    }
 }
 
 // ── Widget handle ───────────────────────────────────────────────────────

@@ -1,6 +1,9 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
+mod build_support;
+use build_support::patch_bindgen_output;
+
 fn canonicalize_safe<P: AsRef<Path>>(p: P) -> std::io::Result<PathBuf> {
     let canon = p.as_ref().canonicalize()?;
     if let Some(s) = canon.to_str() {

@@ -19,9 +19,17 @@
 //! | [`data`] | `ida::data` | Byte-level read, write, patch, and define |
 //! | [`name`] | `ida::name` | Naming and demangling |
 //! | [`xref`] | `ida::xref` | Cross-reference enumeration and mutation |
+//! | [`offset`] | `ida::offset` | Operand offset/reference metadata, rendering, calculation, and xref creation |
 //! | [`comment`] | `ida::comment` | Comments (regular, repeatable, anterior/posterior) |
 //! | [`search`] | `ida::search` | Text, binary, and immediate value searches |
 //! | [`analysis`] | `ida::analysis` | Auto-analysis control |
+//! | [`undo`] | `ida::undo` | Named restore points and undo/redo state |
+//! | [`problem`] | `ida::problem` | Typed analysis-problem lists |
+//! | [`navigation`] | `ida::navigation` | Persistent semantic address history |
+//! | [`exception`] | `ida::exception` | Architecture-independent exception regions |
+//! | [`parser`] | `ida::parser` | Third-party source-parser selection and type ingestion |
+//! | [`directory`] | `ida::directory` | Standard database organization trees |
+//! | [`registry`] | `ida::registry` | Scoped persistent plugin configuration |
 //! | [`lumina`] | `ida::lumina` | Lumina metadata pull/push |
 //! | [`types`] | `ida::type` | Type system: construction, introspection, application, bulk declaration import |
 //! | [`entry`] | `ida::entry` | Program entry points |
@@ -38,6 +46,7 @@
 //! | [`ui`] | `ida::ui` | UI utilities: messages, dialogs, widgets, events |
 //! | [`lines`] | `ida::lines` | Color tag manipulation |
 //! | [`diagnostics`] | `ida::diagnostics` | Logging and performance counters |
+//! | [`script`] | `ida::script` | Opaque IDC values and synchronous script execution |
 //!
 //! # Quick Start
 //!
@@ -89,6 +98,7 @@
 //!
 //! Types that hold SDK resources implement [`Drop`]:
 //! - [`types::TypeInfo`] — pimpl-wrapped type handle
+//! - [`navigation::History`] — persistent navigation-stream handle
 //! - [`storage::Node`] — netnode handle
 //! - [`decompiler::DecompiledFunction`] — decompilation result
 //! - [`decompiler::LvarSnapshot`] — saved local-variable metadata
@@ -103,15 +113,18 @@
 
 pub mod address;
 pub mod analysis;
+pub mod bookmark;
 pub mod comment;
 pub mod data;
 pub mod database;
 pub mod debugger;
 pub mod decompiler;
 pub mod diagnostics;
+pub mod directory;
 pub mod entry;
 pub mod error;
 pub mod event;
+pub mod exception;
 pub mod fixup;
 pub mod function;
 pub mod graph;
@@ -120,14 +133,22 @@ pub mod lines;
 pub mod loader;
 pub mod lumina;
 pub mod name;
+pub mod navigation;
+pub mod offset;
+pub mod parser;
 pub mod path;
 pub mod plugin;
+pub mod problem;
 pub mod processor;
+pub mod registers;
+pub mod registry;
+pub mod script;
 pub mod search;
 pub mod segment;
 pub mod storage;
 pub mod types;
 pub mod ui;
+pub mod undo;
 pub mod xref;
 
 #[cfg(test)]

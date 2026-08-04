@@ -3,19 +3,24 @@
 //! These tests require a real IDA installation (IDADIR set) and the test fixture
 //! binary at `tests/fixtures/simple_appcall_linux64` relative to the repo root.
 //!
-//! Run with: cargo test --test integration -- --test-threads=1
+//! Run with: cargo test --test integration
 //!
-//! The idalib runtime is single-threaded, so ALL tests in this file share a
-//! single database session initialized via `std::sync::Once`.  Tests must NOT
-//! call `database::close()` — that happens in the static destructor.
+//! The idalib runtime requires all calls on the thread that initialized it.
+//! This target therefore uses a custom sequential harness (`harness = false`)
+//! whose explicit `main` performs initialization, every test call, and cleanup
+//! on process main. Tests must NOT call `database::close()` individually.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Once};
+use std::io::Write;
+use std::panic::{self, AssertUnwindSafe};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, Once, OnceLock};
 
-use idax::address::BAD_ADDRESS;
+use idax::address::{Address, BAD_ADDRESS, Range};
+use idax::error::{ErrorCategory, Status};
 use idax::{
-    analysis, comment, data, database, decompiler, entry, event, fixup, function, graph,
-    instruction, lines, name, search, segment, storage, types, xref,
+    analysis, bookmark, comment, data, database, decompiler, directory, entry, event, exception,
+    fixup, function, graph, instruction, lines, name, navigation, offset, parser, plugin, problem,
+    registry, script, search, segment, storage, types, ui, undo, xref,
 };
 
 // ---------------------------------------------------------------------------
@@ -23,7 +28,8 @@ use idax::{
 // ---------------------------------------------------------------------------
 
 static INIT: Once = Once::new();
-static mut INIT_OK: bool = false;
+static INIT_OK: AtomicBool = AtomicBool::new(false);
+static FIXTURE_COPY: OnceLock<std::path::PathBuf> = OnceLock::new();
 
 /// Path to the test fixture, resolved relative to the workspace root.
 fn fixture_path() -> String {
@@ -37,10 +43,17 @@ fn fixture_path() -> String {
         .unwrap()
         .parent() // repo root
         .unwrap();
-    repo_root
-        .join("tests/fixtures/simple_appcall_linux64")
-        .to_string_lossy()
-        .into_owned()
+    let source = repo_root.join("tests/fixtures/simple_appcall_linux64");
+    let directory =
+        std::env::temp_dir().join(format!("idax_rust_integration_{}", std::process::id()));
+    if directory.exists() {
+        std::fs::remove_dir_all(&directory).expect("remove stale integration directory");
+    }
+    std::fs::create_dir_all(&directory).expect("create integration directory");
+    let copy = directory.join("simple_appcall_linux64");
+    std::fs::copy(source, &copy).expect("copy integration fixture");
+    let _ = FIXTURE_COPY.set(copy.clone());
+    copy.to_string_lossy().into_owned()
 }
 
 fn ensure_init() {
@@ -54,7 +67,7 @@ fn ensure_init() {
         let path = fixture_path();
         database::open(&path, true).expect("database::open failed");
         analysis::wait().expect("analysis::wait failed");
-        unsafe { INIT_OK = true };
+        INIT_OK.store(true, Ordering::Release);
     });
 }
 
@@ -62,7 +75,7 @@ fn ensure_init() {
 /// Tests should call this at the top and return early if false.
 fn db_ready() -> bool {
     ensure_init();
-    unsafe { INIT_OK }
+    INIT_OK.load(Ordering::Acquire)
 }
 
 /// Convenience macro: skip the test if the database is not ready.
@@ -79,7 +92,6 @@ macro_rules! require_db {
 // Database metadata
 // ===========================================================================
 
-#[test]
 fn database_input_file_path() {
     require_db!();
     let path = database::input_file_path().unwrap();
@@ -104,7 +116,6 @@ fn database_file_type_name() {
     assert!(!name.is_empty(), "file_type_name should not be empty");
 }
 
-#[test]
 fn database_input_md5() {
     require_db!();
     let md5 = database::input_md5().unwrap();
@@ -115,7 +126,6 @@ fn database_input_md5() {
     );
 }
 
-#[test]
 fn database_address_bitness() {
     require_db!();
     let bits = database::address_bitness().unwrap();
@@ -140,7 +150,6 @@ fn database_processor_name() {
     assert!(!pname.is_empty(), "processor_name should not be empty");
 }
 
-#[test]
 fn database_address_bounds() {
     require_db!();
     let bounds = database::address_bounds().unwrap();
@@ -151,14 +160,12 @@ fn database_address_bounds() {
     assert_eq!(bounds.end, max);
 }
 
-#[test]
 fn database_image_base() {
     require_db!();
     let base = database::image_base().unwrap();
     assert_ne!(base, BAD_ADDRESS, "image_base should not be BAD_ADDRESS");
 }
 
-#[test]
 fn database_endianness() {
     require_db!();
     // ELF x86-64 is little-endian
@@ -166,7 +173,6 @@ fn database_endianness() {
     assert!(!big, "x86-64 fixture should be little-endian");
 }
 
-#[test]
 fn database_abi_name() {
     require_db!();
     // abi_name() may return an error for some binaries — just verify it doesn't crash
@@ -176,7 +182,6 @@ fn database_abi_name() {
     }
 }
 
-#[test]
 fn database_processor_typed() {
     require_db!();
     let proc = database::processor().unwrap();
@@ -186,14 +191,32 @@ fn database_processor_typed() {
     let _ = proc; // just verify it's a valid ProcessorId variant
 }
 
-#[test]
+fn database_processor_profile() {
+    require_db!();
+    let profile = database::processor_profile().unwrap();
+    assert_eq!(profile.raw_id, database::processor_id().unwrap());
+    assert_eq!(
+        profile.known_id,
+        database::ProcessorId::from_raw(profile.raw_id)
+    );
+    assert_eq!(profile.name, database::processor_name().unwrap());
+    assert_eq!(
+        profile.address_bitness,
+        database::address_bitness().unwrap()
+    );
+    assert_eq!(profile.big_endian, database::is_big_endian().unwrap());
+    match database::abi_name() {
+        Ok(abi) => assert_eq!(profile.abi_name.as_deref(), Some(abi.as_str())),
+        Err(_) => assert!(profile.abi_name.is_none()),
+    }
+}
+
 fn database_compiler_info() {
     require_db!();
     let ci = database::compiler_info().unwrap();
     let _ = ci; // struct existence is the check
 }
 
-#[test]
 fn database_import_modules() {
     require_db!();
     let mods = database::import_modules().unwrap();
@@ -201,25 +224,78 @@ fn database_import_modules() {
     let _ = mods;
 }
 
-#[test]
 fn database_snapshots() {
     require_db!();
     let snaps = database::snapshots().unwrap();
     let _ = snaps; // may be empty for a fresh analysis
 }
 
+fn plugin_scoped_hotkey_lifecycle() {
+    require_db!();
+
+    struct DropProbe(Arc<AtomicBool>);
+    impl Drop for DropProbe {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::Release);
+        }
+    }
+
+    let callback_dropped = Arc::new(AtomicBool::new(false));
+    let callback_dropped_from_handler = Arc::clone(&callback_dropped);
+    let hits = Arc::new(AtomicUsize::new(0));
+    let hits_from_handler = Arc::clone(&hits);
+    let probe = DropProbe(callback_dropped_from_handler);
+
+    let mut hotkey = plugin::register_hotkey("Ctrl-Shift-F12", move || {
+        let _ = &probe;
+        hits_from_handler.fetch_add(1, Ordering::AcqRel);
+    })
+    .expect("scoped hotkey registration");
+    assert!(hotkey.is_active());
+    assert_eq!(hotkey.hotkey(), "Ctrl-Shift-F12");
+    assert!(!callback_dropped.load(Ordering::Acquire));
+
+    // IDA's headless host may reject process_ui_action (F393). If it accepts
+    // dispatch, the callback must execute exactly once.
+    if hotkey.activate().is_ok() {
+        assert_eq!(hits.load(Ordering::Acquire), 1);
+    }
+
+    hotkey.release().expect("scoped hotkey release");
+    assert!(!hotkey.is_active());
+    assert!(callback_dropped.load(Ordering::Acquire));
+    assert_eq!(
+        hotkey.release().unwrap_err().category,
+        ErrorCategory::NotFound
+    );
+    assert_eq!(
+        hotkey.activate().unwrap_err().category,
+        ErrorCategory::NotFound
+    );
+
+    let drop_reclaimed = Arc::new(AtomicBool::new(false));
+    {
+        let drop_probe = DropProbe(Arc::clone(&drop_reclaimed));
+        let drop_hotkey = plugin::register_hotkey("Ctrl-Alt-Shift-F12", move || {
+            let _ = &drop_probe;
+        })
+        .expect("drop-owned hotkey registration");
+        assert!(drop_hotkey.is_active());
+        assert!(!drop_reclaimed.load(Ordering::Acquire));
+    }
+    assert!(drop_reclaimed.load(Ordering::Acquire));
+}
+
 // ===========================================================================
 // Segments
 // ===========================================================================
 
-#[test]
 fn segment_count_nonzero() {
     require_db!();
     let n = segment::count().unwrap();
     assert!(n > 0, "should have at least one segment");
 }
 
-#[test]
 fn segment_all_iterator() {
     require_db!();
     let segs: Vec<_> = segment::all().collect();
@@ -228,7 +304,6 @@ fn segment_all_iterator() {
     assert_eq!(segs.len(), n, "all() count should match count()");
 }
 
-#[test]
 fn segment_by_index() {
     require_db!();
     let seg = segment::by_index(0).unwrap();
@@ -236,7 +311,6 @@ fn segment_by_index() {
     assert!(!seg.name().is_empty(), "first segment should have a name");
 }
 
-#[test]
 fn segment_at_address() {
     require_db!();
     let first = segment::first().unwrap();
@@ -245,7 +319,6 @@ fn segment_at_address() {
     assert_eq!(first.end(), same.end());
 }
 
-#[test]
 fn segment_first_last() {
     require_db!();
     let first = segment::first().unwrap();
@@ -253,7 +326,6 @@ fn segment_first_last() {
     assert!(first.start() <= last.start(), "first <= last");
 }
 
-#[test]
 fn segment_next_prev() {
     require_db!();
     let n = segment::count().unwrap();
@@ -266,7 +338,6 @@ fn segment_next_prev() {
     }
 }
 
-#[test]
 fn segment_properties() {
     require_db!();
     let seg = segment::first().unwrap();
@@ -277,18 +348,62 @@ fn segment_properties() {
     let _ = seg.is_visible();
 }
 
+fn segment_register_state() {
+    require_db!();
+    let registers = segment::segment_registers().expect("discover segment registers");
+    assert!(!registers.is_empty());
+    assert!(
+        registers
+            .iter()
+            .all(|value| !value.name.is_empty() && value.bit_width > 0)
+    );
+    assert!(registers.iter().any(|value| value.is_code));
+    assert!(registers.iter().any(|value| value.is_data));
+
+    let register = &registers[0];
+    let address = segment::first().expect("first segment").start();
+    let _ = segment::segment_register_value(address, &register.name)
+        .expect("effective segment-register value");
+    let original = segment::default_segment_register_value(address, &register.name)
+        .expect("default segment-register value");
+    let range = segment::segment_register_range(address, &register.name)
+        .expect("containing segment-register range");
+    assert!(range.start <= address && address < range.end);
+    assert!(
+        !segment::segment_register_ranges(&register.name)
+            .expect("segment-register ranges")
+            .is_empty()
+    );
+    assert!(
+        segment::segment_register_range_index(address, &register.name)
+            .expect("segment-register range index")
+            .is_some()
+    );
+
+    segment::set_segment_register_default(address, &register.name, Some(0x234))
+        .expect("set named segment-register default");
+    assert_eq!(
+        segment::default_segment_register_value(address, &register.name)
+            .expect("read changed segment-register default"),
+        Some(0x234)
+    );
+    segment::set_segment_register_default(address, &register.name, original)
+        .expect("restore named segment-register default");
+
+    assert!(segment::segment_register_value(BAD_ADDRESS, &register.name).is_err());
+    assert!(segment::segment_register_value(address, "bad\0name").is_err());
+}
+
 // ===========================================================================
 // Functions
 // ===========================================================================
 
-#[test]
 fn function_count_nonzero() {
     require_db!();
     let n = function::count().unwrap();
     assert!(n > 0, "should have at least one function");
 }
 
-#[test]
 fn function_all_iterator() {
     require_db!();
     let funcs: Vec<_> = function::all().collect();
@@ -297,7 +412,6 @@ fn function_all_iterator() {
     assert_eq!(funcs.len(), n, "all() count should match count()");
 }
 
-#[test]
 fn function_by_index_and_at() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -307,7 +421,6 @@ fn function_by_index_and_at() {
     assert_eq!(f.start(), same.start());
 }
 
-#[test]
 fn function_properties() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -321,7 +434,6 @@ fn function_properties() {
     let _ = f.frame_args_size();
 }
 
-#[test]
 fn function_callers_callees() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -329,7 +441,6 @@ fn function_callers_callees() {
     let _ = function::callees(f.start()).unwrap();
 }
 
-#[test]
 fn function_chunks() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -343,7 +454,6 @@ fn function_chunks() {
     }
 }
 
-#[test]
 fn function_code_addresses() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -359,7 +469,6 @@ fn function_code_addresses() {
     }
 }
 
-#[test]
 fn function_frame() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -367,11 +476,20 @@ fn function_frame() {
     let _ = function::frame(f.start());
 }
 
+fn function_declaration_readback() {
+    require_db!();
+    let first = function::by_index(0).expect("first function");
+    function::apply_decl(first.start(), "int idax_rust_decl_probe(void);")
+        .expect("apply declaration");
+    let declaration = function::declaration(first.start(), Some("idax_rust_decl_readback"))
+        .expect("print declaration");
+    assert!(declaration.contains("idax_rust_decl_readback"));
+}
+
 // ===========================================================================
 // Instructions
 // ===========================================================================
 
-#[test]
 fn instruction_decode_first() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -381,7 +499,6 @@ fn instruction_decode_first() {
     assert!(!insn.mnemonic().is_empty());
 }
 
-#[test]
 fn instruction_text() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -389,7 +506,6 @@ fn instruction_text() {
     assert!(!text.is_empty());
 }
 
-#[test]
 fn instruction_operands() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -402,7 +518,219 @@ fn instruction_operands() {
     }
 }
 
-#[test]
+fn instruction_operand_encoding_offsets() {
+    require_db!();
+    let mut saw_present = false;
+    let mut saw_absent = false;
+    for function in function::all() {
+        for address in function::code_addresses(function.start()).unwrap() {
+            let decoded = instruction::decode(address).unwrap();
+            for operand in decoded.operands() {
+                match operand.encoded_value_byte_offset() {
+                    Some(offset) => {
+                        saw_present = true;
+                        assert!(offset > 0);
+                        assert!((offset as u64) < decoded.size());
+                    }
+                    None => saw_absent = true,
+                }
+                if let Some(offset) = operand.secondary_encoded_value_byte_offset() {
+                    assert!(offset > 0);
+                    assert!((offset as u64) < decoded.size());
+                }
+            }
+            if saw_present && saw_absent {
+                break;
+            }
+        }
+        if saw_present && saw_absent {
+            break;
+        }
+    }
+    assert!(saw_present);
+    assert!(saw_absent);
+}
+
+fn instruction_operand_access_modes() {
+    require_db!();
+    let mut saw_read = false;
+    let mut saw_written = false;
+    let mut saw_written_memory = false;
+
+    for function in function::all() {
+        let addresses = function::code_addresses(function.start()).unwrap();
+        for address in addresses {
+            let decoded = instruction::decode(address).unwrap();
+            for operand in decoded.operands() {
+                saw_read |= operand.is_read();
+                saw_written |= operand.is_written();
+                saw_written_memory |= operand.is_memory() && operand.is_written();
+            }
+            if saw_read && saw_written && saw_written_memory {
+                break;
+            }
+        }
+        if saw_read && saw_written && saw_written_memory {
+            break;
+        }
+    }
+
+    assert!(saw_read, "expected a processor-marked read operand");
+    assert!(saw_written, "expected a processor-marked written operand");
+    assert!(
+        saw_written_memory,
+        "expected a processor-marked written memory operand"
+    );
+}
+
+fn instruction_operand_enum_roundtrip() {
+    require_db!();
+    let enum_type = types::TypeInfo::enum_type(
+        &[
+            types::EnumMember {
+                name: "IDAX_RUST_ZERO".to_string(),
+                value: 0,
+                comment: String::new(),
+            },
+            types::EnumMember {
+                name: "IDAX_RUST_ONE".to_string(),
+                value: 1,
+                comment: String::new(),
+            },
+        ],
+        4,
+        false,
+    )
+    .unwrap();
+    enum_type.save_as("idax_rust_operand_enum").unwrap();
+
+    let candidate = function::all().find_map(|function| {
+        function::code_addresses(function.start())
+            .ok()?
+            .into_iter()
+            .find_map(|address| {
+                let decoded = instruction::decode(address).ok()?;
+                decoded
+                    .operands()
+                    .iter()
+                    .find(|operand| operand.is_immediate() && operand.value() != 0)
+                    .map(|operand| (address, operand.index()))
+            })
+    });
+    let Some((address, index)) = candidate else {
+        eprintln!("  [skipped — no immediate operand]");
+        return;
+    };
+
+    instruction::set_operand_enum(address, index, "idax_rust_operand_enum", 0).unwrap();
+    let exact = instruction::operand_enum(address, index).unwrap();
+    assert_eq!(exact.name, "idax_rust_operand_enum");
+    assert_eq!(exact.serial, 0);
+    assert_eq!(
+        instruction::operand_enum(address, -1).unwrap().name,
+        "idax_rust_operand_enum"
+    );
+    instruction::clear_operand_representation(address, index).unwrap();
+    assert_eq!(
+        instruction::operand_enum(address, index)
+            .unwrap_err()
+            .category,
+        ErrorCategory::NotFound
+    );
+}
+
+fn instruction_operand_struct_offset_roundtrip() {
+    require_db!();
+    let structure = types::TypeInfo::create_struct();
+    structure
+        .add_member("first", &types::TypeInfo::uint32(), 0)
+        .unwrap();
+    structure
+        .add_member("second", &types::TypeInfo::uint32(), 4)
+        .unwrap();
+    structure
+        .save_as("idax_rust_operand_struct_offset")
+        .unwrap();
+
+    let candidate = function::all().find_map(|function| {
+        function::code_addresses(function.start())
+            .ok()?
+            .into_iter()
+            .find_map(|address| {
+                let decoded = instruction::decode(address).ok()?;
+                decoded
+                    .operands()
+                    .iter()
+                    .find(|operand| operand.is_immediate())
+                    .map(|operand| (address, operand.index()))
+            })
+    });
+    let Some((address, index)) = candidate else {
+        eprintln!("  [skipped — no immediate operand]");
+        return;
+    };
+
+    instruction::clear_operand_representation(address, index).unwrap();
+    instruction::set_operand_decimal(address, index).unwrap();
+    let before = instruction::operand_text(address, index).unwrap();
+    assert_eq!(
+        instruction::ensure_operand_struct_member_offset(
+            address,
+            index,
+            "idax_rust_operand_struct_offset",
+            4,
+            -4,
+        )
+        .unwrap_err()
+        .category,
+        ErrorCategory::Conflict
+    );
+    assert_eq!(instruction::operand_text(address, index).unwrap(), before);
+    instruction::clear_operand_representation(address, index).unwrap();
+
+    assert!(
+        instruction::ensure_operand_struct_member_offset(
+            address,
+            index,
+            "idax_rust_operand_struct_offset",
+            4,
+            -4,
+        )
+        .unwrap()
+    );
+    let path = instruction::operand_struct_offset_path(address, index).unwrap();
+    assert_eq!(path.structure_name, "idax_rust_operand_struct_offset");
+    assert_eq!(path.member_names, vec!["second"]);
+    assert_eq!(path.delta, -4);
+    assert_eq!(
+        instruction::operand_struct_offset_path_names(address, index).unwrap(),
+        vec!["idax_rust_operand_struct_offset", "second"]
+    );
+    assert!(
+        !instruction::ensure_operand_struct_member_offset(
+            address,
+            index,
+            "idax_rust_operand_struct_offset",
+            4,
+            -4,
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        instruction::ensure_operand_struct_member_offset(
+            address,
+            index,
+            "idax_rust_operand_struct_offset",
+            0,
+            -4,
+        )
+        .unwrap_err()
+        .category,
+        ErrorCategory::Conflict
+    );
+    instruction::clear_operand_representation(address, index).unwrap();
+}
+
 fn instruction_classification() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -421,7 +749,6 @@ fn instruction_classification() {
     }
 }
 
-#[test]
 fn instruction_code_refs() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -429,7 +756,6 @@ fn instruction_code_refs() {
     let _ = instruction::data_refs_from(f.start()).unwrap();
 }
 
-#[test]
 fn instruction_next_prev() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -445,7 +771,6 @@ fn instruction_next_prev() {
 // Names
 // ===========================================================================
 
-#[test]
 fn name_get_first_function() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -453,7 +778,6 @@ fn name_get_first_function() {
     assert!(!n.is_empty(), "first function should have a name");
 }
 
-#[test]
 fn name_set_and_remove() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -470,7 +794,6 @@ fn name_set_and_remove() {
     assert_eq!(restored, original);
 }
 
-#[test]
 fn name_resolve() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -479,7 +802,6 @@ fn name_resolve() {
     assert_eq!(resolved, f.start(), "resolve should find the function");
 }
 
-#[test]
 fn name_predicates() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -489,7 +811,6 @@ fn name_predicates() {
     let _ = name::is_auto_generated(f.start());
 }
 
-#[test]
 fn name_validation() {
     require_db!();
     assert!(name::is_valid_identifier("hello_world").unwrap());
@@ -497,11 +818,28 @@ fn name_validation() {
     assert!(!sanitized.is_empty());
 }
 
+fn name_demangle_arbitrary_symbol() {
+    require_db!();
+    for form in [
+        name::DemangleForm::Short,
+        name::DemangleForm::Long,
+        name::DemangleForm::Full,
+    ] {
+        let demangled = name::demangle("_Z3foov", form).unwrap();
+        assert!(demangled.contains("foo"));
+    }
+    assert!(name::demangle("not_a_mangled_symbol", name::DemangleForm::Short).is_err());
+}
+
+fn ui_current_widget_headless_safe() {
+    require_db!();
+    let _ = ui::current_widget().unwrap();
+}
+
 // ===========================================================================
 // Comments
 // ===========================================================================
 
-#[test]
 fn comment_set_get_remove() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -520,7 +858,6 @@ fn comment_set_get_remove() {
     comment::remove(addr, true).unwrap();
 }
 
-#[test]
 fn comment_append() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -529,15 +866,10 @@ fn comment_append() {
     comment::set(addr, "first", false).unwrap();
     comment::append(addr, " second", false).unwrap();
     let got = comment::get(addr, false).unwrap();
-    assert!(got.contains("first"), "should contain first part: {got}");
-    assert!(
-        got.contains("second"),
-        "should contain appended part: {got}"
-    );
+    assert_eq!(got, "first\n second");
     comment::remove(addr, false).unwrap();
 }
 
-#[test]
 fn comment_anterior_posterior() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -553,11 +885,779 @@ fn comment_anterior_posterior() {
     comment::clear_posterior(addr).unwrap();
 }
 
+fn undo_comment_roundtrip() {
+    require_db!();
+    let address = function::by_index(0).unwrap().start();
+    let original = match comment::get(address, true) {
+        Ok(value) => Some(value),
+        Err(error) if error.category == ErrorCategory::NotFound => None,
+        Err(error) => panic!("repeatable comment read failed: {error}"),
+    };
+    let action_label = "IDAX Rust undo round-trip \u{03c0}";
+
+    assert!(undo::create_point("idax.rust.undo", action_label).unwrap());
+    comment::set(address, "idax rust undo mutation", true).unwrap();
+    assert_eq!(
+        undo::undo_action_label().unwrap().as_deref(),
+        Some(action_label)
+    );
+    assert!(undo::perform_undo().unwrap());
+    match &original {
+        Some(value) => assert_eq!(comment::get(address, true).unwrap(), *value),
+        None => assert_eq!(
+            comment::get(address, true).unwrap_err().category,
+            ErrorCategory::NotFound
+        ),
+    }
+
+    assert_eq!(
+        undo::redo_action_label().unwrap().as_deref(),
+        Some(action_label)
+    );
+    assert!(undo::perform_redo().unwrap());
+    assert_eq!(
+        comment::get(address, true).unwrap(),
+        "idax rust undo mutation"
+    );
+    assert!(undo::perform_undo().unwrap());
+    match original {
+        Some(value) => assert_eq!(comment::get(address, true).unwrap(), value),
+        None => assert_eq!(
+            comment::get(address, true).unwrap_err().category,
+            ErrorCategory::NotFound
+        ),
+    }
+}
+
+fn problem_roundtrip() {
+    require_db!();
+    let address = function::by_index(0).unwrap().start();
+    let kind = problem::Kind::Attention;
+    let _ = problem::remove(kind, address).unwrap();
+
+    assert!(!problem::contains(kind, address).unwrap());
+    assert_eq!(problem::description(kind, address).unwrap(), None);
+    assert!(!problem::name(kind, true).unwrap().is_empty());
+    assert!(!problem::name(kind, false).unwrap().is_empty());
+
+    let message = "IDAX Rust problem round-trip \u{03c0}";
+    problem::remember(kind, address, Some(message)).unwrap();
+    assert!(problem::contains(kind, address).unwrap());
+    assert_eq!(
+        problem::description(kind, address).unwrap().as_deref(),
+        Some(message)
+    );
+    assert_eq!(problem::next(kind, address).unwrap(), Some(address));
+
+    assert!(problem::remove(kind, address).unwrap());
+    assert!(!problem::remove(kind, address).unwrap());
+    assert!(!problem::contains(kind, address).unwrap());
+    assert_eq!(problem::description(kind, address).unwrap(), None);
+    assert_ne!(problem::next(kind, address).unwrap(), Some(address));
+}
+
+fn bookmark_roundtrip() {
+    require_db!();
+    let first_function = function::by_index(0).unwrap();
+    let addresses = function::code_addresses(first_function.start()).unwrap();
+    if addresses.len() < 2 {
+        return;
+    }
+    let address = addresses
+        .iter()
+        .copied()
+        .find(|value| bookmark::at(*value).unwrap().is_none())
+        .expect("unbookmarked code address");
+    let baseline = bookmark::all().unwrap();
+    let slot = (31..bookmark::MAX_SLOTS)
+        .find(|slot| !baseline.iter().any(|value| value.slot == *slot))
+        .expect("free bookmark slot");
+
+    let created = bookmark::set(address, "IDAX Rust bookmark \u{03c0}", Some(slot)).unwrap();
+    assert_eq!(created.address, address);
+    assert_eq!(created.slot, slot);
+    assert_eq!(bookmark::at(address).unwrap(), Some(created.clone()));
+    assert_eq!(bookmark::at_slot(slot).unwrap(), Some(created));
+
+    let updated = bookmark::set(address, "IDAX Rust updated \u{03bb}", None).unwrap();
+    assert_eq!(updated.slot, slot);
+    assert_eq!(updated.description, "IDAX Rust updated \u{03bb}");
+    let conflict_slot = if slot == 0 { 1 } else { 0 };
+    assert!(bookmark::set(address, "conflict", Some(conflict_slot)).is_err());
+    assert!(bookmark::remove_slot(slot).unwrap());
+    assert!(!bookmark::remove_slot(slot).unwrap());
+    assert_eq!(bookmark::at(address).unwrap(), None);
+}
+
+fn navigation_roundtrip() {
+    require_db!();
+    let first_function = function::by_index(0).unwrap();
+    let addresses = function::code_addresses(first_function.start()).unwrap();
+    if addresses.len() < 5 {
+        return;
+    }
+
+    let alpha0 = navigation::Entry::new(addresses[0], "alpha", "a0 \u{03c0}");
+    let alpha1 = navigation::Entry::new(addresses[1], "alpha", "a1");
+    let beta0 = navigation::Entry::new(addresses[2], "beta", "b0");
+    let other0 = navigation::Entry::new(addresses[3], "other", "o0");
+    let gamma0 = navigation::Entry::new(addresses[4], "gamma", "g0");
+    let suffix = std::process::id();
+
+    let history =
+        navigation::History::open(&format!("rust-phase68-main-{suffix}"), &alpha0).unwrap();
+    assert!(history.created().unwrap());
+    assert_eq!(
+        history.name().unwrap(),
+        format!("rust-phase68-main-{suffix}")
+    );
+    assert_eq!(history.entries().unwrap(), vec![alpha0.clone()]);
+    assert_eq!(history.current().unwrap(), alpha0);
+    assert_eq!(history.index().unwrap(), 0);
+    assert_eq!(history.size().unwrap(), 1);
+
+    history.set_current(&beta0, false).unwrap();
+    assert_eq!(history.current_for("beta").unwrap(), Some(beta0));
+    assert_eq!(history.push(&alpha1).unwrap(), alpha1);
+    assert_eq!(history.back(1).unwrap(), Some(alpha0.clone()));
+    assert_eq!(history.forward(1).unwrap(), Some(alpha1.clone()));
+    assert_eq!(history.forward(1).unwrap(), None);
+    history.replace(0, &other0).unwrap();
+    assert_eq!(history.seek(0).unwrap(), other0);
+
+    let destination =
+        navigation::History::open(&format!("rust-phase68-destination-{suffix}"), &gamma0).unwrap();
+    history
+        .transfer_channel_to(&destination, "alpha", true)
+        .unwrap();
+    assert_eq!(history.entries().unwrap(), vec![other0.clone()]);
+    assert_eq!(history.current_for("alpha").unwrap(), None);
+    assert_eq!(destination.entries().unwrap(), vec![gamma0, alpha1.clone()]);
+    assert_eq!(destination.current_for("alpha").unwrap(), Some(alpha1));
+    assert!(
+        destination
+            .all_current()
+            .unwrap()
+            .iter()
+            .all(|entry| !entry.channel.starts_with("$ idax navigation/"))
+    );
+
+    let reopened =
+        navigation::History::open(&format!("rust-phase68-main-{suffix}"), &alpha0).unwrap();
+    assert!(!reopened.created().unwrap());
+    assert_eq!(reopened.entries().unwrap(), vec![other0]);
+    assert_eq!(reopened.current_for("alpha").unwrap(), None);
+
+    let reserved = navigation::Entry::new(addresses[0], "$ idax navigation/not-public", "reserved");
+    let failure = navigation::History::open(&format!("rust-phase68-reserved-{suffix}"), &reserved)
+        .unwrap_err();
+    assert_eq!(failure.category, ErrorCategory::Validation);
+}
+
+fn exception_roundtrip() {
+    require_db!();
+    let mut heads = None;
+    for index in 0..function::count().unwrap() {
+        let candidate = function::by_index(index).unwrap();
+        let addresses = function::code_addresses(candidate.start()).unwrap();
+        if addresses.len() >= 5 {
+            heads = Some(addresses[..5].to_vec());
+            break;
+        }
+    }
+    let heads = heads.expect("fixture needs a function with five code addresses");
+    let scope = Range::new(heads[0], heads[4]);
+    exception::remove(scope).unwrap();
+
+    let definition = exception::BlockDefinition {
+        protected_regions: vec![Range::new(heads[0], heads[1])],
+        handlers: exception::HandlerSet::Cpp(vec![exception::CatchHandler {
+            metadata: exception::HandlerMetadata {
+                regions: vec![Range::new(heads[2], heads[3])],
+                stack_displacement: Some(16),
+                frame_register: Some(5),
+            },
+            object_displacement: Some(24),
+            selector: exception::CatchSelector::Typed(7),
+        }]),
+    };
+
+    exception::add(&definition).unwrap();
+    let blocks = exception::list(scope).unwrap();
+    let block = blocks
+        .iter()
+        .find(|block| block.definition.protected_regions[0].start == heads[0])
+        .expect("added exception block should be returned");
+    let exception::HandlerSet::Cpp(catches) = &block.definition.handlers else {
+        panic!("C++ exception handlers should retain their semantic variant");
+    };
+    assert_eq!(catches[0].selector, exception::CatchSelector::Typed(7));
+    assert!(exception::contains(heads[0], &[exception::Location::CppTry]).unwrap());
+    assert!(exception::contains(heads[2], &[exception::Location::CppHandler]).unwrap());
+    let _ = exception::system_region_start(heads[0]).unwrap();
+
+    exception::remove(scope).unwrap();
+    assert!(!exception::contains_any(heads[0]).unwrap());
+}
+
+fn parser_roundtrip() {
+    require_db!();
+
+    parser::select_for(parser::Language::C | parser::Language::Cpp).unwrap();
+    let parser_name = parser::selected_name()
+        .unwrap()
+        .expect("language-selected parser should have a copied name");
+    assert!(!parser_name.is_empty());
+    parser::set_arguments(&parser_name, "").unwrap();
+
+    let rejected_source =
+        std::ffi::CString::new("struct idax_rust_parser_rejected_output { int value; };").unwrap();
+    let rejected = unsafe {
+        idax_sys::idax_parser_parse_for(
+            parser::Language::C as u32,
+            rejected_source.as_ptr(),
+            parser::InputKind::SourceText as i32,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_ne!(rejected, 0);
+    assert_eq!(
+        unsafe { idax_sys::idax_last_error_category() },
+        idax_sys::IDAX_ERROR_VALIDATION as i32
+    );
+    assert!(types::TypeInfo::by_name("idax_rust_parser_rejected_output").is_err());
+
+    let conflicting_options = parser::ParseOptions {
+        assume_high_level: true,
+        lower_prototypes: true,
+        ..parser::ParseOptions::default()
+    };
+    let conflicting = parser::parse_with_options(
+        &parser_name,
+        "struct idax_rust_parser_conflicting_modes { int value; };",
+        &conflicting_options,
+    )
+    .unwrap_err();
+    assert_eq!(conflicting.category, ErrorCategory::Validation);
+
+    let syntax = parser::parse_with(
+        &parser_name,
+        "struct idax_rust_parser_syntax_error {",
+        parser::InputKind::SourceText,
+    )
+    .unwrap();
+    assert!(!syntax.is_ok());
+    assert!(syntax.error_count > 0);
+
+    let memory = parser::parse_for(
+        parser::Language::C,
+        "struct idax_rust_parser_memory { int value; };",
+        parser::InputKind::SourceText,
+    )
+    .unwrap();
+    assert!(memory.is_ok());
+    assert!(types::TypeInfo::by_name("idax_rust_parser_memory").is_ok());
+
+    let named = parser::parse_with(
+        &parser_name,
+        "struct idax_rust_parser_named { unsigned value; };",
+        parser::InputKind::SourceText,
+    )
+    .unwrap();
+    assert!(named.is_ok());
+    assert!(types::TypeInfo::by_name("idax_rust_parser_named").is_ok());
+
+    let options = parser::ParseOptions {
+        suppress_warnings: true,
+        allow_redeclarations: true,
+        pack_alignment: 4,
+        ..parser::ParseOptions::default()
+    };
+    let extended = parser::parse_with_options(
+        &parser_name,
+        "struct idax_rust_parser_extended { char value; };",
+        &options,
+    )
+    .unwrap();
+    assert!(extended.is_ok());
+    assert!(types::TypeInfo::by_name("idax_rust_parser_extended").is_ok());
+
+    let source_path = FIXTURE_COPY
+        .get()
+        .expect("fixture copy should exist")
+        .parent()
+        .expect("fixture should have a parent")
+        .join("idax_rust_parser_input.hpp");
+    std::fs::write(
+        &source_path,
+        "struct idax_rust_parser_file { long long value; };\n",
+    )
+    .unwrap();
+    let file = parser::parse_for(
+        parser::Language::Cpp,
+        source_path
+            .to_str()
+            .expect("temporary source path should be UTF-8"),
+        parser::InputKind::FilePath,
+    )
+    .unwrap();
+    std::fs::remove_file(&source_path).unwrap();
+    assert!(file.is_ok());
+    assert!(types::TypeInfo::by_name("idax_rust_parser_file").is_ok());
+
+    let option = parser::option(&parser_name, "CLANG_APPLY_TINFO").unwrap();
+    parser::set_option(&parser_name, "CLANG_APPLY_TINFO", &option).unwrap();
+    assert_eq!(
+        parser::option(&parser_name, "CLANG_APPLY_TINFO").unwrap(),
+        option
+    );
+    parser::select(None).unwrap();
+    let _ = parser::selected_name().unwrap();
+}
+
+fn script_roundtrip() {
+    require_db!();
+
+    // Raw ABI failures must not preserve a caller's stale scalar output.
+    unsafe {
+        let bytes = b"not-an-integer";
+        let mut handle: idax_sys::IdaxScriptValueHandle = std::ptr::null_mut();
+        assert_eq!(
+            idax_sys::idax_script_value_string(bytes.as_ptr(), bytes.len(), &mut handle,),
+            0
+        );
+        assert!(!handle.is_null());
+        let mut stale = 99_i64;
+        assert_ne!(
+            idax_sys::idax_script_value_as_integer(handle, &mut stale),
+            0
+        );
+        assert_eq!(stale, 0);
+        idax_sys::idax_script_value_free(handle);
+    }
+
+    let integer = script::Value::integer(42);
+    assert_eq!(integer.kind().unwrap(), script::ValueKind::Integer);
+    assert_eq!(integer.as_integer().unwrap(), 42);
+    assert!(!integer.coerce_string().unwrap().is_empty());
+
+    let embedded = script::Value::string("ab\0cd");
+    assert_eq!(embedded.kind().unwrap(), script::ValueKind::String);
+    assert_eq!(embedded.as_string().unwrap().as_bytes(), b"ab\0cd");
+    assert!(embedded.as_integer().is_err());
+
+    let mutable = script::Value::string("abcdef");
+    let mut copied = mutable.clone();
+    copied
+        .replace_slice(2, 4, &script::Value::string("XY"))
+        .unwrap();
+    assert_eq!(mutable.as_string().unwrap(), "abcdef");
+    assert_eq!(copied.slice(1, 5).unwrap().as_string().unwrap(), "bXYe");
+    assert!(mutable.slice(5, 4).is_err());
+
+    let mut object = script::Value::object().unwrap();
+    object
+        .set_attribute("answer", &script::Value::integer(7), false)
+        .unwrap();
+    let mut shallow = object.clone();
+    shallow
+        .set_attribute("answer", &script::Value::integer(9), false)
+        .unwrap();
+    assert_eq!(
+        object
+            .attribute("answer", false)
+            .unwrap()
+            .as_integer()
+            .unwrap(),
+        9
+    );
+    let mut deep = object.deep_copy().unwrap();
+    deep.set_attribute("answer", &script::Value::integer(11), false)
+        .unwrap();
+    assert_eq!(
+        deep.attribute("answer", false)
+            .unwrap()
+            .as_integer()
+            .unwrap(),
+        11
+    );
+    assert_eq!(
+        object
+            .attribute("answer", false)
+            .unwrap()
+            .as_integer()
+            .unwrap(),
+        9
+    );
+    assert_eq!(object.attribute_names().unwrap(), vec!["answer"]);
+    assert!(!object.remove_attribute("missing").unwrap());
+    assert!(!object.class_name().unwrap().is_empty());
+
+    let falsey = script::evaluate_idc_current("0").unwrap();
+    assert!(falsey.succeeded);
+    assert_eq!(falsey.value.as_integer().unwrap(), 0);
+    let numeric = script::evaluate_integer_current("21 * 2").unwrap();
+    assert!(numeric.succeeded);
+    assert_eq!(numeric.value, 42);
+    let failure = script::evaluate_idc_current("1 / 0").unwrap();
+    assert!(!failure.succeeded);
+    assert!(!failure.error.is_empty());
+    assert_eq!(failure.value.kind().unwrap(), script::ValueKind::Object);
+
+    let suffix = std::process::id();
+    let function_name = format!("idax_rust_script_{suffix}");
+    let options = script::CompileOptions {
+        only_safe_functions: false,
+        resolved_names: vec![script::ResolvedName::new("IDAX_RUST_CONST", 40)],
+    };
+    let compiled =
+        script::compile_snippet(&function_name, "return IDAX_RUST_CONST + 2;", &options).unwrap();
+    assert!(compiled.succeeded, "{}", compiled.error);
+    let called = script::call(&function_name, &[], &[]).unwrap();
+    assert!(called.succeeded, "{}", called.error);
+    assert_eq!(called.value.as_integer().unwrap(), 42);
+    let evaluated =
+        script::evaluate_snippet("return IDAX_RUST_CONST + 2;", &options.resolved_names).unwrap();
+    assert!(evaluated.succeeded, "{}", evaluated.error);
+    assert_eq!(evaluated.value.as_integer().unwrap(), 42);
+
+    let invalid = script::CompileOptions {
+        only_safe_functions: false,
+        resolved_names: vec![script::ResolvedName::new("BAD_SENTINEL", BAD_ADDRESS)],
+    };
+    let invalid_result = script::compile_text(
+        "static idax_rust_invalid() { return BAD_SENTINEL; }",
+        &invalid,
+    )
+    .unwrap_err();
+    assert_eq!(invalid_result.category, ErrorCategory::Validation);
+
+    let global_name = format!("idax_rust_global_{suffix}");
+    assert!(script::global(&global_name).unwrap().is_none());
+    assert!(script::set_global(&global_name, &script::Value::integer(123)).unwrap());
+    assert_eq!(
+        script::global(&global_name)
+            .unwrap()
+            .unwrap()
+            .as_integer()
+            .unwrap(),
+        123
+    );
+    let reference = script::reference_global(&global_name).unwrap();
+    assert_eq!(reference.kind().unwrap(), script::ValueKind::Reference);
+    assert_eq!(
+        reference
+            .dereference(script::DereferenceMode::Recursive)
+            .unwrap()
+            .as_integer()
+            .unwrap(),
+        123
+    );
+    assert!(!script::set_global(&global_name, &script::Value::integer(456)).unwrap());
+
+    let fixture = FIXTURE_COPY.get().expect("fixture path");
+    let directory = fixture.parent().expect("fixture directory");
+    let file_name = format!("{function_name}.idc");
+    let script_path = directory.join(&file_name);
+    std::fs::write(
+        &script_path,
+        format!("static {function_name}_file(x) {{ return x * 2; }}\n"),
+    )
+    .unwrap();
+    script::set_include_paths(&[directory.to_string_lossy().into_owned()]).unwrap();
+    assert_eq!(
+        script::resolve_file(&file_name).unwrap(),
+        Some(script_path.to_string_lossy().into_owned())
+    );
+    let arguments = [script::Value::integer(21)];
+    let executed = script::execute_script(
+        &script_path.to_string_lossy(),
+        &format!("{function_name}_file"),
+        &arguments,
+        &script::FileCompileOptions::default(),
+    )
+    .unwrap();
+    assert!(executed.succeeded, "{}", executed.error);
+    assert_eq!(executed.value.as_integer().unwrap(), 42);
+    std::fs::remove_file(script_path).unwrap();
+    assert!(!script::function_names("", 16).unwrap().is_empty());
+    assert_eq!(
+        script::function_names("", 0).unwrap_err().category,
+        ErrorCategory::Validation
+    );
+}
+
+fn directory_roundtrip() {
+    require_db!();
+
+    let kinds = [
+        directory::Kind::LocalTypes,
+        directory::Kind::Functions,
+        directory::Kind::Names,
+        directory::Kind::Imports,
+        directory::Kind::IdaPlaceBookmarks,
+        directory::Kind::Breakpoints,
+        directory::Kind::LocalTypeBookmarks,
+        directory::Kind::Snippets,
+    ];
+    for kind in kinds {
+        let candidate = directory::Tree::open(kind).unwrap();
+        assert_eq!(candidate.kind(), kind);
+        assert!(candidate.entry("/").unwrap().is_directory());
+        candidate.children("/").unwrap();
+    }
+
+    let tree = directory::Tree::open(directory::Kind::Functions).unwrap();
+    assert_eq!(
+        tree.contains("bad\0path").unwrap_err().category,
+        ErrorCategory::Validation
+    );
+    let empty_paths: [&str; 0] = [];
+    assert_eq!(
+        tree.move_entries(&empty_paths, "/", None)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    tree.change_directory("/").unwrap();
+    assert_eq!(tree.current_directory().unwrap(), "/");
+    assert_eq!(
+        tree.absolute_path("idax_rust_directory_probe").unwrap(),
+        "/idax_rust_directory_probe"
+    );
+
+    let alpha = "/idax_rust_directory_alpha";
+    let child = "/idax_rust_directory_alpha/child";
+    let renamed = "/idax_rust_directory_alpha/renamed";
+    let beta = "/idax_rust_directory_beta";
+    let destination = "/idax_rust_directory_destination";
+    let empty = "/idax_rust_directory_empty";
+    let native_parent = "/idax_rust_directory_native_parent";
+    let native_valid = "/idax_rust_directory_native_valid";
+    let native_destination = "/idax_rust_directory_native_parent/child";
+    let fold_root = "/idax_rust_directory_fold";
+    let fold_child = "/idax_rust_directory_fold/a";
+    let fold_grandchild = "/idax_rust_directory_fold/a/b";
+    tree.create_directory(alpha).unwrap();
+    tree.create_directory(child).unwrap();
+    tree.create_directory(beta).unwrap();
+    tree.create_directory(destination).unwrap();
+    tree.create_directory(empty).unwrap();
+    tree.remove_directory(empty).unwrap();
+    assert!(!tree.contains(empty).unwrap());
+    tree.create_directory(native_parent).unwrap();
+    tree.create_directory(native_valid).unwrap();
+    tree.create_directory(native_destination).unwrap();
+    let native_rejected = tree
+        .move_entries(
+            &[
+                "/__idax_rust_directory_missing_native_reject__",
+                native_parent,
+                native_valid,
+            ],
+            native_destination,
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        native_rejected.affected_paths,
+        ["/idax_rust_directory_native_parent/child/idax_rust_directory_native_valid"]
+    );
+    assert_eq!(native_rejected.failures.len(), 2);
+    assert_eq!(native_rejected.failures[0].input_index, 0);
+    assert_eq!(
+        native_rejected.failures[0].error,
+        directory::OperationError::NotFound
+    );
+    assert_eq!(native_rejected.failures[1].input_index, 1);
+    assert_eq!(
+        native_rejected.failures[1].error,
+        directory::OperationError::OwnChild
+    );
+    assert!(tree.remove_entries(&[native_parent]).unwrap().is_ok());
+    tree.create_directory(fold_root).unwrap();
+    tree.create_directory(fold_child).unwrap();
+    tree.create_directory(fold_grandchild).unwrap();
+    tree.fold_common_prefix(fold_root).unwrap();
+    let folded_children = tree.children(fold_root).unwrap();
+    assert_eq!(folded_children.len(), 1);
+    assert!(folded_children[0].is_directory());
+    assert!(folded_children[0].name.contains('\u{1d}'));
+    assert!(tree.remove_entries(&[fold_root]).unwrap().is_ok());
+    let duplicate = tree.create_directory(alpha).unwrap_err();
+    assert_eq!(duplicate.category, ErrorCategory::Conflict);
+    assert_eq!(
+        duplicate.code,
+        directory::OperationError::AlreadyExists as i32
+    );
+    assert!(tree.entry(alpha).unwrap().is_directory());
+    assert!(
+        tree.children(alpha)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.path == child)
+    );
+    tree.rename(child, renamed).unwrap();
+    assert!(!tree.contains(child).unwrap());
+    assert!(tree.contains(renamed).unwrap());
+    assert!(
+        tree.snapshot(alpha)
+            .unwrap()
+            .iter()
+            .any(|entry| entry.path == renamed)
+    );
+    assert!(!tree.find_items("*").unwrap().is_empty());
+
+    let item = tree
+        .children("/")
+        .unwrap()
+        .into_iter()
+        .find(|entry| !entry.is_directory())
+        .expect("functions tree should contain a root item");
+    tree.unlink(&item.path).unwrap();
+    assert!(!tree.contains(&item.path).unwrap());
+    tree.link(&item.name).unwrap();
+    assert!(tree.contains(&item.path).unwrap());
+
+    if tree.is_orderable().unwrap() {
+        let natural = tree.has_natural_order("/").unwrap();
+        tree.set_natural_order("/", !natural).unwrap();
+        tree.set_natural_order("/", natural).unwrap();
+        tree.rank(alpha).unwrap();
+        tree.change_rank(alpha, 1).unwrap();
+        tree.change_rank(alpha, -1).unwrap();
+    }
+
+    let moved = tree
+        .move_entries(
+            &[
+                "/__idax_rust_directory_missing_move_a__",
+                alpha,
+                "/__idax_rust_directory_missing_move_b__",
+                beta,
+            ],
+            destination,
+            None,
+        )
+        .unwrap();
+    assert!(!moved.is_ok());
+    assert_eq!(moved.affected_paths.len(), 2);
+    assert_eq!(moved.failures.len(), 2);
+    assert_eq!(moved.failures[0].input_index, 0);
+    assert_eq!(moved.failures[0].error, directory::OperationError::NotFound);
+    assert_eq!(moved.failures[1].input_index, 2);
+    assert_eq!(moved.failures[1].error, directory::OperationError::NotFound);
+
+    let removed = tree
+        .remove_entries(&[
+            "/__idax_rust_directory_missing_remove_a__",
+            destination,
+            "/__idax_rust_directory_missing_remove_b__",
+        ])
+        .unwrap();
+    assert!(!removed.is_ok());
+    assert_eq!(removed.affected_paths, [destination]);
+    assert_eq!(removed.failures.len(), 2);
+    assert_eq!(removed.failures[0].input_index, 0);
+    assert_eq!(removed.failures[1].input_index, 2);
+    assert!(!tree.contains(destination).unwrap());
+}
+
+fn registry_roundtrip() {
+    require_db!();
+    let store =
+        registry::Store::open(&format!("idax\\phase64\\rust_{}", std::process::id())).unwrap();
+    let _ = store.erase_tree();
+    assert!(!store.exists().unwrap());
+    assert_eq!(store.value_kind("missing").unwrap(), None);
+    assert_eq!(store.read_string("missing").unwrap(), None);
+    assert!(store.child("bad/path").is_err());
+
+    store.write_string("text", "rust registry π").unwrap();
+    store
+        .write_binary("binary", &[0, 1, 127, 128, 255])
+        .unwrap();
+    store.write_binary("empty_binary", &[]).unwrap();
+    store.write_integer("integer", i32::MIN).unwrap();
+    store.write_boolean("enabled", true).unwrap();
+    store.write_boolean("disabled", false).unwrap();
+    assert_eq!(
+        store.read_string("text").unwrap().as_deref(),
+        Some("rust registry π")
+    );
+    assert_eq!(
+        store.read_binary("binary").unwrap().unwrap(),
+        [0, 1, 127, 128, 255]
+    );
+    assert!(
+        store
+            .read_binary("empty_binary")
+            .unwrap()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(store.read_integer("integer").unwrap(), Some(i32::MIN));
+    assert_eq!(store.read_boolean("enabled").unwrap(), Some(true));
+    assert_eq!(store.read_boolean("disabled").unwrap(), Some(false));
+    assert!(store.read_binary("text").is_err());
+    assert_eq!(
+        store.value_kind("text").unwrap(),
+        Some(registry::ValueKind::String)
+    );
+    assert_eq!(
+        store.value_kind("binary").unwrap(),
+        Some(registry::ValueKind::Binary)
+    );
+    assert_eq!(
+        store.value_kind("integer").unwrap(),
+        Some(registry::ValueKind::Integer)
+    );
+    assert_eq!(
+        store.value_kind("enabled").unwrap(),
+        Some(registry::ValueKind::Integer)
+    );
+
+    let child = store.child("child").unwrap();
+    child.write_string("nested", "value").unwrap();
+    assert!(store.child_keys().unwrap().contains(&"child".into()));
+    assert!(store.value_names().unwrap().contains(&"text".into()));
+    let list = store.child("list").unwrap();
+    assert!(list.write_string_list(&["bad\0value"]).is_err());
+    list.write_string_list(&["alpha", "beta", "gamma"]).unwrap();
+    list.update_string_list(&registry::StringListUpdate {
+        add: Some("delta".into()),
+        remove: Some("beta".into()),
+        max_records: 3,
+        ignore_case: false,
+    })
+    .unwrap();
+    assert_eq!(
+        list.read_string_list().unwrap(),
+        ["delta", "alpha", "gamma"]
+    );
+    assert!(
+        list.update_string_list(&registry::StringListUpdate {
+            add: Some("same".into()),
+            remove: Some("SAME".into()),
+            max_records: 3,
+            ignore_case: true,
+        })
+        .is_err()
+    );
+    let empty: [&str; 0] = [];
+    list.write_string_list(&empty).unwrap();
+    assert!(list.read_string_list().unwrap().is_empty());
+    assert!(!store.erase_key().unwrap());
+    assert!(store.erase_value("text").unwrap());
+    assert!(!store.erase_value("text").unwrap());
+    assert!(store.erase_tree().unwrap());
+    assert!(!store.exists().unwrap());
+}
+
 // ===========================================================================
 // Cross-References
 // ===========================================================================
 
-#[test]
 fn xref_refs_to_from() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -569,7 +1669,6 @@ fn xref_refs_to_from() {
     let _ = refs_to;
 }
 
-#[test]
 fn xref_code_data_refs() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -579,11 +1678,147 @@ fn xref_code_data_refs() {
     let _ = xref::data_refs_to(f.start()).unwrap();
 }
 
+fn offset_reference_roundtrip() {
+    require_db!();
+
+    let mut raw_value = u64::MAX;
+    let mut raw_present = 1;
+    let raw_optional_failure = unsafe {
+        idax_sys::idax_offset_possible_offset32_target(
+            BAD_ADDRESS,
+            &mut raw_value,
+            &mut raw_present,
+        )
+    };
+    assert_ne!(raw_optional_failure, 0);
+    assert_eq!((raw_value, raw_present), (0, 0));
+
+    let mut raw_removed = 1;
+    let raw_remove_failure =
+        unsafe { idax_sys::idax_offset_remove_reference(BAD_ADDRESS, 0, 0, &mut raw_removed) };
+    assert_ne!(raw_remove_failure, 0);
+    assert_eq!(raw_removed, 0);
+
+    let mut raw_target = u64::MAX;
+    let raw_xref_failure = unsafe {
+        idax_sys::idax_offset_add_operand_data_references(
+            BAD_ADDRESS,
+            0,
+            0,
+            xref::DataType::Offset as i32,
+            &mut raw_target,
+        )
+    };
+    assert_ne!(raw_xref_failure, 0);
+    assert_eq!(raw_target, 0);
+
+    let descriptors = offset::reference_types().unwrap();
+    assert!(descriptors.len() >= 10);
+    assert!(
+        descriptors
+            .iter()
+            .all(|value| { !value.name.is_empty() && !value.description.is_empty() })
+    );
+
+    let candidate = function::all().find_map(|function| {
+        function::code_addresses(function.start())
+            .ok()?
+            .into_iter()
+            .find_map(|address| {
+                let decoded = instruction::decode(address).ok()?;
+                decoded.operands().iter().find_map(|operand| {
+                    let numeric = operand.is_immediate()
+                        || matches!(
+                            operand.op_type(),
+                            instruction::OperandType::MemoryDirect
+                                | instruction::OperandType::MemoryDisplacement
+                        );
+                    let index = usize::try_from(operand.index()).ok()?;
+                    let location = offset::OperandLocation {
+                        index,
+                        outer: false,
+                    };
+                    let existing = offset::reference_info(address, location).ok()?;
+                    if !numeric || existing.is_some() {
+                        return None;
+                    }
+                    let value = if operand.is_immediate() {
+                        operand.value() as i64
+                    } else {
+                        operand.target_address() as i64
+                    };
+                    let from = address + operand.encoded_value_byte_offset().unwrap_or(0) as u64;
+                    Some((address, location, from, value))
+                })
+            })
+    });
+    let (address, location, from, value) =
+        candidate.expect("numeric operand without reference metadata");
+
+    let default_type = offset::default_reference_type(address).unwrap();
+    let info = offset::ReferenceInfo {
+        reference_type: default_type,
+        target: None,
+        base: Some(0),
+        target_delta: 0,
+        options: offset::ReferenceOptions {
+            ignore_fixup: true,
+            ..offset::ReferenceOptions::default()
+        },
+    };
+    instruction::clear_operand_representation(address, location.index as i32).unwrap();
+    offset::apply_reference(address, location, &info).unwrap();
+    assert_eq!(
+        offset::reference_info(address, location).unwrap(),
+        Some(info.clone())
+    );
+
+    let stored = offset::render_stored_expression(
+        address,
+        location,
+        from,
+        value,
+        offset::RenderOptions::default(),
+    )
+    .unwrap();
+    let explicit = offset::render_expression(
+        address,
+        location,
+        &info,
+        from,
+        value,
+        offset::RenderOptions::default(),
+    )
+    .unwrap();
+    assert!(!stored.text.is_empty());
+    assert_eq!(stored, explicit);
+
+    let calculation = offset::calculate_reference(from, &info, value).unwrap();
+    assert_eq!(calculation.target, Some(value as u64));
+    let _ = offset::calculate_offset_base(address, location).unwrap();
+    let _ = offset::probable_base(address, value as u64).unwrap();
+    let _ = offset::possible_offset32_target(address).unwrap();
+    let _ = offset::calculate_base_value(value as u64, 0).unwrap();
+
+    let had_target = xref::data_refs_from(address)
+        .unwrap()
+        .into_iter()
+        .any(|candidate| candidate == value as u64);
+    let target =
+        offset::add_operand_data_references(address, location, xref::DataType::Offset).unwrap();
+    assert_eq!(target, value as u64);
+    if !had_target {
+        xref::remove_data(address, target).unwrap();
+    }
+    assert!(offset::remove_reference(address, location).unwrap());
+    assert_eq!(offset::reference_info(address, location).unwrap(), None);
+    assert!(!offset::remove_reference(address, location).unwrap());
+}
+
 // ===========================================================================
 // Data
 // ===========================================================================
 
-#[test]
 fn data_read_byte() {
     require_db!();
     let bounds = database::address_bounds().unwrap();
@@ -592,7 +1827,6 @@ fn data_read_byte() {
     assert_eq!(byte, 0x7f, "first byte of ELF should be 0x7f");
 }
 
-#[test]
 fn data_read_bytes() {
     require_db!();
     let bounds = database::address_bounds().unwrap();
@@ -601,7 +1835,6 @@ fn data_read_bytes() {
     assert_eq!(&bytes, &[0x7f, b'E', b'L', b'F'], "should read ELF magic");
 }
 
-#[test]
 fn data_read_word_dword_qword() {
     require_db!();
     let bounds = database::address_bounds().unwrap();
@@ -613,7 +1846,97 @@ fn data_read_word_dword_qword() {
     assert_eq!(q & 0xff, 0x7f);
 }
 
-#[test]
+fn data_string_list_and_source_metadata() {
+    require_db!();
+
+    let inventory = name::all(&name::ListOptions::default()).unwrap();
+    assert!(!inventory.is_empty());
+    assert!(inventory.iter().any(|entry| entry.name == "main"));
+
+    struct StringOptionsRestore(data::StringListOptions);
+    impl Drop for StringOptionsRestore {
+        fn drop(&mut self) {
+            let _ = data::configure_string_list(&self.0);
+        }
+    }
+
+    let original = data::string_list_options().unwrap();
+    let _restore = StringOptionsRestore(original);
+
+    let empty = data::StringListOptions {
+        string_types: Vec::new(),
+        ..Default::default()
+    };
+    assert_eq!(
+        data::configure_string_list(&empty).unwrap_err().category,
+        ErrorCategory::Validation
+    );
+
+    let configured = data::StringListOptions {
+        string_types: vec![0, 1],
+        minimum_length: 5,
+        only_7bit: true,
+        ignore_instructions: false,
+        display_only_existing_strings: false,
+    };
+    data::configure_string_list(&configured).unwrap();
+    assert_eq!(data::string_list_options().unwrap(), configured);
+
+    let literals = data::string_literals(false).unwrap();
+    assert!(!literals.is_empty());
+    assert!(literals.iter().all(|literal| {
+        literal.address != BAD_ADDRESS
+            && literal.byte_length > 0
+            && matches!(literal.string_type, 0 | 1)
+            && !literal.text.is_empty()
+    }));
+    assert!(
+        literals
+            .iter()
+            .any(|literal| literal.text.contains("ref4: entered with %d"))
+    );
+    data::rebuild_string_list().unwrap();
+    data::clear_string_list().unwrap();
+
+    let last = segment::last().unwrap();
+    let base = last
+        .end()
+        .checked_add(0xffff)
+        .expect("temporary source segment address overflow")
+        & !0xffff;
+    segment::create(
+        base,
+        base + 0x1000,
+        "__idax_rust_source_metadata",
+        "DATA",
+        segment::Type::Data,
+    )
+    .unwrap();
+    struct SourceCleanup(Address);
+    impl Drop for SourceCleanup {
+        fn drop(&mut self) {
+            let _ = lines::remove_source_file(self.0 + 0x120);
+            let _ = segment::remove(self.0);
+        }
+    }
+    let _cleanup = SourceCleanup(base);
+
+    let range = idax::address::Range::new(base + 0x100, base + 0x180);
+    lines::add_source_file(range, "/src/network/transport.cpp").unwrap();
+    let source = lines::source_file_at(base + 0x120).unwrap();
+    assert_eq!(source.filename, "/src/network/transport.cpp");
+    assert_eq!(source.range, range);
+    assert_eq!(
+        lines::source_file_at(range.end).unwrap_err().category,
+        ErrorCategory::NotFound
+    );
+    lines::remove_source_file(base + 0x120).unwrap();
+    assert_eq!(
+        lines::source_file_at(base + 0x120).unwrap_err().category,
+        ErrorCategory::NotFound
+    );
+}
+
 fn data_patch_and_revert() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -635,11 +1958,378 @@ fn data_patch_and_revert() {
     assert_eq!(restored, original, "should be restored after revert");
 }
 
+fn data_element_definition_units() {
+    require_db!();
+
+    let last = segment::last().unwrap();
+    let start = last
+        .end()
+        .checked_add(0xffff)
+        .expect("temporary segment address overflow")
+        & !0xffff;
+    let end = start.checked_add(0x1000).unwrap();
+    segment::create(
+        start,
+        end,
+        "__idax_rust_data_units",
+        "DATA",
+        segment::Type::Data,
+    )
+    .unwrap();
+
+    struct SegmentCleanup(Address);
+    impl Drop for SegmentCleanup {
+        fn drop(&mut self) {
+            let _ = segment::remove(self.0);
+        }
+    }
+    let _cleanup = SegmentCleanup(start);
+
+    type DefineFunction = fn(Address, u64) -> Status;
+    let mut definitions: Vec<(&str, u64, DefineFunction)> = vec![
+        ("byte", 1, data::define_byte),
+        ("word", 2, data::define_word),
+        ("dword", 4, data::define_dword),
+        ("qword", 8, data::define_qword),
+        ("oword", 16, data::define_oword),
+        ("yword", 32, data::define_yword),
+        ("zword", 64, data::define_zword),
+        ("float", 4, data::define_float),
+        ("double", 8, data::define_double),
+    ];
+
+    match data::tbyte_element_size() {
+        Ok(width) => {
+            assert!(width > 0);
+            definitions.push(("tbyte", width, data::define_tbyte));
+        }
+        Err(error) => {
+            assert_eq!(error.category, ErrorCategory::Unsupported);
+            let define_error = data::define_tbyte(start, 1).unwrap_err();
+            assert_eq!(define_error.category, ErrorCategory::Unsupported);
+        }
+    }
+    match data::packed_real_element_size() {
+        Ok(width) => {
+            assert!(width > 0);
+            definitions.push(("packed_real", width, data::define_packed_real));
+        }
+        Err(error) => {
+            assert_eq!(error.category, ErrorCategory::Unsupported);
+            let define_error = data::define_packed_real(start, 1).unwrap_err();
+            assert_eq!(define_error.category, ErrorCategory::Unsupported);
+        }
+    }
+
+    for (name, width, define) in definitions {
+        define(start, 1).unwrap_or_else(|error| panic!("define_{name}(1): {error}"));
+        assert_eq!(
+            idax::address::item_size(start).unwrap(),
+            width,
+            "define_{name}(1) byte size"
+        );
+        data::undefine(start, width).unwrap();
+
+        define(start, 3).unwrap_or_else(|error| panic!("define_{name}(3): {error}"));
+        assert_eq!(
+            idax::address::item_size(start).unwrap(),
+            width * 3,
+            "define_{name}(3) byte size"
+        );
+        data::undefine(start, width * 3).unwrap();
+    }
+
+    let zero = data::define_dword(start, 0).unwrap_err();
+    assert_eq!(
+        zero.category,
+        ErrorCategory::Validation,
+        "zero-count error: {zero:?}"
+    );
+    for define in [
+        data::define_tbyte as DefineFunction,
+        data::define_packed_real as DefineFunction,
+    ] {
+        let extended_zero = define(start, 0).unwrap_err();
+        assert_eq!(extended_zero.category, ErrorCategory::Validation);
+    }
+
+    let overflowing_count = u64::MAX / 64 + 1;
+    let overflow = data::define_zword(start, overflowing_count).unwrap_err();
+    assert_eq!(
+        overflow.category,
+        ErrorCategory::Validation,
+        "multiplication-overflow error: {overflow:?}"
+    );
+
+    let range_overflow = data::define_word(BAD_ADDRESS - 1, 1).unwrap_err();
+    assert_eq!(
+        range_overflow.category,
+        ErrorCategory::Validation,
+        "address-range-overflow error: {range_overflow:?}"
+    );
+}
+
+fn data_custom_data_lifecycle() {
+    require_db!();
+
+    let last = segment::last().unwrap();
+    let start = last
+        .end()
+        .checked_add(0xffff)
+        .expect("temporary segment address overflow")
+        & !0xffff;
+    let end = start.checked_add(0x1000).unwrap();
+    segment::create(
+        start,
+        end,
+        "__idax_rust_custom_data",
+        "DATA",
+        segment::Type::Data,
+    )
+    .unwrap();
+
+    struct Cleanup {
+        segment_start: Address,
+        fixed_type: Option<data::CustomDataTypeId>,
+        variable_type: Option<data::CustomDataTypeId>,
+        format: Option<data::CustomDataFormatId>,
+    }
+    impl Drop for Cleanup {
+        fn drop(&mut self) {
+            if let Some(id) = self.fixed_type.take() {
+                let _ = data::unregister_custom_data_type(id);
+            }
+            if let Some(id) = self.variable_type.take() {
+                let _ = data::unregister_custom_data_type(id);
+            }
+            if let Some(id) = self.format.take() {
+                let _ = data::unregister_custom_data_format(id);
+            }
+            let _ = segment::remove(self.segment_start);
+        }
+    }
+    let mut cleanup = Cleanup {
+        segment_start: start,
+        fixed_type: None,
+        variable_type: None,
+        format: None,
+    };
+
+    let creation_calls = Arc::new(AtomicUsize::new(0));
+    let creation_calls_callback = Arc::clone(&creation_calls);
+    let fixed_definition = data::CustomDataTypeDefinition {
+        name: "idax_rust_p31_fixed_u16".into(),
+        menu_name: "idax Rust P31 fixed u16".into(),
+        assembler_keyword: "rust_p31_u16".into(),
+        value_size: 2,
+        allow_duplicates: false,
+        may_create_at: Some(Arc::new(move |address, byte_length| {
+            creation_calls_callback.fetch_add(1, Ordering::SeqCst);
+            address == start && byte_length == 2
+        })),
+        ..Default::default()
+    };
+    let fixed_type = data::register_custom_data_type(&fixed_definition).unwrap();
+    cleanup.fixed_type = Some(fixed_type);
+    assert_eq!(
+        data::register_custom_data_type(&fixed_definition)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Conflict
+    );
+
+    let render_calls = Arc::new(AtomicUsize::new(0));
+    let scan_calls = Arc::new(AtomicUsize::new(0));
+    let analyze_calls = Arc::new(AtomicUsize::new(0));
+    let analyzed_address = Arc::new(AtomicU64::new(BAD_ADDRESS));
+    let render_calls_callback = Arc::clone(&render_calls);
+    let scan_calls_callback = Arc::clone(&scan_calls);
+    let analyze_calls_callback = Arc::clone(&analyze_calls);
+    let analyzed_address_callback = Arc::clone(&analyzed_address);
+    let format_definition = data::CustomDataFormatDefinition {
+        name: "idax_rust_p31_u16_format".into(),
+        menu_name: "idax Rust P31 u16 format".into(),
+        value_size: 0,
+        text_width: 12,
+        render: Some(Arc::new(move |value, context| {
+            render_calls_callback.fetch_add(1, Ordering::SeqCst);
+            if value.len() != 2 {
+                return Err(idax::Error::validation("expected two bytes"));
+            }
+            let number = u16::from_le_bytes([value[0], value[1]]);
+            Ok(format!("u16:{number}@{}", context.address))
+        })),
+        scan: Some(Arc::new(move |text, _context| {
+            scan_calls_callback.fetch_add(1, Ordering::SeqCst);
+            if text == "4660" {
+                Ok(vec![0x34, 0x12])
+            } else {
+                Err(idax::Error::validation("expected decimal 4660"))
+            }
+        })),
+        analyze: Some(Arc::new(move |context| {
+            analyze_calls_callback.fetch_add(1, Ordering::SeqCst);
+            analyzed_address_callback.store(context.address, Ordering::SeqCst);
+        })),
+        ..Default::default()
+    };
+    let format = data::register_custom_data_format(&format_definition).unwrap();
+    cleanup.format = Some(format);
+
+    assert_eq!(
+        data::find_custom_data_type(&fixed_definition.name).unwrap(),
+        fixed_type
+    );
+    assert_eq!(
+        data::find_custom_data_format(&format_definition.name).unwrap(),
+        format
+    );
+    let type_info = data::custom_data_type(fixed_type).unwrap();
+    assert_eq!(type_info.name, fixed_definition.name);
+    assert_eq!(type_info.value_size, 2);
+    assert!(!type_info.allow_duplicates);
+    assert!(type_info.visible_in_menu);
+    assert!(type_info.has_creation_filter);
+    assert!(!type_info.variable_size);
+    let format_info = data::custom_data_format(format).unwrap();
+    assert_eq!(format_info.name, format_definition.name);
+    assert_eq!(format_info.value_size, 0);
+    assert_eq!(format_info.text_width, 12);
+    assert!(format_info.visible_in_menu);
+    assert!(format_info.can_render && format_info.can_scan && format_info.can_analyze);
+    assert!(
+        data::custom_data_types(2, 2)
+            .unwrap()
+            .iter()
+            .any(|info| info.id == fixed_type)
+    );
+    assert_eq!(
+        data::custom_data_types(3, 2).unwrap_err().category,
+        ErrorCategory::Validation
+    );
+
+    data::attach_custom_data_format(fixed_type, format).unwrap();
+    assert_eq!(
+        data::attach_custom_data_format(fixed_type, format)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Conflict
+    );
+    assert!(data::is_custom_data_format_attached(fixed_type, format).unwrap());
+    assert_eq!(data::custom_data_formats(fixed_type).unwrap().len(), 1);
+    data::attach_custom_data_format_to_standard_types(format).unwrap();
+    assert!(data::is_custom_data_format_attached_to_standard_types(format).unwrap());
+    assert!(
+        data::standard_custom_data_formats()
+            .unwrap()
+            .iter()
+            .any(|info| info.id == format)
+    );
+    data::detach_custom_data_format_from_standard_types(format).unwrap();
+
+    let context = data::CustomDataFormatContext {
+        address: start,
+        operand_index: -1,
+        type_id: fixed_type,
+    };
+    assert_eq!(
+        data::render_custom_data(format, &[0x34, 0x12], context).unwrap(),
+        format!("u16:4660@{start}")
+    );
+    assert_eq!(render_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        data::scan_custom_data(format, "4660", context).unwrap(),
+        vec![0x34, 0x12]
+    );
+    assert_eq!(scan_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        data::scan_custom_data(format, "invalid", context)
+            .unwrap_err()
+            .category,
+        ErrorCategory::SdkFailure
+    );
+    data::analyze_custom_data(format, context).unwrap();
+    assert_eq!(analyze_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(analyzed_address.load(Ordering::SeqCst), start);
+
+    data::define_custom(start, 2, fixed_type, format).unwrap();
+    assert!(creation_calls.load(Ordering::SeqCst) >= 1);
+    let item = data::custom_data_at(start).unwrap();
+    assert_eq!(item.type_id, fixed_type);
+    assert_eq!(item.format_id, format);
+    assert_eq!(item.byte_length, 2);
+    data::undefine(start, 2).unwrap();
+    assert_eq!(
+        data::custom_data_at(start).unwrap_err().category,
+        ErrorCategory::NotFound
+    );
+    assert_eq!(
+        data::custom_data_item_size(fixed_type, start, 2).unwrap(),
+        2
+    );
+    assert_eq!(
+        data::custom_data_item_size(fixed_type, start, 1)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    data::define_custom_inferred(start, fixed_type, format, 2).unwrap();
+    data::undefine(start, 2).unwrap();
+
+    let size_calls = Arc::new(AtomicUsize::new(0));
+    let size_calls_callback = Arc::clone(&size_calls);
+    let variable_definition = data::CustomDataTypeDefinition {
+        name: "idax_rust_p31_pascal".into(),
+        value_size: 1,
+        calculate_size: Some(Arc::new(move |address, maximum_size| {
+            size_calls_callback.fetch_add(1, Ordering::SeqCst);
+            data::read_byte(address)
+                .ok()
+                .map(|length| u64::from(length) + 1)
+                .filter(|size| *size <= maximum_size)
+                .unwrap_or(0)
+        })),
+        ..Default::default()
+    };
+    let variable_type = data::register_custom_data_type(&variable_definition).unwrap();
+    cleanup.variable_type = Some(variable_type);
+    data::attach_custom_data_format(variable_type, format).unwrap();
+    data::write_bytes(start, &[3, b'a', b'b', b'c']).unwrap();
+    assert_eq!(
+        data::custom_data_item_size(variable_type, start, 4).unwrap(),
+        4
+    );
+    assert_eq!(
+        data::custom_data_item_size(variable_type, start, 3)
+            .unwrap_err()
+            .category,
+        ErrorCategory::SdkFailure
+    );
+    let calls_before_creation = size_calls.load(Ordering::SeqCst);
+    data::define_custom_inferred(start, variable_type, format, 4).unwrap();
+    assert!(size_calls.load(Ordering::SeqCst) > calls_before_creation);
+    assert_eq!(data::custom_data_at(start).unwrap().byte_length, 4);
+    data::undefine(start, 4).unwrap();
+
+    data::unregister_custom_data_type(fixed_type).unwrap();
+    cleanup.fixed_type = None;
+    assert_eq!(
+        data::find_custom_data_type(&fixed_definition.name)
+            .unwrap_err()
+            .category,
+        ErrorCategory::NotFound
+    );
+    assert_eq!(data::custom_data_format(format).unwrap().id, format);
+    data::unregister_custom_data_type(variable_type).unwrap();
+    cleanup.variable_type = None;
+    data::unregister_custom_data_format(format).unwrap();
+    cleanup.format = None;
+}
+
 // ===========================================================================
 // Search
 // ===========================================================================
 
-#[test]
 fn search_next_code() {
     require_db!();
     let bounds = database::address_bounds().unwrap();
@@ -647,7 +2337,6 @@ fn search_next_code() {
     assert_ne!(code_addr, BAD_ADDRESS);
 }
 
-#[test]
 fn search_next_data() {
     require_db!();
     let bounds = database::address_bounds().unwrap();
@@ -659,22 +2348,12 @@ fn search_next_data() {
 // Analysis
 // ===========================================================================
 
-#[test]
-#[cfg_attr(
-    target_os = "linux",
-    ignore = "segfaults under headless idalib on Linux CI"
-)]
 fn analysis_is_idle() {
     require_db!();
-    // After wait(), analysis should be idle
+    analysis::wait().unwrap();
     assert!(analysis::is_idle(), "should be idle after wait()");
 }
 
-#[test]
-#[cfg_attr(
-    target_os = "linux",
-    ignore = "segfaults under headless idalib on Linux CI"
-)]
 fn analysis_enable_disable() {
     require_db!();
     let was_enabled = analysis::is_enabled();
@@ -687,7 +2366,6 @@ fn analysis_enable_disable() {
 // Entry points
 // ===========================================================================
 
-#[test]
 fn entry_count_and_enumerate() {
     require_db!();
     let n = entry::count().unwrap();
@@ -702,7 +2380,6 @@ fn entry_count_and_enumerate() {
 // Type system
 // ===========================================================================
 
-#[test]
 fn types_primitive_constructors() {
     require_db!();
     let i32t = types::TypeInfo::int32();
@@ -717,7 +2394,6 @@ fn types_primitive_constructors() {
     assert!(vt.is_void());
 }
 
-#[test]
 fn types_pointer_and_array() {
     require_db!();
     let i32t = types::TypeInfo::int32();
@@ -733,7 +2409,307 @@ fn types_pointer_and_array() {
     assert!(elem.is_integer());
 }
 
-#[test]
+fn types_shifted_pointer_metadata() {
+    require_db!();
+    let structure = types::TypeInfo::create_struct();
+    structure
+        .add_member("head", &types::TypeInfo::uint64(), 0)
+        .unwrap();
+    structure
+        .add_member("tail", &types::TypeInfo::uint32(), 8)
+        .unwrap();
+    structure
+        .save_as("idax_rust_shifted_pointer_parent")
+        .unwrap();
+    let parent = types::TypeInfo::by_name("idax_rust_shifted_pointer_parent").unwrap();
+    let pointer = types::TypeInfo::pointer_to(&parent);
+
+    let neutral = pointer.pointer_details().unwrap();
+    assert!(!neutral.is_shifted);
+    assert!(neutral.shifted_parent.is_none());
+    assert_eq!(neutral.shift_delta, 0);
+    assert_eq!(
+        neutral.pointee_type.to_string().unwrap(),
+        parent.to_string().unwrap()
+    );
+
+    let shifted = pointer.with_shifted_parent(&parent, 8).unwrap();
+    let details = shifted.pointer_details().unwrap();
+    assert!(details.is_shifted);
+    assert_eq!(details.shift_delta, 8);
+    assert_eq!(
+        details.shifted_parent.unwrap().to_string().unwrap(),
+        parent.to_string().unwrap()
+    );
+    assert_eq!(
+        details.pointee_type.to_string().unwrap(),
+        parent.to_string().unwrap()
+    );
+    assert!(!pointer.pointer_details().unwrap().is_shifted);
+    assert_eq!(
+        shifted
+            .with_shifted_parent(&parent, -4)
+            .unwrap()
+            .pointer_details()
+            .unwrap()
+            .shift_delta,
+        -4
+    );
+
+    assert_eq!(
+        pointer
+            .with_shifted_parent(&parent, 0)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    assert_eq!(
+        pointer
+            .with_shifted_parent(&parent, i64::from(i32::MAX) + 1)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    assert_eq!(
+        types::TypeInfo::uint32()
+            .with_shifted_parent(&parent, 8)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    assert_eq!(
+        pointer
+            .with_shifted_parent(&types::TypeInfo::uint32(), 8)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    assert_eq!(
+        types::TypeInfo::uint32()
+            .pointer_details()
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+}
+
+fn types_forward_declaration_replacement() {
+    require_db!();
+    let report = types::parse_declarations(
+        "struct idax_rust_forward_struct;\n\
+         union idax_rust_forward_union;\n\
+         struct idax_rust_forward_complete { unsigned int keep; };",
+        types::ParseDeclarationsOptions::default(),
+    )
+    .unwrap();
+    assert!(report.ok());
+
+    let struct_forward = types::TypeInfo::by_name("idax_rust_forward_struct").unwrap();
+    let union_forward = types::TypeInfo::by_name("idax_rust_forward_union").unwrap();
+    let complete = types::TypeInfo::by_name("idax_rust_forward_complete").unwrap();
+    assert!(struct_forward.is_forward_declaration());
+    assert_eq!(
+        struct_forward.forward_declaration_kind().unwrap(),
+        types::TypeKind::Struct
+    );
+    assert!(union_forward.is_forward_declaration());
+    assert_eq!(
+        union_forward.forward_declaration_kind().unwrap(),
+        types::TypeKind::Union
+    );
+    assert!(!complete.is_forward_declaration());
+    assert_eq!(
+        complete.forward_declaration_kind().unwrap(),
+        types::TypeKind::Unknown
+    );
+
+    let pointer_before = types::TypeInfo::pointer_to(&struct_forward);
+    assert!(
+        pointer_before
+            .pointee_type()
+            .unwrap()
+            .is_forward_declaration()
+    );
+    assert_eq!(
+        pointer_before
+            .pointee_type()
+            .unwrap()
+            .forward_declaration_kind()
+            .unwrap(),
+        types::TypeKind::Struct
+    );
+    let source = types::TypeInfo::create_struct();
+    source
+        .add_member("first", &types::TypeInfo::uint32(), 0)
+        .unwrap();
+    source
+        .add_member("second", &types::TypeInfo::uint64(), 8)
+        .unwrap();
+    source.save_as("idax_rust_forward_source").unwrap();
+    let named_source = types::TypeInfo::by_name("idax_rust_forward_source").unwrap();
+
+    assert_eq!(
+        named_source
+            .replace_forward_declaration("")
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    assert_eq!(
+        named_source
+            .replace_forward_declaration("idax\0rust")
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    assert_eq!(
+        named_source
+            .replace_forward_declaration("idax_rust_forward_missing")
+            .unwrap_err()
+            .category,
+        ErrorCategory::NotFound
+    );
+    assert_eq!(
+        types::TypeInfo::uint32()
+            .replace_forward_declaration("idax_rust_forward_struct")
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    assert_eq!(
+        struct_forward
+            .replace_forward_declaration("idax_rust_forward_union")
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    assert_eq!(
+        named_source
+            .replace_forward_declaration("idax_rust_forward_union")
+            .unwrap_err()
+            .category,
+        ErrorCategory::Conflict
+    );
+    assert_eq!(
+        named_source
+            .replace_forward_declaration("idax_rust_forward_complete")
+            .unwrap_err()
+            .category,
+        ErrorCategory::Conflict
+    );
+    assert!(
+        types::TypeInfo::by_name("idax_rust_forward_union")
+            .unwrap()
+            .is_forward_declaration()
+    );
+    assert_eq!(
+        types::TypeInfo::by_name("idax_rust_forward_complete")
+            .unwrap()
+            .member_by_name("keep")
+            .unwrap()
+            .name,
+        "keep"
+    );
+
+    let replaced = named_source
+        .replace_forward_declaration("idax_rust_forward_struct")
+        .unwrap();
+    assert!(replaced.is_struct());
+    assert!(!replaced.is_forward_declaration());
+    assert_eq!(replaced.name().unwrap(), "idax_rust_forward_struct");
+    assert_eq!(replaced.member_count().unwrap(), 2);
+    assert_eq!(replaced.member_by_name("first").unwrap().name, "first");
+    assert_eq!(replaced.member_by_name("second").unwrap().name, "second");
+    assert_eq!(named_source.name().unwrap(), "idax_rust_forward_source");
+    assert_eq!(named_source.member_count().unwrap(), 2);
+    assert_eq!(
+        pointer_before
+            .pointee_type()
+            .unwrap()
+            .member_count()
+            .unwrap(),
+        2
+    );
+
+    let union_source = types::TypeInfo::create_union();
+    union_source
+        .add_member("wide", &types::TypeInfo::uint64(), 0)
+        .unwrap();
+    union_source
+        .add_member("narrow", &types::TypeInfo::uint32(), 0)
+        .unwrap();
+    let replaced_union = union_source
+        .replace_forward_declaration("idax_rust_forward_union")
+        .unwrap();
+    assert!(replaced_union.is_union());
+    assert!(!replaced_union.is_forward_declaration());
+    assert_eq!(replaced_union.member_count().unwrap(), 2);
+}
+
+fn types_member_references() {
+    require_db!();
+    let source_address = function::by_index(0).unwrap().start();
+
+    let ephemeral = types::TypeInfo::create_struct();
+    ephemeral
+        .add_member("field", &types::TypeInfo::uint32(), 4)
+        .unwrap();
+    assert_eq!(
+        ephemeral.member_references(4).unwrap_err().category,
+        ErrorCategory::Conflict
+    );
+
+    let structure = types::TypeInfo::create_struct();
+    structure
+        .add_member("first", &types::TypeInfo::uint32(), 4)
+        .unwrap();
+    structure
+        .add_member("second", &types::TypeInfo::uint64(), 8)
+        .unwrap();
+    structure
+        .save_as("idax_rust_member_reference_struct")
+        .unwrap();
+    let saved = types::TypeInfo::by_name("idax_rust_member_reference_struct").unwrap();
+    assert!(saved.member_references(4).unwrap().is_empty());
+    assert!(saved.ensure_member_reference(4, source_address).unwrap());
+    assert_eq!(saved.member_references(4).unwrap(), vec![source_address]);
+    assert!(!saved.ensure_member_reference(4, source_address).unwrap());
+    assert_eq!(
+        saved.member_references(7).unwrap_err().category,
+        ErrorCategory::NotFound
+    );
+    assert_eq!(
+        saved
+            .ensure_member_reference(4, BAD_ADDRESS)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    assert_eq!(
+        saved.member_references(usize::MAX).unwrap_err().category,
+        ErrorCategory::Validation
+    );
+
+    let ambiguous = types::TypeInfo::create_union();
+    ambiguous
+        .add_member("wide", &types::TypeInfo::uint64(), 0)
+        .unwrap();
+    ambiguous
+        .add_member("narrow", &types::TypeInfo::uint32(), 0)
+        .unwrap();
+    ambiguous
+        .save_as("idax_rust_member_reference_ambiguous")
+        .unwrap();
+    assert_eq!(
+        types::TypeInfo::by_name("idax_rust_member_reference_ambiguous")
+            .unwrap()
+            .member_references(0)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Conflict
+    );
+}
+
 fn types_struct_creation() {
     require_db!();
     let s = types::TypeInfo::create_struct();
@@ -746,7 +2722,72 @@ fn types_struct_creation() {
     assert_eq!(members.len(), 2);
 }
 
-#[test]
+fn types_udt_semantics() {
+    require_db!();
+    let structure = types::TypeInfo::create_struct();
+    structure
+        .add_member("word", &types::TypeInfo::uint32(), 0)
+        .unwrap();
+    structure
+        .add_member("tail", &types::TypeInfo::uint8(), 8)
+        .unwrap();
+    let before = structure.udt_details().unwrap();
+    assert!(!before.is_cpp_object);
+    assert!(!before.is_vftable);
+
+    structure.set_udt_semantics(true, false).unwrap();
+    let cpp_object = structure.udt_details().unwrap();
+    assert!(cpp_object.is_cpp_object);
+    assert!(!cpp_object.is_vftable);
+    assert_eq!(cpp_object.total_size, before.total_size);
+    assert_eq!(cpp_object.members.len(), before.members.len());
+    assert_eq!(cpp_object.members[0].name, before.members[0].name);
+    assert_eq!(cpp_object.members[0].bit_size, before.members[0].bit_size);
+    assert_eq!(
+        cpp_object.members[0].r#type.to_string().unwrap(),
+        before.members[0].r#type.to_string().unwrap()
+    );
+    assert_eq!(
+        cpp_object.members[1].byte_offset,
+        before.members[1].byte_offset
+    );
+    assert_eq!(cpp_object.members[1].bit_size, before.members[1].bit_size);
+    assert_eq!(
+        cpp_object.members[1].r#type.to_string().unwrap(),
+        before.members[1].r#type.to_string().unwrap()
+    );
+
+    structure.set_udt_semantics(false, true).unwrap();
+    let vftable = structure.udt_details().unwrap();
+    assert!(!vftable.is_cpp_object);
+    assert!(vftable.is_vftable);
+    assert_eq!(
+        structure
+            .set_udt_semantics(true, true)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    assert!(structure.udt_details().unwrap().is_vftable);
+    structure.set_udt_semantics(false, false).unwrap();
+    let restored = structure.udt_details().unwrap();
+    assert!(!restored.is_cpp_object);
+    assert!(!restored.is_vftable);
+    assert_eq!(
+        types::TypeInfo::int32()
+            .set_udt_semantics(false, false)
+            .unwrap_err()
+            .category,
+        ErrorCategory::Validation
+    );
+    let union = types::TypeInfo::create_union();
+    assert_eq!(
+        union.set_udt_semantics(true, false).unwrap_err().category,
+        ErrorCategory::Validation
+    );
+    union.set_udt_semantics(false, false).unwrap();
+}
+
 fn types_from_declaration() {
     require_db!();
     let ti = types::TypeInfo::from_declaration("int (*)(const char *, ...)").unwrap();
@@ -756,7 +2797,82 @@ fn types_from_declaration() {
     );
 }
 
-#[test]
+fn types_replace_function_argument() {
+    require_db!();
+    let original = types::TypeInfo::from_declaration(
+        "int __cdecl idax_rust_proto(int selector, char *payload)",
+    )
+    .unwrap();
+    let before = original.function_details().unwrap();
+    let edited = original
+        .with_function_argument_type(0, &types::TypeInfo::uint32())
+        .unwrap();
+    let after = edited.function_details().unwrap();
+    assert_eq!(after.arguments.len(), before.arguments.len());
+    assert_eq!(after.arguments[0].name, before.arguments[0].name);
+    assert_eq!(after.arguments[1].name, before.arguments[1].name);
+    assert!(after.arguments[1].r#type.is_pointer());
+    assert_eq!(after.calling_convention, before.calling_convention);
+    assert_eq!(after.variadic, before.variadic);
+    assert!(
+        original.function_details().unwrap().arguments[0]
+            .r#type
+            .is_signed()
+    );
+
+    let renamed = original.with_function_argument_name(0, "size").unwrap();
+    let renamed_after = renamed.function_details().unwrap();
+    assert_eq!(renamed_after.arguments[0].name, "size");
+    assert!(renamed_after.arguments[0].r#type.is_signed());
+    assert_eq!(renamed_after.arguments[1].name, before.arguments[1].name);
+    assert!(renamed_after.arguments[1].r#type.is_pointer());
+    assert_eq!(renamed_after.calling_convention, before.calling_convention);
+    assert_eq!(renamed_after.variadic, before.variadic);
+    assert_eq!(
+        original.function_details().unwrap().arguments[0].name,
+        before.arguments[0].name
+    );
+
+    let return_edited = original
+        .with_function_return_type(&types::TypeInfo::uint64())
+        .unwrap();
+    let return_after = return_edited.function_details().unwrap();
+    assert!(return_after.return_type.is_integer());
+    assert!(!return_after.return_type.is_signed());
+    assert_eq!(return_after.arguments[0].name, before.arguments[0].name);
+    assert_eq!(return_after.arguments[1].name, before.arguments[1].name);
+    assert_eq!(return_after.calling_convention, before.calling_convention);
+    assert_eq!(return_after.variadic, before.variadic);
+    assert!(original.function_return_type().unwrap().is_signed());
+
+    let pointer = types::TypeInfo::pointer_to(&original);
+    let edited_pointer = pointer
+        .with_function_argument_type(1, &types::TypeInfo::uint32())
+        .unwrap();
+    assert!(edited_pointer.is_pointer());
+    assert!(
+        edited_pointer.function_details().unwrap().arguments[1]
+            .r#type
+            .is_integer()
+    );
+    let renamed_pointer = pointer.with_function_argument_name(1, "buffer").unwrap();
+    assert!(renamed_pointer.is_pointer());
+    assert_eq!(
+        renamed_pointer.function_details().unwrap().arguments[1].name,
+        "buffer"
+    );
+    let return_edited_pointer = pointer
+        .with_function_return_type(&types::TypeInfo::uint64())
+        .unwrap();
+    assert!(return_edited_pointer.is_pointer());
+    assert!(
+        !return_edited_pointer
+            .function_return_type()
+            .unwrap()
+            .is_signed()
+    );
+}
+
 fn types_parse_declarations() {
     require_db!();
     let report = types::parse_declarations(
@@ -771,7 +2887,6 @@ fn types_parse_declarations() {
     assert_eq!(report.error_count, 0);
 }
 
-#[test]
 fn types_retrieve_at_function() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -779,7 +2894,6 @@ fn types_retrieve_at_function() {
     let _ = types::retrieve(f.start());
 }
 
-#[test]
 fn types_local_type_count() {
     require_db!();
     let n = types::local_type_count().unwrap();
@@ -790,7 +2904,6 @@ fn types_local_type_count() {
 // Lines (color tags — runtime SDK calls)
 // ===========================================================================
 
-#[test]
 fn lines_tag_operations() {
     require_db!();
     let tagged = lines::colstr("hello", lines::Color::Default);
@@ -800,7 +2913,6 @@ fn lines_tag_operations() {
     assert_eq!(len, 5, "visible length should be 5");
 }
 
-#[test]
 fn lines_addr_tag_roundtrip() {
     require_db!();
     let tag = lines::make_addr_tag(42);
@@ -813,14 +2925,12 @@ fn lines_addr_tag_roundtrip() {
 // Decompiler
 // ===========================================================================
 
-#[test]
 fn decompiler_available() {
     require_db!();
     // Just check we can query without crashing
     let _ = decompiler::available();
 }
 
-#[test]
 fn decompiler_decompile() {
     require_db!();
     if !decompiler::available().unwrap_or(false) {
@@ -840,7 +2950,82 @@ fn decompiler_decompile() {
     assert!(!decl.is_empty(), "declaration should not be empty");
 }
 
-#[test]
+fn decompiler_pseudocode_comments() {
+    require_db!();
+    if !decompiler::available().unwrap_or(false) {
+        eprintln!("  [skipped — decompiler not available]");
+        return;
+    }
+    let f = function::by_index(0).unwrap();
+    let df = decompiler::decompile(f.start()).unwrap();
+    let address = df.entry_address().unwrap();
+    let default = decompiler::CommentPosition::Default;
+    let semicolon = decompiler::CommentPosition::Semicolon;
+    let original_default = df.get_comment(address, default).unwrap();
+    let original_semicolon = df.get_comment(address, semicolon).unwrap();
+
+    assert!(
+        df.set_comment(address, "invalid\0comment", default)
+            .is_err()
+    );
+    assert!(
+        df.set_comment(address, "", decompiler::CommentPosition::Argument(64))
+            .is_err()
+    );
+    assert!(
+        df.set_comment(
+            address,
+            "",
+            decompiler::CommentPosition::SwitchCase(-0x2000_0000),
+        )
+        .is_err()
+    );
+    assert!(
+        df.set_comment(
+            address,
+            "",
+            decompiler::CommentPosition::SwitchCase(0x2000_0000),
+        )
+        .is_err()
+    );
+
+    df.set_comment(address, "rust_default_location", default)
+        .unwrap();
+    df.set_comment(address, "rust_semicolon_location", semicolon)
+        .unwrap();
+    df.save_comments().unwrap();
+    assert_eq!(
+        df.get_comment(address, default).unwrap(),
+        "rust_default_location"
+    );
+    assert_eq!(
+        df.get_comment(address, semicolon).unwrap(),
+        "rust_semicolon_location"
+    );
+
+    let comments = df.comments().unwrap();
+    assert!(comments.iter().any(|comment| {
+        comment.address == address
+            && comment.position == default
+            && comment.text == "rust_default_location"
+    }));
+    assert!(comments.iter().any(|comment| {
+        comment.address == address
+            && comment.position == semicolon
+            && comment.text == "rust_semicolon_location"
+    }));
+    let _ = df.has_orphan_comments().unwrap();
+
+    df.set_comment(address, &original_semicolon, semicolon)
+        .unwrap();
+    df.set_comment(address, &original_default, default).unwrap();
+    df.save_comments().unwrap();
+    let restored = df.comments().unwrap();
+    assert!(!restored.iter().any(|comment| {
+        comment.text == "rust_default_location" || comment.text == "rust_semicolon_location"
+    }));
+}
+
 fn decompiler_variables() {
     require_db!();
     if !decompiler::available().unwrap_or(false) {
@@ -855,7 +3040,6 @@ fn decompiler_variables() {
     let _ = df.variable_count();
 }
 
-#[test]
 fn decompiler_microcode() {
     require_db!();
     if !decompiler::available().unwrap_or(false) {
@@ -868,7 +3052,86 @@ fn decompiler_microcode() {
     let _ = df.microcode();
 }
 
-#[test]
+fn decompiler_owned_microcode_graph() {
+    require_db!();
+    if !decompiler::available().unwrap_or(false) {
+        eprintln!("  [skipped — decompiler not available]");
+        return;
+    }
+
+    let f = function::by_index(0).unwrap();
+    let options = decompiler::MicrocodeGenerationOptions {
+        analyze_calls: true,
+        ..Default::default()
+    };
+    let graph = decompiler::generate_microcode(f.start(), options).unwrap();
+    assert_eq!(graph.maturity, decompiler::MicrocodeMaturity::Preoptimized);
+    assert_eq!(graph.entry_address, f.start());
+    assert!(
+        !graph.blocks.is_empty(),
+        "owned graph should contain blocks"
+    );
+
+    let indices: Vec<i32> = graph.blocks.iter().map(|block| block.index).collect();
+    for block in &graph.blocks {
+        assert!(indices.contains(&block.index));
+        for edge in block.predecessors.iter().chain(&block.successors) {
+            assert!(
+                indices.contains(edge),
+                "edge {edge} should name a copied block"
+            );
+        }
+    }
+
+    let retained_text = graph
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .find(|instruction| instruction.address != BAD_ADDRESS && !instruction.text.is_empty())
+        .map(|instruction| instruction.text.clone())
+        .expect("owned graph should contain an addressed textual instruction");
+
+    for operand in graph
+        .blocks
+        .iter()
+        .flat_map(|block| &block.instructions)
+        .flat_map(|instruction| {
+            [
+                &instruction.left,
+                &instruction.right,
+                &instruction.destination,
+            ]
+        })
+    {
+        let _ = operand.processor_register_id;
+    }
+
+    for instruction in graph.blocks.iter().flat_map(|block| &block.instructions) {
+        if instruction.opcode == decompiler::MicrocodeOpcode::StoreMemory {
+            assert!(!instruction.modifies_destination);
+        }
+        if instruction.opcode == decompiler::MicrocodeOpcode::Move
+            && instruction.destination.kind != decompiler::MicrocodeOperandKind::Empty
+        {
+            assert!(instruction.modifies_destination);
+        }
+    }
+
+    let second = decompiler::generate_microcode(f.start(), options).unwrap();
+    assert!(!second.blocks.is_empty());
+    assert!(
+        graph
+            .blocks
+            .iter()
+            .flat_map(|block| &block.instructions)
+            .any(|instruction| instruction.address != BAD_ADDRESS
+                && instruction.text == retained_text)
+    );
+
+    let error = decompiler::generate_microcode(BAD_ADDRESS, options).unwrap_err();
+    assert_eq!(error.category, ErrorCategory::Validation);
+}
+
 fn decompiler_microcode_filter_context_introspection() {
     require_db!();
     if !decompiler::available().unwrap_or(false) {
@@ -906,6 +3169,9 @@ fn decompiler_microcode_filter_context_introspection() {
     )
     .unwrap();
 
+    // Earlier cases decompile the same function. Invalidate that cached cfunc
+    // so Hex-Rays regenerates microcode through the newly installed filter.
+    decompiler::mark_dirty(f.start(), false).unwrap();
     let decompile_result = decompiler::decompile(f.start());
     let _ = decompiler::unregister_microcode_filter(token);
 
@@ -921,7 +3187,6 @@ fn decompiler_microcode_filter_context_introspection() {
     );
 }
 
-#[test]
 fn decompiler_item_type_names() {
     require_db!();
     // Pure function that maps ItemType -> string
@@ -938,7 +3203,6 @@ fn decompiler_item_type_names() {
 // Storage (netnode)
 // ===========================================================================
 
-#[test]
 fn storage_node_lifecycle() {
     require_db!();
     let node = storage::Node::open("idax_rust_integration_test", true).unwrap();
@@ -977,7 +3241,6 @@ fn storage_node_lifecycle() {
 // Fixups
 // ===========================================================================
 
-#[test]
 fn fixup_enumerate() {
     require_db!();
     // ELF binaries typically have fixups/relocations
@@ -995,7 +3258,6 @@ fn fixup_enumerate() {
 // Events
 // ===========================================================================
 
-#[test]
 fn event_subscribe_unsubscribe() {
     require_db!();
     let token = event::on_renamed(|_addr, _old, _new| {
@@ -1005,7 +3267,6 @@ fn event_subscribe_unsubscribe() {
     event::unsubscribe(token).unwrap();
 }
 
-#[test]
 fn event_scoped_subscription() {
     require_db!();
     {
@@ -1015,11 +3276,87 @@ fn event_scoped_subscription() {
     }
 }
 
+fn event_function_update_self_unsubscribe() {
+    require_db!();
+    let function = function::by_index(0).unwrap();
+    let address = function.start();
+
+    let token_slot = Arc::new(AtomicU64::new(0));
+    let typed_count = Arc::new(AtomicUsize::new(0));
+    let typed_address = Arc::new(AtomicU64::new(BAD_ADDRESS));
+    let unsubscribe_ok = Arc::new(AtomicBool::new(false));
+
+    let callback_token = Arc::clone(&token_slot);
+    let callback_count = Arc::clone(&typed_count);
+    let callback_address = Arc::clone(&typed_address);
+    let callback_unsubscribe = Arc::clone(&unsubscribe_ok);
+    let token = event::on_function_updated(move |entry| {
+        callback_count.fetch_add(1, Ordering::Relaxed);
+        callback_address.store(entry, Ordering::Relaxed);
+        let token = callback_token.load(Ordering::Relaxed);
+        if token != 0 && event::unsubscribe(token).is_ok() {
+            callback_unsubscribe.store(true, Ordering::Relaxed);
+        }
+    })
+    .unwrap();
+    token_slot.store(token, Ordering::Relaxed);
+
+    let generic_count = Arc::new(AtomicUsize::new(0));
+    let generic_shape_ok = Arc::new(AtomicBool::new(false));
+    let callback_generic_count = Arc::clone(&generic_count);
+    let callback_generic_shape = Arc::clone(&generic_shape_ok);
+    let generic_token = event::on_event(move |payload| {
+        if payload.kind == event::EventKind::FunctionUpdated && payload.address == address {
+            callback_generic_count.fetch_add(1, Ordering::Relaxed);
+            if payload.operand_index == -1 && payload.line_index == -1 {
+                callback_generic_shape.store(true, Ordering::Relaxed);
+            }
+        }
+    })
+    .unwrap();
+
+    function::update(address).unwrap();
+    function::update(address).unwrap();
+
+    assert_eq!(typed_count.load(Ordering::Relaxed), 1);
+    assert_eq!(typed_address.load(Ordering::Relaxed), address);
+    assert!(unsubscribe_ok.load(Ordering::Relaxed));
+    assert!(generic_count.load(Ordering::Relaxed) >= 2);
+    assert!(generic_shape_ok.load(Ordering::Relaxed));
+    event::unsubscribe(generic_token).unwrap();
+}
+
+fn event_extra_comment_payload() {
+    require_db!();
+    let address = function::by_index(0).unwrap().start();
+    comment::clear_anterior(address).unwrap();
+
+    let captured = Arc::new(Mutex::new(None));
+    let callback_capture = Arc::clone(&captured);
+    let token = event::on_extra_comment_changed(move |payload| {
+        *callback_capture.lock().unwrap() = Some(payload);
+    })
+    .unwrap();
+
+    comment::add_anterior(address, "idax rust event line").unwrap();
+    event::unsubscribe(token).unwrap();
+
+    let payload = captured
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("event not delivered");
+    assert_eq!(payload.address, address);
+    assert_eq!(payload.placement, event::ExtraCommentPlacement::Anterior);
+    assert_eq!(payload.line_index, 0);
+    assert_eq!(payload.text, "idax rust event line");
+    comment::clear_anterior(address).unwrap();
+}
+
 // ===========================================================================
 // Graph
 // ===========================================================================
 
-#[test]
 fn graph_flowchart() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -1034,7 +3371,6 @@ fn graph_flowchart() {
     }
 }
 
-#[test]
 fn graph_manual_construction() {
     require_db!();
     let mut g = graph::Graph::new();
@@ -1062,7 +3398,6 @@ fn graph_manual_construction() {
     assert_eq!(g.total_node_count(), 0);
 }
 
-#[test]
 fn graph_groups() {
     require_db!();
     let mut g = graph::Graph::new();
@@ -1090,7 +3425,6 @@ fn graph_groups() {
 // Cross-domain stress tests
 // ===========================================================================
 
-#[test]
 fn cross_domain_bad_address_handling() {
     require_db!();
     // BAD_ADDRESS should fail gracefully across domains
@@ -1101,7 +3435,6 @@ fn cross_domain_bad_address_handling() {
     assert!(name::get(BAD_ADDRESS).is_err());
 }
 
-#[test]
 fn cross_domain_name_comment_roundtrip() {
     require_db!();
     let f = function::by_index(0).unwrap();
@@ -1123,7 +3456,6 @@ fn cross_domain_name_comment_roundtrip() {
     comment::remove(addr, false).unwrap();
 }
 
-#[test]
 fn cross_domain_segment_function_consistency() {
     require_db!();
     // Every function's start address should belong to some segment
@@ -1138,7 +3470,6 @@ fn cross_domain_segment_function_consistency() {
     }
 }
 
-#[test]
 fn cross_domain_data_instruction_consistency() {
     require_db!();
     // Decoding an instruction should produce bytes that match data::read_bytes
@@ -1150,4 +3481,346 @@ fn cross_domain_data_instruction_consistency() {
         insn.size(),
         "byte count should match instruction size"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Process-main-thread test runner
+// ---------------------------------------------------------------------------
+
+type TestCase = (&'static str, fn());
+
+static TEST_CASES: &[TestCase] = &[
+    ("database_input_file_path", database_input_file_path),
+    ("database_idb_path", database_idb_path),
+    ("database_file_type_name", database_file_type_name),
+    ("database_input_md5", database_input_md5),
+    ("database_address_bitness", database_address_bitness),
+    (
+        "database_set_address_bitness_idempotent",
+        database_set_address_bitness_idempotent,
+    ),
+    ("database_processor_name", database_processor_name),
+    ("database_address_bounds", database_address_bounds),
+    ("database_image_base", database_image_base),
+    ("database_endianness", database_endianness),
+    ("database_abi_name", database_abi_name),
+    ("database_processor_typed", database_processor_typed),
+    ("database_processor_profile", database_processor_profile),
+    ("database_compiler_info", database_compiler_info),
+    ("database_import_modules", database_import_modules),
+    ("database_snapshots", database_snapshots),
+    (
+        "plugin_scoped_hotkey_lifecycle",
+        plugin_scoped_hotkey_lifecycle,
+    ),
+    ("segment_count_nonzero", segment_count_nonzero),
+    ("segment_all_iterator", segment_all_iterator),
+    ("segment_by_index", segment_by_index),
+    ("segment_at_address", segment_at_address),
+    ("segment_first_last", segment_first_last),
+    ("segment_next_prev", segment_next_prev),
+    ("segment_properties", segment_properties),
+    ("segment_register_state", segment_register_state),
+    ("function_count_nonzero", function_count_nonzero),
+    ("function_all_iterator", function_all_iterator),
+    ("function_by_index_and_at", function_by_index_and_at),
+    ("function_properties", function_properties),
+    ("function_callers_callees", function_callers_callees),
+    ("function_chunks", function_chunks),
+    ("function_code_addresses", function_code_addresses),
+    ("function_frame", function_frame),
+    (
+        "function_declaration_readback",
+        function_declaration_readback,
+    ),
+    ("instruction_decode_first", instruction_decode_first),
+    ("instruction_text", instruction_text),
+    ("instruction_operands", instruction_operands),
+    (
+        "instruction_operand_encoding_offsets",
+        instruction_operand_encoding_offsets,
+    ),
+    (
+        "instruction_operand_access_modes",
+        instruction_operand_access_modes,
+    ),
+    (
+        "instruction_operand_enum_roundtrip",
+        instruction_operand_enum_roundtrip,
+    ),
+    (
+        "instruction_operand_struct_offset_roundtrip",
+        instruction_operand_struct_offset_roundtrip,
+    ),
+    ("instruction_classification", instruction_classification),
+    ("instruction_code_refs", instruction_code_refs),
+    ("instruction_next_prev", instruction_next_prev),
+    ("name_get_first_function", name_get_first_function),
+    ("name_set_and_remove", name_set_and_remove),
+    ("name_resolve", name_resolve),
+    ("name_predicates", name_predicates),
+    ("name_validation", name_validation),
+    (
+        "name_demangle_arbitrary_symbol",
+        name_demangle_arbitrary_symbol,
+    ),
+    (
+        "ui_current_widget_headless_safe",
+        ui_current_widget_headless_safe,
+    ),
+    ("comment_set_get_remove", comment_set_get_remove),
+    ("comment_append", comment_append),
+    ("comment_anterior_posterior", comment_anterior_posterior),
+    ("undo_comment_roundtrip", undo_comment_roundtrip),
+    ("problem_roundtrip", problem_roundtrip),
+    ("bookmark_roundtrip", bookmark_roundtrip),
+    ("navigation_roundtrip", navigation_roundtrip),
+    ("exception_roundtrip", exception_roundtrip),
+    ("parser_roundtrip", parser_roundtrip),
+    ("script_roundtrip", script_roundtrip),
+    ("directory_roundtrip", directory_roundtrip),
+    ("registry_roundtrip", registry_roundtrip),
+    ("xref_refs_to_from", xref_refs_to_from),
+    ("xref_code_data_refs", xref_code_data_refs),
+    ("offset_reference_roundtrip", offset_reference_roundtrip),
+    ("data_read_byte", data_read_byte),
+    ("data_read_bytes", data_read_bytes),
+    ("data_read_word_dword_qword", data_read_word_dword_qword),
+    (
+        "data_string_list_and_source_metadata",
+        data_string_list_and_source_metadata,
+    ),
+    ("data_patch_and_revert", data_patch_and_revert),
+    (
+        "data_element_definition_units",
+        data_element_definition_units,
+    ),
+    ("data_custom_data_lifecycle", data_custom_data_lifecycle),
+    ("search_next_code", search_next_code),
+    ("search_next_data", search_next_data),
+    ("analysis_is_idle", analysis_is_idle),
+    ("analysis_enable_disable", analysis_enable_disable),
+    ("entry_count_and_enumerate", entry_count_and_enumerate),
+    ("types_primitive_constructors", types_primitive_constructors),
+    ("types_pointer_and_array", types_pointer_and_array),
+    (
+        "types_shifted_pointer_metadata",
+        types_shifted_pointer_metadata,
+    ),
+    (
+        "types_forward_declaration_replacement",
+        types_forward_declaration_replacement,
+    ),
+    ("types_member_references", types_member_references),
+    ("types_struct_creation", types_struct_creation),
+    ("types_udt_semantics", types_udt_semantics),
+    ("types_from_declaration", types_from_declaration),
+    (
+        "types_replace_function_argument",
+        types_replace_function_argument,
+    ),
+    ("types_parse_declarations", types_parse_declarations),
+    ("types_retrieve_at_function", types_retrieve_at_function),
+    ("types_local_type_count", types_local_type_count),
+    ("lines_tag_operations", lines_tag_operations),
+    ("lines_addr_tag_roundtrip", lines_addr_tag_roundtrip),
+    ("decompiler_available", decompiler_available),
+    ("decompiler_decompile", decompiler_decompile),
+    (
+        "decompiler_pseudocode_comments",
+        decompiler_pseudocode_comments,
+    ),
+    ("decompiler_variables", decompiler_variables),
+    ("decompiler_microcode", decompiler_microcode),
+    (
+        "decompiler_owned_microcode_graph",
+        decompiler_owned_microcode_graph,
+    ),
+    (
+        "decompiler_microcode_filter_context_introspection",
+        decompiler_microcode_filter_context_introspection,
+    ),
+    ("decompiler_item_type_names", decompiler_item_type_names),
+    ("storage_node_lifecycle", storage_node_lifecycle),
+    ("fixup_enumerate", fixup_enumerate),
+    ("event_subscribe_unsubscribe", event_subscribe_unsubscribe),
+    ("event_scoped_subscription", event_scoped_subscription),
+    (
+        "event_function_update_self_unsubscribe",
+        event_function_update_self_unsubscribe,
+    ),
+    ("event_extra_comment_payload", event_extra_comment_payload),
+    ("graph_flowchart", graph_flowchart),
+    ("graph_manual_construction", graph_manual_construction),
+    ("graph_groups", graph_groups),
+    (
+        "cross_domain_bad_address_handling",
+        cross_domain_bad_address_handling,
+    ),
+    (
+        "cross_domain_name_comment_roundtrip",
+        cross_domain_name_comment_roundtrip,
+    ),
+    (
+        "cross_domain_segment_function_consistency",
+        cross_domain_segment_function_consistency,
+    ),
+    (
+        "cross_domain_data_instruction_consistency",
+        cross_domain_data_instruction_consistency,
+    ),
+];
+
+#[derive(Default)]
+struct RunnerOptions {
+    filters: Vec<String>,
+    skips: Vec<String>,
+    exact: bool,
+    ignored_only: bool,
+    include_ignored: bool,
+    list: bool,
+}
+
+fn parse_runner_options() -> RunnerOptions {
+    let mut options = RunnerOptions::default();
+    let mut args = std::env::args().skip(1);
+
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--exact" => options.exact = true,
+            "--ignored" => options.ignored_only = true,
+            "--include-ignored" => options.include_ignored = true,
+            "--list" => options.list = true,
+            "--skip" => {
+                if let Some(pattern) = args.next() {
+                    options.skips.push(pattern);
+                }
+            }
+            "--test-threads" | "--format" | "--color" => {
+                let _ = args.next();
+            }
+            "--nocapture" | "--show-output" | "--quiet" => {}
+            _ if arg.starts_with("--skip=") => {
+                options.skips.push(arg[7..].to_owned());
+            }
+            _ if arg.starts_with('-') => {}
+            _ => options.filters.push(arg),
+        }
+    }
+
+    options
+}
+
+fn is_selected(name: &str, options: &RunnerOptions) -> bool {
+    let included = options.filters.is_empty()
+        || options.filters.iter().any(|filter| {
+            if options.exact {
+                name == filter
+            } else {
+                name.contains(filter)
+            }
+        });
+    let ignored_filter = !options.ignored_only || ignored_reason(name).is_some();
+    included && ignored_filter && !options.skips.iter().any(|skip| name.contains(skip))
+}
+
+fn ignored_reason(name: &str) -> Option<&'static str> {
+    #[cfg(target_os = "linux")]
+    if matches!(name, "analysis_is_idle" | "analysis_enable_disable") {
+        return Some("segfaults under headless idalib on Linux CI");
+    }
+    let _ = name;
+    None
+}
+
+fn panic_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload")
+}
+
+fn close_session() -> Result<(), String> {
+    if INIT_OK.swap(false, Ordering::AcqRel) {
+        database::close(false).map_err(|error| error.to_string())?;
+    }
+    if let Some(copy) = FIXTURE_COPY.get() {
+        if let Some(directory) = copy.parent() {
+            std::fs::remove_dir_all(directory).map_err(|error| error.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+fn main() {
+    let options = parse_runner_options();
+    let selected: Vec<TestCase> = TEST_CASES
+        .iter()
+        .copied()
+        .filter(|(name, _)| is_selected(name, &options))
+        .collect();
+    let filtered_out = TEST_CASES.len() - selected.len();
+
+    if options.list {
+        for (name, _) in &selected {
+            println!("{name}: test");
+        }
+        return;
+    }
+
+    println!("running {} tests", selected.len());
+
+    if std::env::var_os("IDADIR").is_none() {
+        for (name, _) in &selected {
+            println!("test {name} ... ignored, IDADIR not set");
+        }
+        println!();
+        println!(
+            "test result: ok. 0 passed; 0 failed; {} ignored; {filtered_out} filtered out",
+            selected.len()
+        );
+        return;
+    }
+
+    let mut passed = 0usize;
+    let mut failed = 0usize;
+    let mut ignored = 0usize;
+
+    for (name, test) in selected {
+        if let Some(reason) = ignored_reason(name) {
+            if !options.include_ignored && !options.ignored_only {
+                ignored += 1;
+                println!("test {name} ... ignored, {reason}");
+                continue;
+            }
+        }
+        print!("test {name} ... ");
+        let _ = std::io::stdout().flush();
+        match panic::catch_unwind(AssertUnwindSafe(test)) {
+            Ok(()) => {
+                passed += 1;
+                println!("ok");
+            }
+            Err(payload) => {
+                failed += 1;
+                println!("FAILED: {}", panic_message(payload.as_ref()));
+            }
+        }
+    }
+
+    if let Err(error) = close_session() {
+        failed += 1;
+        eprintln!("IDA session cleanup failed: {error}");
+    }
+
+    println!();
+    println!(
+        "test result: {}. {passed} passed; {failed} failed; {ignored} ignored; {filtered_out} filtered out",
+        if failed == 0 { "ok" } else { "FAILED" }
+    );
+
+    if failed != 0 {
+        std::process::exit(101);
+    }
 }

@@ -81,9 +81,10 @@ try {
 
 // Re-export all namespaces from the native addon
 // The native addon sets each namespace as a property on the exports object:
-//   database, address, segment, function, instruction, name, xref,
+//   database, address, segment, function, instruction, name, xref, offset,
 //   comment, data, search, analysis, type, entry, fixup, event,
-//   storage, diagnostics, lumina, lines, ui, decompiler, path
+//   storage, diagnostics, undo, problem, bookmark, navigation, exception, parser, lumina, lines, ui,
+//   directory, registry, registers, decompiler, path
 
 module.exports = native;
 
@@ -97,6 +98,7 @@ module.exports.function = native.function;
 module.exports.instruction = native.instruction;
 module.exports.name = native.name;
 module.exports.xref = native.xref;
+module.exports.offset = native.offset;
 module.exports.comment = native.comment;
 module.exports.data = native.data;
 module.exports.search = native.search;
@@ -107,6 +109,16 @@ module.exports.fixup = native.fixup;
 module.exports.event = native.event;
 module.exports.storage = native.storage;
 module.exports.diagnostics = native.diagnostics;
+module.exports.undo = native.undo;
+module.exports.problem = native.problem;
+module.exports.bookmark = native.bookmark;
+module.exports.navigation = native.navigation;
+module.exports.exception = native.exception;
+module.exports.parser = native.parser;
+module.exports.script = native.script;
+module.exports.directory = native.directory;
+module.exports.registry = native.registry;
+module.exports.registers = native.registers;
 module.exports.lumina = native.lumina;
 module.exports.lines = native.lines;
 module.exports.ui = native.ui;

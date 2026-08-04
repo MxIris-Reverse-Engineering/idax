@@ -280,6 +280,8 @@ class Operand {
   bool is_register() const;
   bool is_immediate() const;
   bool is_memory() const;
+  bool is_read() const;
+  bool is_written() const;
 
   Result<uint16_t> register_id() const;
   Result<uint64_t> immediate_value() const;
@@ -352,16 +354,101 @@ Result<uint16_t> original_word(Address ea);
 Result<uint32_t> original_dword(Address ea);
 Result<uint64_t> original_qword(Address ea);
 
+struct StringListOptions;
+struct StringLiteral;
+Result<StringListOptions> string_list_options();
+Status configure_string_list(const StringListOptions& options);
+Status rebuild_string_list();
+Status clear_string_list();
+Result<std::vector<StringLiteral>> string_literals(bool rebuild = true);
+
 Status define_byte(Address ea, AddressSize count = 1);
 Status define_word(Address ea, AddressSize count = 1);
 Status define_dword(Address ea, AddressSize count = 1);
 Status define_qword(Address ea, AddressSize count = 1);
+Status define_oword(Address ea, AddressSize count = 1);
+Status define_yword(Address ea, AddressSize count = 1);
+Status define_zword(Address ea, AddressSize count = 1);
+Result<AddressSize> tbyte_element_size();
+Status define_tbyte(Address ea, AddressSize count = 1);
+Result<AddressSize> packed_real_element_size();
+Status define_packed_real(Address ea, AddressSize count = 1);
+Status define_float(Address ea, AddressSize count = 1);
+Status define_double(Address ea, AddressSize count = 1);
 Status define_string(Address ea, AddressSize length);
-Status define_struct(Address ea, AddressSize length, uint32_t struct_id);
+Status define_struct(Address ea, AddressSize length, uint64_t struct_id);
+
+struct CustomDataTypeId { uint16_t value; };
+struct CustomDataFormatId { uint16_t value; };
+struct CustomDataFormatContext {
+  Address address{BadAddress};
+  int operand_index{-1};
+  CustomDataTypeId type_id{};
+};
+struct CustomDataTypeDefinition;
+struct CustomDataTypeInfo;
+struct CustomDataFormatDefinition;
+struct CustomDataFormatInfo;
+struct CustomDataItemInfo;
+
+Result<CustomDataTypeId> register_custom_data_type(
+    const CustomDataTypeDefinition& definition);
+Status unregister_custom_data_type(CustomDataTypeId type_id);
+Result<CustomDataTypeInfo> custom_data_type(CustomDataTypeId type_id);
+Result<CustomDataTypeId> find_custom_data_type(std::string_view name);
+Result<std::vector<CustomDataTypeInfo>> custom_data_types(
+    AddressSize minimum_size = 0,
+    AddressSize maximum_size = std::numeric_limits<AddressSize>::max());
+
+Result<CustomDataFormatId> register_custom_data_format(
+    const CustomDataFormatDefinition& definition);
+Status unregister_custom_data_format(CustomDataFormatId format_id);
+Result<CustomDataFormatInfo> custom_data_format(CustomDataFormatId format_id);
+Result<CustomDataFormatId> find_custom_data_format(std::string_view name);
+Result<std::vector<CustomDataFormatInfo>> custom_data_formats(
+    CustomDataTypeId type_id);
+Result<std::vector<CustomDataFormatInfo>> standard_custom_data_formats();
+Status attach_custom_data_format(CustomDataTypeId type_id,
+                                 CustomDataFormatId format_id);
+Status detach_custom_data_format(CustomDataTypeId type_id,
+                                 CustomDataFormatId format_id);
+Result<bool> is_custom_data_format_attached(CustomDataTypeId type_id,
+                                            CustomDataFormatId format_id);
+Status attach_custom_data_format_to_standard_types(CustomDataFormatId format_id);
+Status detach_custom_data_format_from_standard_types(CustomDataFormatId format_id);
+Result<bool> is_custom_data_format_attached_to_standard_types(
+    CustomDataFormatId format_id);
+
+Result<AddressSize> custom_data_item_size(CustomDataTypeId type_id,
+                                          Address address,
+                                          AddressSize maximum_size);
+Status define_custom(Address address, AddressSize byte_length,
+                     CustomDataTypeId type_id, CustomDataFormatId format_id);
+Status define_custom_inferred(Address address, CustomDataTypeId type_id,
+                              CustomDataFormatId format_id,
+                              AddressSize maximum_size);
+Result<CustomDataItemInfo> custom_data_at(Address address);
+Result<std::string> render_custom_data(
+    CustomDataFormatId format_id, std::span<const uint8_t> value,
+    const CustomDataFormatContext& context = {});
+Result<std::vector<uint8_t>> scan_custom_data(
+    CustomDataFormatId format_id, std::string_view text,
+    const CustomDataFormatContext& context = {});
+Status analyze_custom_data(CustomDataFormatId format_id,
+                           const CustomDataFormatContext& context = {});
 Status undefine(Address ea, AddressSize count = 1);
 
 }  // namespace ida::data
 ```
+
+The fixed-width and processor-sized extended-real `define_*` functions use
+positive element counts and perform checked conversion to the SDK's total byte
+length. Tbyte and packed-real queries resolve the active processor width and
+representation-specific assembler availability. String/structure definition
+and undefinition use explicit byte lengths/counts. Custom type/format
+definitions own borrowed SDK-facing strings and callbacks until explicit
+unregister; metadata access returns copied snapshots, standard-type attachment
+is separate from custom-type attachment, and usable packed IDs are 1..0xFFFE.
 
 #### 21.5.6 `ida::name`
 
@@ -373,6 +460,12 @@ enum class DemangleForm {
   Long,
   Full,
 };
+
+struct ListOptions;
+struct Entry;
+Result<std::vector<Entry>> all(const ListOptions& options = {});
+Result<std::vector<Entry>> all_user_defined(Address start = BadAddress,
+                                            Address end = BadAddress);
 
 Status set(Address ea, std::string_view name);
 Status force_set(Address ea, std::string_view name);
@@ -683,6 +776,21 @@ struct Action {
 
 Status register_action(const Action &action);
 Status unregister_action(std::string_view action_id);
+Status activate_action(std::string_view action_id);
+
+class ScopedHotkey {
+ public:
+  ScopedHotkey(ScopedHotkey &&) noexcept;
+  ScopedHotkey &operator=(ScopedHotkey &&) noexcept;
+  ~ScopedHotkey();
+  bool active() const noexcept;
+  std::string_view hotkey() const noexcept;
+  Status activate() const;
+  Status release();
+};
+
+Result<ScopedHotkey> register_hotkey(std::string_view hotkey,
+                                     std::function<Status()> callback);
 Status attach_action_to_menu(std::string_view menu_path,
                              std::string_view action_id);
 Status attach_action_to_toolbar(std::string_view toolbar,
@@ -964,6 +1072,24 @@ class Node {
 };
 
 }  // namespace ida::storage
+```
+
+#### 21.5.22 `ida::lines` source metadata
+
+```cpp
+namespace ida::lines {
+
+struct SourceFile {
+  std::string filename;
+  ida::address::Range range;
+};
+
+Status add_source_file(const ida::address::Range& range,
+                       std::string_view filename);
+Result<SourceFile> source_file_at(Address address);
+Status remove_source_file(Address address);
+
+}  // namespace ida::lines
 ```
 
 ### 21.6 Refined implementation phasing (interface-first)

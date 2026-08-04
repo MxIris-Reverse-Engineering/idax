@@ -6,7 +6,9 @@
 
 #include <ida/error.hpp>
 #include <ida/address.hpp>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -105,11 +107,18 @@ enum class BranchCondition {
 
 /// Structured representation of an operand struct-offset path.
 ///
-/// A path may contain nested structure/union ids. The `delta` field matches
-/// SDK `get_stroff_path()` semantics.
+/// Native type/member identities remain private. `member_names` preserves the
+/// ordered member-selection components after the named root structure.
 struct StructOffsetPath {
-    std::vector<std::uint64_t> structure_ids;
-    AddressDelta               delta{0};
+    std::string              structure_name;
+    std::vector<std::string> member_names;
+    AddressDelta             delta{0};
+};
+
+/// Copied metadata for a named enum operand representation.
+struct OperandEnum {
+    std::string  name;
+    std::uint8_t serial{0};
 };
 
 // ── Operand value object ────────────────────────────────────────────────
@@ -132,6 +141,19 @@ public:
     [[nodiscard]] Address       target_address() const noexcept { return addr_; }
     [[nodiscard]] std::int64_t  displacement()   const noexcept { return static_cast<std::int64_t>(value_); }
     [[nodiscard]] int           byte_width()     const noexcept { return byte_width_; }
+    /// Byte offset from the instruction start to the operand's primary encoded value.
+    /// Absent when the processor module reports no independently encoded value.
+    [[nodiscard]] std::optional<std::size_t> encoded_value_byte_offset() const noexcept {
+        if (encoded_value_offset_ == 0)
+            return std::nullopt;
+        return encoded_value_offset_;
+    }
+    /// Byte offset to a secondary encoded value, used by processors with split operands.
+    [[nodiscard]] std::optional<std::size_t> secondary_encoded_value_byte_offset() const noexcept {
+        if (secondary_encoded_value_offset_ == 0)
+            return std::nullopt;
+        return secondary_encoded_value_offset_;
+    }
     [[nodiscard]] std::string   register_name()  const { return register_name_; }
     /// True when the processor module marks this operand as used/read.
     [[nodiscard]] bool          is_read()        const noexcept { return read_; }
@@ -154,6 +176,8 @@ private:
     std::uint64_t  value_{};
     Address        addr_{};
     int            byte_width_{};
+    std::uint8_t   encoded_value_offset_{};
+    std::uint8_t   secondary_encoded_value_offset_{};
     std::string    register_name_;
     bool           read_{};
     bool           written_{};
@@ -230,6 +254,17 @@ Status set_operand_format(Address address, int n, OperandFormat format, Address 
 /// Set operand as an offset reference. \p base is the offset base (0 for auto).
 Status set_operand_offset(Address address, int n, Address base = 0);
 
+/// Set one operand (or all operands when n is -1) to a named enum representation.
+/// The enum must exist in the local type library. Native type IDs remain private.
+Status set_operand_enum(Address address,
+                        int n,
+                        std::string_view enum_name,
+                        std::uint8_t serial = 0);
+
+/// Read the copied name and serial of an operand's enum representation.
+/// Passing -1 queries whichever operand carries the representation.
+Result<OperandEnum> operand_enum(Address address, int n);
+
 /// Set operand to display as a structure member offset by structure name.
 ///
 /// This mirrors SDK `op_stroff()` for single-structure paths.
@@ -247,6 +282,19 @@ Status set_operand_struct_offset(Address address,
                                  std::uint64_t structure_id,
                                  AddressDelta delta = 0);
 
+/// Idempotently set an operand to one exact saved-local structure member.
+///
+/// The member is selected by exact byte offset; all native type/member
+/// identities remain private. Returns true when the path was newly applied,
+/// false when the same path and delta were already present, and Conflict when
+/// an incompatible struct-offset path is already present.
+Result<bool> ensure_operand_struct_member_offset(
+    Address address,
+    int n,
+    std::string_view structure_name,
+    std::size_t member_byte_offset,
+    AddressDelta delta = 0);
+
 /// Set operand representation as a structure offset using an explicit base.
 ///
 /// This mirrors SDK `op_based_stroff()`.
@@ -263,7 +311,7 @@ Result<StructOffsetPath> operand_struct_offset_path(Address address, int n);
 
 /// Read struct-offset path metadata as resolved type names.
 ///
-/// Name lookup falls back to `tid_<id>` for unresolved entries.
+/// The first entry is the root structure followed by ordered member names.
 Result<std::vector<std::string>> operand_struct_offset_path_names(Address address, int n);
 
 /// Set operand to display as a stack variable.

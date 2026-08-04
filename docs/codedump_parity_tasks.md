@@ -11,6 +11,7 @@ Primary parity blockers:
 
 - typed `ask_form` bindings
 - Qt clipboard fallback
+- clipboard fallback
 - Hex-Rays scoped initialization/lifetime helper
 
 Secondary migration helpers:
@@ -38,6 +39,7 @@ Already addressed in idax during Phase 22:
 ## Current gap-to-task map
 
 This table reflects the updated `/home/null/dev/ida-cdump/docs/IDAX_GAPS.md`
+This table reflects the updated `<ida-cdump-root>/docs/IDAX_GAPS.md`
 notes as of 2026-05-28 and maps each still-relevant gap to idax work.
 
 | ida-cdump gap | idax task | Status |
@@ -47,6 +49,7 @@ notes as of 2026-05-28 and maps each still-relevant gap to idax work.
 | Hex-Rays popup event | P22.3 `ida::decompiler::on_populating_popup` | implemented |
 | Local Types `type_ref` | P22.4 `ida::plugin::ActionContext::type_ref` | implemented |
 | Clipboard fallback | P22.5 Qt-backed `copy_to_clipboard` / `read_clipboard` | C++ optional backend plus Node/Rust wrappers implemented; host-runtime pending |
+| Clipboard fallback | P22.5 `copy_to_clipboard` / `read_clipboard` | C++ Qt/external-command backend plus Node/Rust wrappers implemented; host-runtime pending |
 | `ask_text`, `idb_path`, path helpers | P22.5 multiline text, `database::idb_path`, `ida::path` | implemented |
 | Bulk lvar/prototype metadata | P22.6 `LvarSnapshot`, lvar comments, `function::apply_decl` | implemented |
 | Read-only ctree+lvar analysis | P22.7 helper-name/type/parent/local-variable-index helpers | implemented |
@@ -70,6 +73,7 @@ work that is not covered by today's public wrappers.
 | P22.3 | Hex-Rays `hxe_populating_popup` | Add `PopulatingPopupEvent` and `ida::decompiler::on_populating_popup` through the decompiler event bridge | `include/ida/decompiler.hpp`, `src/decompiler.cpp`, `examples/plugin/abyss_port_plugin.cpp`, `tests/unit/api_surface_parity_test.cpp` | Node/Rust callback wrappers | Complete |
 | P22.4 | Local Types `type_ref` action context | Snapshot `til_type_ref_t` into owned `plugin::TypeRef` on `ActionContext` | `include/ida/plugin.hpp`, `src/plugin.cpp`, action/plugin coverage | Rust safe/FFI callback context coverage; Node has no plugin/action namespace | Complete |
 | P22.5 | Clipboard, `ask_text`, IDB path, portable path helpers | Add optional Qt clipboard bridge with default `Unsupported` contract, multiline `ask_text`, `database::idb_path`, and `ida::path` helpers | `include/ida/ui.hpp`, `src/ui.cpp`, `src/detail/qt_clipboard_bridge.*`, `include/ida/database.hpp`, `src/database.cpp`, `include/ida/path.hpp`, `src/path.cpp`, `tests/integration/codedump_parity_host_gates_test.cpp` | Node/Rust wrappers for clipboard, `ask_text`, `database::idb_path`, and `ida::path` | API and binding work complete; remaining clipboard exit is `IDAX_ENABLE_QT_CLIPBOARD=ON` with IDA-compatible `QT_NAMESPACE=QT` Qt plus `IDAX_RUN_QT_CLIPBOARD=1` in an IDA Qt host |
+| P22.5 | Clipboard, `ask_text`, IDB path, portable path helpers | Add clipboard bridge with optional Qt, external host-command fallback, multiline `ask_text`, `database::idb_path`, and `ida::path` helpers | `include/ida/ui.hpp`, `src/ui.cpp`, `src/detail/qt_clipboard_bridge.*`, `include/ida/database.hpp`, `src/database.cpp`, `include/ida/path.hpp`, `src/path.cpp`, `tests/integration/codedump_parity_host_gates_test.cpp` | Node/Rust wrappers for clipboard, `ask_text`, `database::idb_path`, and `ida::path` | API and binding work complete; remaining clipboard exit is `IDAX_RUN_QT_CLIPBOARD=1` in an IDA host with Qt or an external clipboard command |
 | P22.6 | Bulk lvar settings, lvar comments, prototype export/apply | Add `LvarSnapshot`, capture/restore, `set_variable_comment`, `function::declaration`, `function::set_prototype`, and `function::apply_decl` | `include/ida/decompiler.hpp`, `src/decompiler.cpp`, `include/ida/function.hpp`, `src/function.cpp`, `tests/integration/decompiler_storage_hardening_test.cpp`, `tests/integration/type_roundtrip_test.cpp` | Node/Rust lvar snapshot/comment and prototype wrappers | Complete |
 | P22.7 | Read-only ctree/lvar analysis helpers | Add helper-name/type accessors, callback-scoped parent snapshots, stable local-variable indexes, and lookup by ctree index | `include/ida/decompiler.hpp`, `src/decompiler.cpp`, `tests/integration/decompiler_storage_hardening_test.cpp` | Node/Rust visitor payload and direct local-variable lookup coverage | Complete |
 | P22.8 | Migration documentation, example, and validation harness | Maintain parity task list, migration checklist, host-evidence runbook, compact codedump-parity example, validation report, host-gate runner, evidence-log verifier, and local validation runner | `docs/codedump_parity_tasks.md`, `docs/codedump_migration_checklist.md`, `docs/codedump_host_evidence.md`, `docs/validation_report.md`, `examples/plugin/codedump_parity_probe_plugin.cpp`, `scripts/run_codedump_parity_host_gates.sh`, `scripts/check_codedump_parity_evidence_log.sh`, `scripts/run_codedump_parity_local_validation.sh` | Binding docs and tests record C++/Node/Rust coverage | Complete except the two host-evidence rows below |
@@ -96,6 +100,7 @@ evidence for modal/Qt behavior:
 | --- | --- | --- | --- | --- |
 | 1 | P22.H1 modal typed-form evidence | `tests/integration/codedump_parity_host_gates_test.cpp`, `docs/validation_report.md` | C++ plus fixed-shape Node/Rust entrypoints implemented | Run `IDAX_RUN_MODAL_FORMS=1` in an interactive IDA UI host and record the result |
 | 2 | P22.H2 Qt clipboard host evidence | `CMakeLists.txt`, `src/detail/qt_clipboard_bridge.*`, `tests/integration/codedump_parity_host_gates_test.cpp`, `scripts/run_codedump_parity_host_gates.sh` | C++ optional Qt backend and Node/Rust wrappers implemented | Build with an IDA-compatible `QT_NAMESPACE=QT` Qt package, then run `IDAX_RUN_QT_CLIPBOARD=1` in an IDA Qt host |
+| 2 | P22.H2 clipboard host evidence | `CMakeLists.txt`, `src/detail/qt_clipboard_bridge.*`, `tests/integration/codedump_parity_host_gates_test.cpp`, `scripts/run_codedump_parity_host_gates.sh` | C++ Qt/external backend and Node/Rust wrappers implemented | Run `IDAX_RUN_QT_CLIPBOARD=1` in an IDA host with Qt or an external clipboard command |
 | 3 | P22.V1 final parity validation refresh | CMake, parity example, Node, Rust validation targets; `docs/validation_report.md`; `.agents/*` | Binding tests cover the new surfaces structurally, compile-time, and through non-modal validation where available | Rerun focused C++/example/Node/Rust checks after host evidence changes |
 
 ## Actionable remaining task breakdown
@@ -112,6 +117,9 @@ task.
 | P22.H2.1 | Qt package setup | Provide `IDAX_QT6_DIR` pointing at a Qt6 package compatible with IDA and built with `QT_NAMESPACE=QT`. Do not use an un-namespaced system Qt package. | `scripts/run_codedump_parity_host_gates.sh --self-test` still passes, and the Qt preflight no longer rejects `IDAX_QT6_DIR`. |
 | P22.H2.2 | Qt clipboard run | Run `IDAX_ENABLE_QT_CLIPBOARD=ON IDAX_QT6_DIR=/path/to/qt-install/lib/cmake/Qt6 IDAX_RUN_QT_CLIPBOARD=1 IDAX_EVIDENCE_LOG=logs/codedump-qt-clipboard.log scripts/run_codedump_parity_host_gates.sh` inside an IDA Qt UI host. | Log contains `host-gated Qt clipboard roundtrip`, no Qt clipboard skip, zero failures, and at least 2 passed checks. |
 | P22.H2.3 | Qt evidence verification | Run `scripts/check_codedump_parity_evidence_log.sh logs/codedump-qt-clipboard.log qt-clipboard`. | Verifier exits successfully; record command, log path, backend, and check counts in `docs/validation_report.md`. |
+| P22.H2.1 | Clipboard backend setup | Ensure the host has either a Qt-enabled idax build or an external clipboard command such as `wl-copy`, `xclip`, `xsel`, `pbcopy`, or `clip.exe`. | `ida::ui::clipboard_backend()` reports `Qt` or an `external:*` backend instead of `unsupported`. |
+| P22.H2.2 | Clipboard run | Run `IDAX_RUN_QT_CLIPBOARD=1 IDAX_EVIDENCE_LOG=logs/codedump-qt-clipboard.log scripts/run_codedump_parity_host_gates.sh` inside an IDA UI host with clipboard access. | Log contains `host-gated clipboard roundtrip`, no clipboard skip, zero failures, and at least 2 passed checks. |
+| P22.H2.3 | Clipboard evidence verification | Run `scripts/check_codedump_parity_evidence_log.sh logs/codedump-qt-clipboard.log qt-clipboard`. | Verifier exits successfully; record command, log path, backend, and check counts in `docs/validation_report.md`. |
 | P22.V1.1 | Local final sweep | After P22.H1/P22.H2 evidence, rerun `scripts/run_codedump_parity_local_validation.sh build-test-fetch RelWithDebInfo`; set `IDAX_RUN_NODE_INTEGRATION=1 IDADIR=/path/to/ida` when fixture integration is available. | Focused C++, default/opt-in host evidence verification, compact parity example, Node, and Rust parity checks pass or host-only skips are explicitly justified. |
 | P22.V1.2 | Closure documentation | Update `docs/validation_report.md`, `.agents/active_work.md`, and `.agents/progress_ledger.md` with final evidence; keep `docs/codedump_migration_checklist.md` aligned. | P22.H1/P22.H2 are marked closed only with verified logs; remaining ida-cdump raw SDK use is classified as downstream migration cleanup or future/non-blocking scope. |
 
@@ -318,6 +326,17 @@ mixed Qt/IDA links.
 Deliverables:
 
 - Add Qt-backed `ida::ui::copy_to_clipboard(std::string_view)` and
+user-facing fallback surface. C++ clipboard helpers use the optional Qt backend
+(`IDAX_ENABLE_QT_CLIPBOARD=ON`) when present and otherwise fall back to common
+host clipboard commands such as `wl-copy`, `xclip`, `xsel`, `pbcopy`, or
+`clip.exe`. Node/Rust wrappers expose the same copy/read/backend helpers;
+host-gated runtime coverage remains pending. Enabling the Qt backend requires
+an IDA-compatible Qt package built with `QT_NAMESPACE=QT`; CMake now rejects
+plain system Qt packages early to avoid mixed Qt/IDA links.
+
+Deliverables:
+
+- Add `ida::ui::copy_to_clipboard(std::string_view)` and
   `ida::ui::read_clipboard()`.
 - Add diagnostic backend text if practical, with Qt reported as the backend.
 - Add `ida::ui::ask_text(...)` for multiline text display/input.
@@ -348,6 +367,16 @@ Concrete implementation tasks:
   with `IDAX_RUN_QT_CLIPBOARD=1` remains pending and requires
   `IDAX_ENABLE_QT_CLIPBOARD=ON` plus an IDA-compatible `QT_NAMESPACE=QT` Qt
   package.
+  instance is present and an external host-command fallback otherwise. Keep Qt
+  headers out of IDA SDK translation units.
+- P22.5.5 [x] Return structured errors for no UI host, no Qt application,
+  unsupported/missing clipboard backend, and empty read result where the
+  platform reports no clipboard text.
+- P22.5.6 [x] Add C++ surface coverage and a host-gated runtime test that writes
+  a unique token, reads it back, and restores/skips deterministically. C++
+  surface coverage and a gated test path are present; a UI-host run with
+  `IDAX_RUN_QT_CLIPBOARD=1` remains pending and requires Qt or an external
+  clipboard command on the host.
 - P22.5.7 [x] Add Node/Rust wrappers over the C++ optional-Qt clipboard shape.
 - P22.5.8 [x] Add Node/Rust wrappers for `ask_text` so the ida-cdump
   clipboard fallback dialog has binding parity with the C++ surface. Runtime
@@ -582,6 +611,7 @@ Concrete implementation tasks:
 
 - P22.8.1 [x] Add a `docs/codedump_migration_checklist.md` table with one row per
   `/home/null/dev/ida-cdump/docs/IDAX_GAPS.md` section: direct SDK call,
+  `<ida-cdump-root>/docs/IDAX_GAPS.md` section: direct SDK call,
   idax replacement, implementation status, binding availability, and residual
   caveats.
 - P22.8.2 [x] Update `docs/api_reference.md`, `docs/sdk_domain_coverage_matrix.md`,

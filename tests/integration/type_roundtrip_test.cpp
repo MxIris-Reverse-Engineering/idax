@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -129,6 +130,82 @@ void test_composite_factories() {
     auto arr_sz = arr.size();
     CHECK_OK(arr_sz);
     if (arr_sz) CHECK(*arr_sz == 40);  // 10 * 4
+}
+
+// ---------------------------------------------------------------------------
+// Test: exact, immutable shifted-pointer metadata
+// ---------------------------------------------------------------------------
+void test_shifted_pointer_metadata() {
+    std::cout << "--- shifted-pointer metadata ---\n";
+
+    auto parent = ida::type::TypeInfo::create_struct();
+    CHECK_OK(parent.add_member("head", ida::type::TypeInfo::uint64(), 0));
+    CHECK_OK(parent.add_member("tail", ida::type::TypeInfo::uint32(), 8));
+    CHECK_OK(parent.save_as("idax_shifted_pointer_parent"));
+    auto named_parent = ida::type::TypeInfo::by_name("idax_shifted_pointer_parent");
+    CHECK_OK(named_parent);
+    if (!named_parent)
+        return;
+
+    auto pointer = ida::type::TypeInfo::pointer_to(*named_parent);
+    auto neutral = pointer.pointer_details();
+    CHECK_OK(neutral);
+    if (neutral) {
+        CHECK(!neutral->is_shifted);
+        CHECK(!neutral->shifted_parent.has_value());
+        CHECK(neutral->shift_delta == 0);
+        CHECK(neutral->pointee_type.to_string().value_or("")
+              == named_parent->to_string().value_or(""));
+    }
+
+    auto shifted = pointer.with_shifted_parent(*named_parent, 8);
+    CHECK_OK(shifted);
+    if (shifted) {
+        auto details = shifted->pointer_details();
+        CHECK_OK(details);
+        if (details) {
+            CHECK(details->is_shifted);
+            CHECK(details->shift_delta == 8);
+            CHECK(details->shifted_parent.has_value());
+            if (details->shifted_parent) {
+                CHECK(details->shifted_parent->to_string().value_or("")
+                      == named_parent->to_string().value_or(""));
+            }
+            CHECK(details->pointee_type.to_string().value_or("")
+                  == named_parent->to_string().value_or(""));
+        }
+        CHECK(shifted->size().value_or(0) == pointer.size().value_or(1));
+
+        auto negative = shifted->with_shifted_parent(*named_parent, -4);
+        CHECK_OK(negative);
+        if (negative) {
+            auto negative_details = negative->pointer_details();
+            CHECK_OK(negative_details);
+            CHECK(negative_details && negative_details->is_shifted);
+            CHECK(negative_details && negative_details->shift_delta == -4);
+        }
+    }
+
+    // Copy-producing operations and rejected inputs must not alter the source.
+    auto source_after = pointer.pointer_details();
+    CHECK_OK(source_after);
+    CHECK(source_after && !source_after->is_shifted);
+    CHECK(source_after && source_after->shift_delta == 0);
+
+    CHECK_ERR(pointer.with_shifted_parent(*named_parent, 0),
+              ida::ErrorCategory::Validation);
+    CHECK_ERR(pointer.with_shifted_parent(
+                  *named_parent,
+                  static_cast<std::int64_t>(std::numeric_limits<std::int32_t>::max()) + 1),
+              ida::ErrorCategory::Validation);
+    CHECK_ERR(ida::type::TypeInfo::uint32().with_shifted_parent(*named_parent, 8),
+              ida::ErrorCategory::Validation);
+    CHECK_ERR(pointer.with_shifted_parent(ida::type::TypeInfo::uint32(), 8),
+              ida::ErrorCategory::Validation);
+    CHECK_ERR(pointer.with_shifted_parent(ida::type::TypeInfo::create_union(), 8),
+              ida::ErrorCategory::Validation);
+    CHECK_ERR(ida::type::TypeInfo::uint32().pointer_details(),
+              ida::ErrorCategory::Validation);
 }
 
 // ---------------------------------------------------------------------------
@@ -297,6 +374,194 @@ void test_parse_declarations() {
 }
 
 // ---------------------------------------------------------------------------
+// Test: exact local forward declaration classification/replacement
+// ---------------------------------------------------------------------------
+void test_forward_declaration_replacement() {
+    std::cout << "--- forward declaration replacement ---\n";
+
+    const char declarations[] =
+        "struct idax_forward_replace_struct;\n"
+        "union idax_forward_replace_union;\n"
+        "struct idax_forward_preserve_complete { unsigned int keep; };\n";
+    auto report = ida::type::parse_declarations(declarations);
+    CHECK_OK(report);
+    if (!report || !report->ok())
+        return;
+
+    auto struct_forward = ida::type::TypeInfo::by_name(
+        "idax_forward_replace_struct");
+    auto union_forward = ida::type::TypeInfo::by_name(
+        "idax_forward_replace_union");
+    auto complete_target = ida::type::TypeInfo::by_name(
+        "idax_forward_preserve_complete");
+    CHECK_OK(struct_forward);
+    CHECK_OK(union_forward);
+    CHECK_OK(complete_target);
+    if (!struct_forward || !union_forward || !complete_target)
+        return;
+
+    CHECK(struct_forward->is_forward_declaration());
+    CHECK(struct_forward->forward_declaration_kind()
+          == ida::type::TypeKind::Struct);
+    CHECK(union_forward->is_forward_declaration());
+    CHECK(union_forward->forward_declaration_kind()
+          == ida::type::TypeKind::Union);
+    CHECK(!complete_target->is_forward_declaration());
+    CHECK(complete_target->forward_declaration_kind()
+          == ida::type::TypeKind::Unknown);
+
+    auto pointer_before = ida::type::TypeInfo::pointer_to(*struct_forward);
+    auto forward_pointee = pointer_before.pointee_type();
+    CHECK_OK(forward_pointee);
+    if (forward_pointee) {
+        CHECK(forward_pointee->is_forward_declaration());
+        CHECK(forward_pointee->forward_declaration_kind()
+              == ida::type::TypeKind::Struct);
+    }
+
+    auto struct_source = ida::type::TypeInfo::create_struct();
+    CHECK_OK(struct_source.add_member("first", ida::type::TypeInfo::uint32(), 0));
+    CHECK_OK(struct_source.add_member("second", ida::type::TypeInfo::uint64(), 8));
+    CHECK_OK(struct_source.save_as("idax_forward_copy_source"));
+    auto named_source = ida::type::TypeInfo::by_name("idax_forward_copy_source");
+    CHECK_OK(named_source);
+    if (!named_source)
+        return;
+
+    CHECK_ERR(named_source->replace_forward_declaration(""),
+              ida::ErrorCategory::Validation);
+    const std::string embedded_nul("idax\0forward", 12);
+    CHECK_ERR(named_source->replace_forward_declaration(
+                  std::string_view(embedded_nul.data(), embedded_nul.size())),
+              ida::ErrorCategory::Validation);
+    CHECK_ERR(named_source->replace_forward_declaration(
+                  "idax_forward_missing_target"),
+              ida::ErrorCategory::NotFound);
+    CHECK_ERR(ida::type::TypeInfo::uint32().replace_forward_declaration(
+                  "idax_forward_replace_struct"),
+              ida::ErrorCategory::Validation);
+    CHECK_ERR(struct_forward->replace_forward_declaration(
+                  "idax_forward_replace_union"),
+              ida::ErrorCategory::Validation);
+    CHECK_ERR(named_source->replace_forward_declaration(
+                  "idax_forward_replace_union"),
+              ida::ErrorCategory::Conflict);
+    CHECK_ERR(named_source->replace_forward_declaration(
+                  "idax_forward_preserve_complete"),
+              ida::ErrorCategory::Conflict);
+    auto still_union_forward = ida::type::TypeInfo::by_name(
+        "idax_forward_replace_union");
+    CHECK_OK(still_union_forward);
+    if (still_union_forward)
+        CHECK(still_union_forward->is_forward_declaration());
+    auto still_complete = ida::type::TypeInfo::by_name(
+        "idax_forward_preserve_complete");
+    CHECK_OK(still_complete);
+    if (still_complete) {
+        CHECK(!still_complete->is_forward_declaration());
+        CHECK(still_complete->member_by_name("keep").has_value());
+    }
+
+    auto replaced = named_source->replace_forward_declaration(
+        "idax_forward_replace_struct");
+    CHECK_OK(replaced);
+    if (replaced) {
+        CHECK(replaced->is_struct());
+        CHECK(!replaced->is_forward_declaration());
+        CHECK(replaced->name().value_or("") == "idax_forward_replace_struct");
+        CHECK(replaced->member_count().value_or(0) == 2);
+        CHECK(replaced->member_by_name("first").has_value());
+        CHECK(replaced->member_by_name("second").has_value());
+    }
+    CHECK(named_source->name().value_or("") == "idax_forward_copy_source");
+    CHECK(named_source->member_count().value_or(0) == 2);
+
+    auto pointer_pointee = pointer_before.pointee_type();
+    CHECK_OK(pointer_pointee);
+    if (pointer_pointee) {
+        CHECK(pointer_pointee->is_struct());
+        CHECK(pointer_pointee->member_count().value_or(0) == 2);
+    }
+
+    auto union_source = ida::type::TypeInfo::create_union();
+    CHECK_OK(union_source.add_member("wide", ida::type::TypeInfo::uint64(), 0));
+    CHECK_OK(union_source.add_member("narrow", ida::type::TypeInfo::uint32(), 0));
+    auto replaced_union = union_source.replace_forward_declaration(
+        "idax_forward_replace_union");
+    CHECK_OK(replaced_union);
+    if (replaced_union) {
+        CHECK(replaced_union->is_union());
+        CHECK(!replaced_union->is_forward_declaration());
+        CHECK(replaced_union->member_count().value_or(0) == 2);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test: opaque persistent UDT member references
+// ---------------------------------------------------------------------------
+void test_member_references() {
+    std::cout << "--- persistent UDT member references ---\n";
+
+    auto first_function = ida::function::by_index(0);
+    CHECK_OK(first_function);
+    if (!first_function)
+        return;
+    const auto source = first_function->start();
+
+    auto ephemeral = ida::type::TypeInfo::create_struct();
+    CHECK_OK(ephemeral.add_member("field", ida::type::TypeInfo::uint32(), 4));
+    CHECK_ERR(ephemeral.member_references(4), ida::ErrorCategory::Conflict);
+
+    auto structure = ida::type::TypeInfo::create_struct();
+    CHECK_OK(structure.add_member("first", ida::type::TypeInfo::uint32(), 4));
+    CHECK_OK(structure.add_member("second", ida::type::TypeInfo::uint64(), 8));
+    CHECK_OK(structure.save_as("idax_member_reference_struct"));
+    auto saved = ida::type::TypeInfo::by_name("idax_member_reference_struct");
+    CHECK_OK(saved);
+    if (!saved)
+        return;
+
+    auto before = saved->member_references(4);
+    CHECK_OK(before);
+    if (before)
+        CHECK(before->empty());
+
+    auto created = saved->ensure_member_reference(4, source);
+    CHECK_OK(created);
+    if (created)
+        CHECK(*created);
+    auto after = saved->member_references(4);
+    CHECK_OK(after);
+    if (after) {
+        CHECK(after->size() == 1);
+        CHECK(after->front() == source);
+    }
+
+    auto repeated = saved->ensure_member_reference(4, source);
+    CHECK_OK(repeated);
+    if (repeated)
+        CHECK(!*repeated);
+    CHECK_ERR(saved->member_references(7), ida::ErrorCategory::NotFound);
+    CHECK_ERR(saved->ensure_member_reference(4, ida::BadAddress),
+              ida::ErrorCategory::Validation);
+    CHECK_ERR(saved->member_references(
+                  std::numeric_limits<std::size_t>::max()),
+              ida::ErrorCategory::Validation);
+
+    auto ambiguous = ida::type::TypeInfo::create_union();
+    CHECK_OK(ambiguous.add_member("wide", ida::type::TypeInfo::uint64(), 0));
+    CHECK_OK(ambiguous.add_member("narrow", ida::type::TypeInfo::uint32(), 0));
+    CHECK_OK(ambiguous.save_as("idax_member_reference_ambiguous"));
+    auto saved_ambiguous = ida::type::TypeInfo::by_name(
+        "idax_member_reference_ambiguous");
+    CHECK_OK(saved_ambiguous);
+    if (saved_ambiguous) {
+        CHECK_ERR(saved_ambiguous->member_references(0),
+                  ida::ErrorCategory::Conflict);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Test: function type + calling convention workflows
 // ---------------------------------------------------------------------------
 void test_function_type_workflows() {
@@ -359,6 +624,131 @@ void test_function_type_workflows() {
     CHECK(!invalid_cc.has_value());
     if (!invalid_cc)
         CHECK(invalid_cc.error().category == ida::ErrorCategory::Validation);
+
+    auto named_fn = ida::type::TypeInfo::from_declaration(
+        "int __cdecl idax_proto(int selector, char *payload)");
+    CHECK_OK(named_fn);
+    if (named_fn) {
+        auto before = named_fn->function_details();
+        CHECK_OK(before);
+
+        auto replacement = ida::type::TypeInfo::uint32();
+        auto edited = named_fn->with_function_argument_type(0, replacement);
+        CHECK_OK(edited);
+        if (before && edited) {
+            auto after = edited->function_details();
+            CHECK_OK(after);
+            if (after) {
+                CHECK(after->arguments.size() == before->arguments.size());
+                CHECK(after->arguments.size() == 2);
+                CHECK(after->arguments[0].name == before->arguments[0].name);
+                CHECK(after->arguments[1].name == before->arguments[1].name);
+                CHECK(after->arguments[0].type.is_integer());
+                CHECK(after->arguments[1].type.is_pointer());
+                CHECK(after->calling_convention == before->calling_convention);
+                CHECK(after->variadic == before->variadic);
+            }
+
+            auto original_after = named_fn->function_details();
+            CHECK_OK(original_after);
+            if (original_after)
+                CHECK(original_after->arguments[0].type.is_signed());
+
+            auto renamed = named_fn->with_function_argument_name(0, "size");
+            CHECK_OK(renamed);
+            if (renamed) {
+                auto renamed_details = renamed->function_details();
+                CHECK_OK(renamed_details);
+                if (renamed_details) {
+                    CHECK(renamed_details->arguments[0].name == "size");
+                    CHECK(renamed_details->arguments[0].type.is_signed());
+                    CHECK(renamed_details->arguments[1].name
+                          == before->arguments[1].name);
+                    CHECK(renamed_details->arguments[1].type.is_pointer());
+                    CHECK(renamed_details->calling_convention
+                          == before->calling_convention);
+                    CHECK(renamed_details->variadic == before->variadic);
+                }
+            }
+            auto original_named = named_fn->function_details();
+            CHECK_OK(original_named);
+            if (original_named)
+                CHECK(original_named->arguments[0].name
+                      == before->arguments[0].name);
+
+            auto return_edited = named_fn->with_function_return_type(
+                ida::type::TypeInfo::uint64());
+            CHECK_OK(return_edited);
+            if (return_edited) {
+                auto return_details = return_edited->function_details();
+                CHECK_OK(return_details);
+                if (return_details) {
+                    CHECK(return_details->return_type.is_integer());
+                    CHECK(!return_details->return_type.is_signed());
+                    CHECK(return_details->arguments.size() == before->arguments.size());
+                    CHECK(return_details->arguments[0].name == before->arguments[0].name);
+                    CHECK(return_details->arguments[1].name == before->arguments[1].name);
+                    CHECK(return_details->calling_convention == before->calling_convention);
+                    CHECK(return_details->variadic == before->variadic);
+                }
+            }
+            auto original_return = named_fn->function_return_type();
+            CHECK_OK(original_return);
+            if (original_return)
+                CHECK(original_return->is_signed());
+
+            auto pointer = ida::type::TypeInfo::pointer_to(*named_fn);
+            auto edited_pointer = pointer.with_function_argument_type(1, replacement);
+            CHECK_OK(edited_pointer);
+            if (edited_pointer) {
+                CHECK(edited_pointer->is_pointer());
+                auto pointer_details = edited_pointer->function_details();
+                CHECK_OK(pointer_details);
+                if (pointer_details) {
+                    CHECK(pointer_details->arguments[0].name == before->arguments[0].name);
+                    CHECK(pointer_details->arguments[1].name == before->arguments[1].name);
+                    CHECK(pointer_details->arguments[1].type.is_integer());
+                }
+            }
+            auto renamed_pointer = pointer.with_function_argument_name(1, "buffer");
+            CHECK_OK(renamed_pointer);
+            if (renamed_pointer) {
+                CHECK(renamed_pointer->is_pointer());
+                auto pointer_details = renamed_pointer->function_details();
+                CHECK_OK(pointer_details);
+                if (pointer_details)
+                    CHECK(pointer_details->arguments[1].name == "buffer");
+            }
+            auto return_edited_pointer = pointer.with_function_return_type(
+                ida::type::TypeInfo::uint64());
+            CHECK_OK(return_edited_pointer);
+            if (return_edited_pointer) {
+                CHECK(return_edited_pointer->is_pointer());
+                auto pointer_details = return_edited_pointer->function_details();
+                CHECK_OK(pointer_details);
+                if (pointer_details)
+                    CHECK(!pointer_details->return_type.is_signed());
+            }
+        }
+
+        CHECK_ERR(named_fn->with_function_argument_type(2, replacement),
+                  ida::ErrorCategory::Validation);
+        CHECK_ERR(named_fn->with_function_argument_name(2, "missing"),
+                  ida::ErrorCategory::Validation);
+        CHECK_ERR(named_fn->with_function_argument_name(
+                      0, std::string_view("bad\0name", 8)),
+                  ida::ErrorCategory::Validation);
+    }
+
+    CHECK_ERR(ida::type::TypeInfo::int32().with_function_argument_type(
+                  0, ida::type::TypeInfo::uint32()),
+              ida::ErrorCategory::Validation);
+    CHECK_ERR(ida::type::TypeInfo::int32().with_function_return_type(
+                  ida::type::TypeInfo::uint32()),
+              ida::ErrorCategory::Validation);
+    CHECK_ERR(ida::type::TypeInfo::int32().with_function_argument_name(
+                  0, "size"),
+              ida::ErrorCategory::Validation);
 }
 
 // ---------------------------------------------------------------------------
@@ -392,6 +782,155 @@ void test_enum_workflows() {
     CHECK(!bad_enum.has_value());
     if (!bad_enum)
         CHECK(bad_enum.error().category == ida::ErrorCategory::Validation);
+}
+
+// ---------------------------------------------------------------------------
+// Test: rich type layout metadata used by trida-style generators
+// ---------------------------------------------------------------------------
+void test_rich_type_layout_metadata() {
+    std::cout << "--- rich type layout metadata ---\n";
+
+    const char* declarations =
+        "enum idax_trida_enum { IDAX_TRIDA_A = 1, IDAX_TRIDA_B = 2 };\n"
+        "struct idax_trida_inner { int ix; unsigned short iy; };\n"
+        "struct idax_trida_layout {\n"
+        "  int first;\n"
+        "  unsigned flags:3;\n"
+        "  char name[8];\n"
+        "  struct idax_trida_inner inner;\n"
+        "  int (*callback)(struct idax_trida_inner *self, int count);\n"
+        "  enum idax_trida_enum kind;\n"
+        "};\n";
+
+    auto parsed = ida::type::parse_declarations(declarations);
+    CHECK_OK(parsed);
+
+    auto layout = ida::type::TypeInfo::by_name("idax_trida_layout");
+    CHECK_OK(layout);
+    if (layout) {
+        CHECK(layout->kind() == ida::type::TypeKind::Struct);
+        auto layout_name = layout->name();
+        CHECK_OK(layout_name);
+        if (layout_name)
+            CHECK(*layout_name == "idax_trida_layout");
+
+        auto details = layout->udt_details();
+        CHECK_OK(details);
+        if (details) {
+            CHECK(!details->is_union);
+            CHECK(details->total_size > 0);
+            CHECK(details->members.size() >= 5);
+
+            bool saw_bitfield = false;
+            for (const auto& member : details->members) {
+                if (member.name == "flags") {
+                    saw_bitfield = true;
+                    CHECK(member.is_bitfield);
+                    CHECK(member.bit_size == 3);
+                    CHECK(member.storage_byte_width > 0);
+                }
+                CHECK(member.bit_offset >= member.byte_offset * 8);
+            }
+            CHECK(saw_bitfield);
+        }
+
+        auto callback = layout->member_by_name("callback");
+        CHECK_OK(callback);
+        if (callback) {
+            CHECK(callback->type.is_pointer());
+            auto pointed = callback->type.pointee_type();
+            CHECK_OK(pointed);
+            if (pointed) {
+                auto function = pointed->function_details();
+                CHECK_OK(function);
+                if (function) {
+                    CHECK(function->return_type.is_integer());
+                    CHECK(function->arguments.size() == 2);
+                    if (function->arguments.size() == 2) {
+                        CHECK(function->arguments[0].type.is_pointer());
+                        CHECK(function->arguments[1].type.is_integer());
+                    }
+                }
+            }
+        }
+
+        auto decl = layout->declaration("sample");
+        CHECK_OK(decl);
+        if (decl)
+            CHECK(decl->find("sample") != std::string::npos);
+    }
+
+    auto enum_type = ida::type::TypeInfo::by_name("idax_trida_enum");
+    CHECK_OK(enum_type);
+    if (enum_type) {
+        auto details = enum_type->enum_details();
+        CHECK_OK(details);
+        if (details) {
+            CHECK(details->byte_width > 0);
+            CHECK(details->members.size() == 2);
+            if (details->members.size() == 2)
+                CHECK(details->members[1].value == 2);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Test: metadata-preserving C++ object / vftable UDT semantics
+// ---------------------------------------------------------------------------
+void test_udt_semantics() {
+    std::cout << "--- UDT semantics ---\n";
+
+    auto semantic_struct = ida::type::TypeInfo::create_struct();
+    CHECK_OK(semantic_struct.add_member("word", ida::type::TypeInfo::uint32(), 0));
+    CHECK_OK(semantic_struct.add_member("tail", ida::type::TypeInfo::uint8(), 8));
+    auto neutral = semantic_struct.udt_details();
+    CHECK_OK(neutral);
+    CHECK(neutral && !neutral->is_cpp_object && !neutral->is_vftable);
+
+    CHECK_OK(semantic_struct.set_udt_semantics(true, false));
+    auto cpp_object = semantic_struct.udt_details();
+    CHECK_OK(cpp_object);
+    if (neutral && cpp_object) {
+        CHECK(cpp_object->is_cpp_object);
+        CHECK(!cpp_object->is_vftable);
+        CHECK(cpp_object->total_size == neutral->total_size);
+        CHECK(cpp_object->members.size() == neutral->members.size());
+        CHECK(cpp_object->members[0].name == neutral->members[0].name);
+        CHECK(cpp_object->members[0].byte_offset
+              == neutral->members[0].byte_offset);
+        CHECK(cpp_object->members[0].bit_size
+              == neutral->members[0].bit_size);
+        CHECK(cpp_object->members[0].type.to_string().value_or("")
+              == neutral->members[0].type.to_string().value_or(""));
+        CHECK(cpp_object->members[1].name == neutral->members[1].name);
+        CHECK(cpp_object->members[1].byte_offset
+              == neutral->members[1].byte_offset);
+        CHECK(cpp_object->members[1].bit_size
+              == neutral->members[1].bit_size);
+        CHECK(cpp_object->members[1].type.to_string().value_or("")
+              == neutral->members[1].type.to_string().value_or(""));
+    }
+
+    CHECK_OK(semantic_struct.set_udt_semantics(false, true));
+    auto vftable = semantic_struct.udt_details();
+    CHECK_OK(vftable);
+    CHECK(vftable && !vftable->is_cpp_object && vftable->is_vftable);
+    CHECK_ERR(semantic_struct.set_udt_semantics(true, true),
+              ida::ErrorCategory::Validation);
+    auto after_rejection = semantic_struct.udt_details();
+    CHECK_OK(after_rejection);
+    CHECK(after_rejection && !after_rejection->is_cpp_object
+          && after_rejection->is_vftable);
+    CHECK_OK(semantic_struct.set_udt_semantics(false, false));
+    auto restored = semantic_struct.udt_details();
+    CHECK_OK(restored);
+    CHECK(restored && !restored->is_cpp_object && !restored->is_vftable);
+    CHECK_ERR(ida::type::TypeInfo::int32().set_udt_semantics(false, false),
+              ida::ErrorCategory::Validation);
+    auto semantic_union = ida::type::TypeInfo::create_union();
+    CHECK_ERR(semantic_union.set_udt_semantics(true, false),
+              ida::ErrorCategory::Validation);
+    CHECK_OK(semantic_union.set_udt_semantics(false, false));
 }
 
 // ---------------------------------------------------------------------------
@@ -777,11 +1316,16 @@ int main(int argc, char* argv[]) {
 
     test_primitive_factories();
     test_composite_factories();
+    test_shifted_pointer_metadata();
     test_type_decomposition_helpers();
     test_from_declaration();
     test_parse_declarations();
+    test_forward_declaration_replacement();
+    test_member_references();
     test_function_type_workflows();
     test_enum_workflows();
+    test_rich_type_layout_metadata();
+    test_udt_semantics();
     test_struct_lifecycle();
     test_union_creation();
     test_save_and_lookup();

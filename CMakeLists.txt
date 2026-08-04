@@ -8,13 +8,13 @@ if(NOT DEFINED ENV{IDASDK} OR "$ENV{IDASDK}" STREQUAL "")
     
     FetchContent_Declare(
         ida_sdk
-        GIT_REPOSITORY https://github.com/HexRaysSA/ida-sdk.git
-        GIT_TAG        main
-        GIT_SHALLOW    TRUE
-        GIT_SUBMODULES_RECURSE TRUE
+        URL https://github.com/HexRaysSA/ida-sdk/archive/6929db6868a524496eb66e76e4ec6c9d720a0594.tar.gz
+        URL_HASH SHA256=6ba645ef8fb5663d45d28c7a48da274e22a5929ddbfbc69cd4be34a4d7ee9895
+        DOWNLOAD_EXTRACT_TIMESTAMP TRUE
     )
     
-    # We use Populate directly because ida-sdk has no root CMakeLists.txt.
+    # Populate directly because ida-sdk is consumed as a package, not added as
+    # a second top-level project.
     # To suppress CMP0169 warning on newer CMake versions:
     if(POLICY CMP0169)
         cmake_policy(SET CMP0169 OLD)
@@ -32,6 +32,8 @@ endif()
 # IDASDK may point either to an SDK root that contains `ida-cmake/`, or to
 # a GitHub checkout root where SDK contents live under `src/`.
 set(IDASDK_BOOTSTRAP_ROOT "$ENV{IDASDK}")
+set(IDASDK_BOOTSTRAP_FILE "")
+set(IDASDK_PACKAGE_DIR "")
 
 if(NOT IDASDK_BOOTSTRAP_ROOT)
     message(FATAL_ERROR "IDASDK is not set. Set IDASDK to your IDA SDK path.")
@@ -47,17 +49,14 @@ elseif(EXISTS "${IDASDK_BOOTSTRAP_ROOT}/src/ida-cmake/bootstrap.cmake")
 elseif(EXISTS "${IDASDK_BOOTSTRAP_ROOT}/src/cmake/bootstrap.cmake")
     set(IDASDK_BOOTSTRAP_ROOT "${IDASDK_BOOTSTRAP_ROOT}/src")
     set(IDASDK_BOOTSTRAP_FILE "${IDASDK_BOOTSTRAP_ROOT}/cmake/bootstrap.cmake")
-elseif(EXISTS "${IDASDK_BOOTSTRAP_ROOT}/src/cmake/idasdkConfig.cmake")
-    # IDA SDK 9.4 replaced bootstrap.cmake with a conventional CMake package.
-    set(IDASDK_BOOTSTRAP_ROOT "${IDASDK_BOOTSTRAP_ROOT}/src")
-    list(PREPEND CMAKE_PREFIX_PATH "${IDASDK_BOOTSTRAP_ROOT}/cmake")
 elseif(EXISTS "${IDASDK_BOOTSTRAP_ROOT}/cmake/idasdkConfig.cmake")
-    # Support an unpacked SDK whose include/, lib/, and cmake/ directories are
-    # already located at the environment-provided root.
-    list(PREPEND CMAKE_PREFIX_PATH "${IDASDK_BOOTSTRAP_ROOT}/cmake")
+    set(IDASDK_PACKAGE_DIR "${IDASDK_BOOTSTRAP_ROOT}/cmake")
+elseif(EXISTS "${IDASDK_BOOTSTRAP_ROOT}/src/cmake/idasdkConfig.cmake")
+    set(IDASDK_BOOTSTRAP_ROOT "${IDASDK_BOOTSTRAP_ROOT}/src")
+    set(IDASDK_PACKAGE_DIR "${IDASDK_BOOTSTRAP_ROOT}/cmake")
 else()
     message(FATAL_ERROR
-        "Could not find the IDA SDK CMake package under IDASDK='${IDASDK_BOOTSTRAP_ROOT}'.\n"
+        "Could not find an IDA SDK CMake entry point under IDASDK='${IDASDK_BOOTSTRAP_ROOT}'.\n"
         "Expected one of:\n"
         "  ${IDASDK_BOOTSTRAP_ROOT}/ida-cmake/bootstrap.cmake\n"
         "  ${IDASDK_BOOTSTRAP_ROOT}/cmake/bootstrap.cmake\n"
@@ -70,6 +69,10 @@ endif()
 set(ENV{IDASDK} "${IDASDK_BOOTSTRAP_ROOT}")
 if(IDASDK_BOOTSTRAP_FILE)
     include("${IDASDK_BOOTSTRAP_FILE}")
+else()
+    list(PREPEND CMAKE_PREFIX_PATH "${IDASDK_PACKAGE_DIR}")
+    set(idasdk_DIR "${IDASDK_PACKAGE_DIR}" CACHE PATH
+        "Directory containing idasdkConfig.cmake" FORCE)
 endif()
 
 # Set IDABIN to build artifacts in a local idax folder instead of vendored ida-sdk
@@ -78,7 +81,23 @@ if(NOT DEFINED IDABIN)
     message(STATUS "Setting IDABIN to local build folder: ${IDABIN}")
 endif()
 
+# IDA SDK 9.4's package sets a default MSVC runtime during find_package().
+# Preserve an explicit parent/toolchain choice; standalone idax retains the
+# static runtime model used by its Node and Rust consumers.
+if(MSVC)
+    if(DEFINED CMAKE_MSVC_RUNTIME_LIBRARY)
+        set(IDAX_MSVC_RUNTIME_LIBRARY "${CMAKE_MSVC_RUNTIME_LIBRARY}")
+    else()
+        set(IDAX_MSVC_RUNTIME_LIBRARY
+            "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endif()
+endif()
+
 find_package(idasdk REQUIRED)
+
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "${IDAX_MSVC_RUNTIME_LIBRARY}")
+endif()
 
 # Promote idasdk targets to GLOBAL scope so that parent projects including idax
 # via FetchContent or add_subdirectory can link against them.
@@ -104,6 +123,24 @@ else()
     message(FATAL_ERROR
         "Could not resolve SDK include directory after bootstrap.\n"
         "IDASDK='${IDASDK}', ENV{IDASDK}='$ENV{IDASDK}'.")
+endif()
+
+# The public ABI and processor bridge target the pinned IDA SDK 9.4 release.
+# Caller-owned IDASDK overrides must not silently select an older/newer layout.
+set(IDAX_REQUIRED_IDA_SDK_VERSION 940)
+file(STRINGS "${IDAX_SDK_ROOT}/include/pro.h" IDAX_IDA_SDK_VERSION_LINE
+    REGEX "^#[ \t]*define[ \t]+IDA_SDK_VERSION[ \t]+[0-9]+"
+    LIMIT_COUNT 1)
+if(NOT IDAX_IDA_SDK_VERSION_LINE MATCHES
+        "IDA_SDK_VERSION[ \t]+([0-9]+)")
+    message(FATAL_ERROR "Could not read IDA_SDK_VERSION from the resolved SDK.")
+endif()
+set(IDAX_IDA_SDK_VERSION "${CMAKE_MATCH_1}")
+if(NOT IDAX_IDA_SDK_VERSION STREQUAL
+        "${IDAX_REQUIRED_IDA_SDK_VERSION}")
+    message(FATAL_ERROR
+        "idax requires IDA SDK 9.4 (IDA_SDK_VERSION=940); "
+        "resolved IDA_SDK_VERSION=${IDAX_IDA_SDK_VERSION}.")
 endif()
 
 # ── C++23 standard for idax itself ───────────────────────────────────────
@@ -215,6 +252,12 @@ option(IDAX_BUILD_TESTS "Build idax tests" OFF)
 if(IDAX_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# ── Python bindings (optional) ──────────────────────────────────────────
+option(IDAX_BUILD_PYTHON "Build the idax CPython extension" OFF)
+if(IDAX_BUILD_PYTHON)
+    add_subdirectory(bindings/python)
 endif()
 
 # ── Install / packaging ──────────────────────────────────────────────────

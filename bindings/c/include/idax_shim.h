@@ -2,7 +2,7 @@
  * @file idax_shim.h
  * @brief C shim declarations for the idax C++ IDA SDK wrapper library.
  *
- * This header declares extern "C" functions covering all 28 idax namespaces.
+ * This header declares extern "C" functions covering every idax namespace.
  * It is consumed by bindgen to produce Rust FFI bindings.
  *
  * Error convention:
@@ -94,6 +94,136 @@ void idax_free_bytes(uint8_t* p);
 void idax_free_addresses(uint64_t* p);
 
 /* ═══════════════════════════════════════════════════════════════════════════
+ * Script / IDC values and synchronous execution (ida::script)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef void* IdaxScriptValueHandle;
+
+typedef struct IdaxScriptResolvedName {
+    const char* name;
+    uint64_t value;
+} IdaxScriptResolvedName;
+
+typedef struct IdaxScriptCompileOptions {
+    int only_safe_functions;
+    const IdaxScriptResolvedName* resolved_names;
+    size_t resolved_name_count;
+} IdaxScriptCompileOptions;
+
+typedef struct IdaxScriptFileCompileOptions {
+    int delete_macros_after_compilation;
+    int allow_program_labels;
+    int only_safe_functions;
+} IdaxScriptFileCompileOptions;
+
+typedef struct IdaxScriptCompilationResult {
+    int succeeded;
+    char* error;
+} IdaxScriptCompilationResult;
+
+typedef struct IdaxScriptExecutionResult {
+    int succeeded;
+    IdaxScriptValueHandle value;
+    char* error;
+} IdaxScriptExecutionResult;
+
+typedef struct IdaxScriptIntegerExecutionResult {
+    int succeeded;
+    int64_t value;
+    char* error;
+} IdaxScriptIntegerExecutionResult;
+
+void idax_script_value_free(IdaxScriptValueHandle value);
+int idax_script_value_clone(IdaxScriptValueHandle value,
+                            IdaxScriptValueHandle* out);
+int idax_script_value_integer(int64_t value, IdaxScriptValueHandle* out);
+int idax_script_value_string(const uint8_t* value, size_t length,
+                             IdaxScriptValueHandle* out);
+int idax_script_value_floating(double value, IdaxScriptValueHandle* out);
+int idax_script_value_object(IdaxScriptValueHandle* out);
+int idax_script_value_kind(IdaxScriptValueHandle value, int* out);
+int idax_script_value_as_integer(IdaxScriptValueHandle value, int64_t* out);
+int idax_script_value_as_floating(IdaxScriptValueHandle value, double* out);
+int idax_script_value_as_string(IdaxScriptValueHandle value,
+                                uint8_t** out, size_t* length);
+int idax_script_value_coerce_integer(IdaxScriptValueHandle value, int64_t* out);
+int idax_script_value_coerce_floating(IdaxScriptValueHandle value, double* out);
+int idax_script_value_coerce_string(IdaxScriptValueHandle value,
+                                    uint8_t** out, size_t* length);
+int idax_script_value_render(IdaxScriptValueHandle value, const char* name,
+                             size_t indent, char** out);
+int idax_script_value_deep_copy(IdaxScriptValueHandle value,
+                                IdaxScriptValueHandle* out);
+int idax_script_value_class_name(IdaxScriptValueHandle value, char** out);
+int idax_script_value_attribute(IdaxScriptValueHandle value, const char* name,
+                                int use_handler, IdaxScriptValueHandle* out);
+int idax_script_value_set_attribute(IdaxScriptValueHandle value,
+                                    const char* name,
+                                    IdaxScriptValueHandle attribute,
+                                    int use_handler);
+int idax_script_value_attribute_names(IdaxScriptValueHandle value,
+                                      char*** out, size_t* count);
+void idax_script_string_array_free(char** values, size_t count);
+int idax_script_value_remove_attribute(IdaxScriptValueHandle value,
+                                       const char* name, int* out);
+int idax_script_value_slice(IdaxScriptValueHandle value, size_t begin,
+                            size_t end, IdaxScriptValueHandle* out);
+int idax_script_value_replace_slice(IdaxScriptValueHandle value, size_t begin,
+                                    size_t end,
+                                    IdaxScriptValueHandle replacement);
+int idax_script_value_dereference(IdaxScriptValueHandle value, int mode,
+                                  IdaxScriptValueHandle* out);
+
+void idax_script_compilation_result_free(IdaxScriptCompilationResult* result);
+void idax_script_execution_result_free(IdaxScriptExecutionResult* result);
+void idax_script_integer_execution_result_free(
+    IdaxScriptIntegerExecutionResult* result);
+
+int idax_script_evaluate(const char* expression, uint64_t where,
+                         IdaxScriptExecutionResult* out);
+int idax_script_evaluate_idc(const char* expression, uint64_t where,
+                             IdaxScriptExecutionResult* out);
+int idax_script_evaluate_integer(const char* expression, uint64_t where,
+                                 IdaxScriptIntegerExecutionResult* out);
+int idax_script_compile_file(const char* path,
+                             const IdaxScriptFileCompileOptions* options,
+                             IdaxScriptCompilationResult* out);
+int idax_script_compile_text(const char* source,
+                             const IdaxScriptCompileOptions* options,
+                             IdaxScriptCompilationResult* out);
+int idax_script_compile_snippet(const char* function_name, const char* body,
+                                const IdaxScriptCompileOptions* options,
+                                IdaxScriptCompilationResult* out);
+int idax_script_call(const char* function_name,
+                     const IdaxScriptValueHandle* arguments,
+                     size_t argument_count,
+                     const IdaxScriptResolvedName* resolved_names,
+                     size_t resolved_name_count,
+                     IdaxScriptExecutionResult* out);
+int idax_script_execute_script(const char* path, const char* function_name,
+                               const IdaxScriptValueHandle* arguments,
+                               size_t argument_count,
+                               const IdaxScriptFileCompileOptions* options,
+                               IdaxScriptExecutionResult* out);
+int idax_script_evaluate_snippet(const char* source,
+                                 const IdaxScriptResolvedName* resolved_names,
+                                 size_t resolved_name_count,
+                                 IdaxScriptExecutionResult* out);
+int idax_script_set_include_paths(const char* const* paths, size_t count);
+int idax_script_append_include_paths(const char* const* paths, size_t count);
+int idax_script_resolve_file(const char* file, char** out, int* has_value);
+int idax_script_execute_system_script(const char* file,
+                                      int complain_if_missing);
+int idax_script_function_names(const char* prefix, size_t maximum,
+                               char*** out, size_t* count);
+int idax_script_global(const char* name, IdaxScriptValueHandle* out,
+                       int* has_value);
+int idax_script_set_global(const char* name, IdaxScriptValueHandle value,
+                           int* created);
+int idax_script_reference_global(const char* name,
+                                 IdaxScriptValueHandle* out);
+
+/* ═══════════════════════════════════════════════════════════════════════════
  * Database (ida::database)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -161,6 +291,19 @@ int idax_database_image_base(uint64_t* out);
 int idax_database_min_address(uint64_t* out);
 int idax_database_max_address(uint64_t* out);
 int idax_database_processor_id(int32_t* out);
+
+typedef struct IdaxDatabaseProcessorProfile {
+    int32_t raw_id;
+    int32_t known_id;
+    int     has_known_id;
+    char*   name;
+    int     address_bitness;
+    int     big_endian;
+    char*   abi_name;
+} IdaxDatabaseProcessorProfile;
+
+int idax_database_processor_profile(IdaxDatabaseProcessorProfile* out);
+void idax_database_processor_profile_free(IdaxDatabaseProcessorProfile* profile);
 int idax_database_processor_name(char** out);
 int idax_database_address_bitness(int* out);
 int idax_database_set_address_bitness(int bits);
@@ -183,6 +326,375 @@ int idax_database_open_with_intent(const char* path, int intent, int mode);
 int idax_path_basename(const char* path, char** out);
 int idax_path_dirname(const char* path, char** out);
 int idax_path_is_directory(const char* path, int* out);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Path (ida::path)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+int idax_path_basename(const char* path, char** out);
+int idax_path_dirname(const char* path, char** out);
+int idax_path_is_directory(const char* path, int* out);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Undo (ida::undo)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+int idax_undo_create_point(const char* action_name, const char* label, int* out);
+int idax_undo_undo_action_label(char** out);
+int idax_undo_redo_action_label(char** out);
+int idax_undo_perform_undo(int* out);
+int idax_undo_perform_redo(int* out);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Analysis problems (ida::problem)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+int idax_problem_description(int kind, uint64_t address, char** out);
+int idax_problem_remember(int kind, uint64_t address, const char* message);
+int idax_problem_next(int kind, uint64_t at_or_after,
+                      uint64_t* out, int* has_value);
+int idax_problem_remove(int kind, uint64_t address, int* out);
+int idax_problem_name(int kind, int long_form, char** out);
+int idax_problem_contains(int kind, uint64_t address, int* out);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Address bookmarks (ida::bookmark)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+#define IDAX_BOOKMARK_MAX_SLOTS 1024
+
+typedef struct IdaxBookmark {
+    uint64_t address;
+    uint32_t slot;
+    char* description;
+} IdaxBookmark;
+
+int idax_bookmark_all(IdaxBookmark** out, size_t* count);
+int idax_bookmark_at(uint64_t address, IdaxBookmark* out, int* has_value);
+int idax_bookmark_at_slot(uint32_t slot, IdaxBookmark* out, int* has_value);
+int idax_bookmark_set(uint64_t address, const char* description,
+                      int has_slot, uint32_t slot, IdaxBookmark* out);
+int idax_bookmark_remove(uint64_t address, int* out);
+int idax_bookmark_remove_slot(uint32_t slot, int* out);
+void idax_bookmark_free(IdaxBookmark* bookmark);
+void idax_bookmarks_free(IdaxBookmark* bookmarks, size_t count);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Address navigation history (ida::navigation)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef void* IdaxNavigationHistoryHandle;
+
+typedef struct IdaxNavigationEntry {
+    uint64_t address;
+    char* channel;
+    char* metadata;
+} IdaxNavigationEntry;
+
+int idax_navigation_history_open(const char* name,
+                                 const IdaxNavigationEntry* initial,
+                                 IdaxNavigationHistoryHandle* out);
+void idax_navigation_history_free(IdaxNavigationHistoryHandle history);
+int idax_navigation_history_name(IdaxNavigationHistoryHandle history,
+                                 char** out);
+int idax_navigation_history_created(IdaxNavigationHistoryHandle history,
+                                    int* out);
+int idax_navigation_history_entries(IdaxNavigationHistoryHandle history,
+                                    IdaxNavigationEntry** out, size_t* count);
+int idax_navigation_history_size(IdaxNavigationHistoryHandle history,
+                                 size_t* out);
+int idax_navigation_history_index(IdaxNavigationHistoryHandle history,
+                                  size_t* out);
+int idax_navigation_history_current(IdaxNavigationHistoryHandle history,
+                                    IdaxNavigationEntry* out);
+int idax_navigation_history_current_for(IdaxNavigationHistoryHandle history,
+                                        const char* channel,
+                                        IdaxNavigationEntry* out,
+                                        int* has_value);
+int idax_navigation_history_all_current(IdaxNavigationHistoryHandle history,
+                                        IdaxNavigationEntry** out,
+                                        size_t* count);
+int idax_navigation_history_set_current(IdaxNavigationHistoryHandle history,
+                                        const IdaxNavigationEntry* entry,
+                                        int record_in_history);
+int idax_navigation_history_push(IdaxNavigationHistoryHandle history,
+                                 const IdaxNavigationEntry* entry,
+                                 IdaxNavigationEntry* out);
+int idax_navigation_history_seek(IdaxNavigationHistoryHandle history,
+                                 size_t index, IdaxNavigationEntry* out);
+int idax_navigation_history_back(IdaxNavigationHistoryHandle history,
+                                 size_t count, IdaxNavigationEntry* out,
+                                 int* has_value);
+int idax_navigation_history_forward(IdaxNavigationHistoryHandle history,
+                                    size_t count, IdaxNavigationEntry* out,
+                                    int* has_value);
+int idax_navigation_history_replace(IdaxNavigationHistoryHandle history,
+                                    size_t index,
+                                    const IdaxNavigationEntry* entry);
+int idax_navigation_history_clear(IdaxNavigationHistoryHandle history,
+                                  const IdaxNavigationEntry* new_tip);
+int idax_navigation_history_transfer_channel_to(
+    IdaxNavigationHistoryHandle source,
+    IdaxNavigationHistoryHandle destination,
+    const char* channel,
+    int retain_history);
+void idax_navigation_entry_free(IdaxNavigationEntry* entry);
+void idax_navigation_entries_free(IdaxNavigationEntry* entries, size_t count);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Register-value tracking (ida::registers)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct IdaxRegisterValueOrigin {
+    uint64_t address;
+    uint16_t instruction_code;
+    int short_instruction;
+    int program_counter_based;
+    int global_offset_table_like;
+} IdaxRegisterValueOrigin;
+
+typedef struct IdaxRegisterValueCandidate {
+    int has_constant;
+    uint64_t constant;
+    int has_stack_pointer_delta;
+    int64_t stack_pointer_delta;
+    IdaxRegisterValueOrigin origin;
+} IdaxRegisterValueCandidate;
+
+typedef struct IdaxTrackedRegisterValue {
+    int32_t state;
+    IdaxRegisterValueCandidate* candidates;
+    size_t candidate_count;
+    int has_cause;
+    IdaxRegisterValueOrigin cause;
+    int has_aborting_depth;
+    int32_t aborting_depth;
+    char* description;
+} IdaxTrackedRegisterValue;
+
+typedef struct IdaxNearestRegisterValue {
+    size_t selected_index;
+    char* register_name;
+    IdaxTrackedRegisterValue value;
+} IdaxNearestRegisterValue;
+
+int idax_registers_track(uint64_t address, const char* register_name,
+                         int max_depth, IdaxTrackedRegisterValue* out);
+int idax_registers_constant_at(uint64_t address, const char* register_name,
+                               int max_depth, uint64_t* out, int* has_value);
+int idax_registers_stack_delta_at(uint64_t address, const char* register_name,
+                                  int64_t* out, int* has_value);
+int idax_registers_nearest_at(uint64_t address, const char* first_register,
+                              const char* second_register,
+                              IdaxNearestRegisterValue* out, int* has_value);
+int idax_registers_clear_control_flow_cache(void);
+int idax_registers_clear_data_reference_cache(void);
+int idax_registers_control_flow_reference_changed(
+    uint64_t from, uint64_t to, int mutation);
+int idax_registers_data_reference_changed(uint64_t to, int mutation);
+void idax_registers_tracked_value_free(IdaxTrackedRegisterValue* value);
+void idax_registers_nearest_value_free(IdaxNearestRegisterValue* value);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Source parsers (ida::parser)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct IdaxParserParseOptions {
+    int32_t input_kind;
+    int discard_result;
+    int define_base_macros;
+    int suppress_warnings;
+    int ignore_errors;
+    int allow_redeclarations;
+    int no_decorate;
+    int assume_high_level;
+    int lower_prototypes;
+    int raw_argument_names;
+    int relaxed_namespaces;
+    int exclude_base_types;
+    int allow_missing_semicolon;
+    int standalone_declaration;
+    int allow_void;
+    int no_mangle;
+    size_t pack_alignment;
+} IdaxParserParseOptions;
+
+typedef struct IdaxParserParseReport {
+    size_t error_count;
+} IdaxParserParseReport;
+
+int idax_parser_select(const char* name);
+int idax_parser_select_for(uint32_t languages);
+int idax_parser_selected_name(char** out);
+int idax_parser_set_arguments(const char* parser_name, const char* arguments);
+int idax_parser_parse_for(uint32_t languages, const char* input,
+                          int32_t input_kind, IdaxParserParseReport* out);
+int idax_parser_parse_with(const char* parser_name, const char* input,
+                           int32_t input_kind, IdaxParserParseReport* out);
+int idax_parser_parse_with_options(const char* parser_name, const char* input,
+                                   const IdaxParserParseOptions* options,
+                                   IdaxParserParseReport* out);
+int idax_parser_option(const char* parser_name, const char* option_name,
+                       char** out);
+int idax_parser_set_option(const char* parser_name, const char* option_name,
+                           const char* value);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Standard database directory trees (ida::directory)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct IdaxDirectoryEntry {
+    char* path;
+    char* name;
+    char* display_name;
+    char* attributes;
+    int entry_kind;
+} IdaxDirectoryEntry;
+
+typedef struct IdaxDirectoryBulkFailure {
+    size_t input_index;
+    char* path;
+    int operation_error;
+    char* message;
+} IdaxDirectoryBulkFailure;
+
+typedef struct IdaxDirectoryBulkReport {
+    char** affected_paths;
+    size_t affected_paths_count;
+    IdaxDirectoryBulkFailure* failures;
+    size_t failures_count;
+} IdaxDirectoryBulkReport;
+
+int idax_directory_open(int kind);
+int idax_directory_is_orderable(int kind, int* out);
+int idax_directory_current_directory(int kind, char** out);
+int idax_directory_change_directory(int kind, const char* path);
+int idax_directory_absolute_path(int kind, const char* path, char** out);
+int idax_directory_contains(int kind, const char* path, int* out);
+int idax_directory_entry(int kind, const char* path, IdaxDirectoryEntry* out);
+void idax_directory_entry_free(IdaxDirectoryEntry* entry);
+int idax_directory_children(int kind, const char* path,
+                            IdaxDirectoryEntry** out, size_t* count);
+int idax_directory_snapshot(int kind, const char* path,
+                            IdaxDirectoryEntry** out, size_t* count);
+int idax_directory_find_items(int kind, const char* pattern,
+                              IdaxDirectoryEntry** out, size_t* count);
+void idax_directory_entries_free(IdaxDirectoryEntry* entries, size_t count);
+int idax_directory_create_directory(int kind, const char* path);
+int idax_directory_remove_directory(int kind, const char* path);
+int idax_directory_link(int kind, const char* path);
+int idax_directory_unlink(int kind, const char* path);
+int idax_directory_rename(int kind, const char* from, const char* to);
+int idax_directory_fold_common_prefix(int kind, const char* path);
+int idax_directory_has_natural_order(int kind, const char* path, int* out);
+int idax_directory_set_natural_order(int kind, const char* path, int enable);
+int idax_directory_rank(int kind, const char* path, size_t* out);
+int idax_directory_change_rank(int kind, const char* path, ptrdiff_t delta);
+int idax_directory_move(int kind, const char* const* paths, size_t count,
+                        const char* destination, int has_rank,
+                        size_t destination_rank, IdaxDirectoryBulkReport* out);
+int idax_directory_remove(int kind, const char* const* paths, size_t count,
+                          IdaxDirectoryBulkReport* out);
+void idax_directory_bulk_report_free(IdaxDirectoryBulkReport* report);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Persistent registry (ida::registry)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+int idax_registry_open(const char* key);
+int idax_registry_child(const char* key, const char* name, char** out);
+int idax_registry_exists(const char* key, int* out);
+int idax_registry_child_keys(const char* key, char*** out, size_t* count);
+int idax_registry_value_names(const char* key, char*** out, size_t* count);
+void idax_registry_strings_free(char** values, size_t count);
+int idax_registry_contains(const char* key, const char* name, int* out);
+int idax_registry_value_kind(const char* key, const char* name,
+                             int* has_value, int* out);
+int idax_registry_read_string(const char* key, const char* name,
+                              int* has_value, char** out);
+int idax_registry_write_string(const char* key, const char* name,
+                               const char* value);
+int idax_registry_read_binary(const char* key, const char* name,
+                              int* has_value, uint8_t** out, size_t* count);
+int idax_registry_write_binary(const char* key, const char* name,
+                               const uint8_t* value, size_t count);
+int idax_registry_read_integer(const char* key, const char* name,
+                               int* has_value, int32_t* out);
+int idax_registry_write_integer(const char* key, const char* name,
+                                int32_t value);
+int idax_registry_read_boolean(const char* key, const char* name,
+                               int* has_value, int* out);
+int idax_registry_write_boolean(const char* key, const char* name, int value);
+int idax_registry_erase_value(const char* key, const char* name, int* out);
+int idax_registry_erase_key(const char* key, int* out);
+int idax_registry_erase_tree(const char* key, int* out);
+int idax_registry_read_string_list(const char* key, char*** out, size_t* count);
+int idax_registry_write_string_list(const char* key,
+                                    const char* const* values, size_t count);
+int idax_registry_update_string_list(const char* key, const char* add,
+                                     const char* remove, size_t max_records,
+                                     int ignore_case);
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Architecture-independent exception regions (ida::exception)
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct IdaxExceptionRange {
+    uint64_t start;
+    uint64_t end;
+} IdaxExceptionRange;
+
+typedef struct IdaxExceptionHandlerMetadata {
+    IdaxExceptionRange* regions;
+    size_t regions_count;
+    int has_stack_displacement;
+    int64_t stack_displacement;
+    int has_frame_register;
+    int frame_register;
+} IdaxExceptionHandlerMetadata;
+
+/** selector_kind: 0=typed, 1=catch-all, 2=cleanup. */
+typedef struct IdaxExceptionCatchHandler {
+    IdaxExceptionHandlerMetadata metadata;
+    int has_object_displacement;
+    int64_t object_displacement;
+    int selector_kind;
+    int64_t type_identifier;
+} IdaxExceptionCatchHandler;
+
+/** disposition is -1=continue execution, 0=continue search, 1=execute handler. */
+typedef struct IdaxExceptionSehHandler {
+    IdaxExceptionHandlerMetadata metadata;
+    IdaxExceptionRange* filter_regions;
+    size_t filter_regions_count;
+    int has_disposition;
+    int disposition;
+} IdaxExceptionSehHandler;
+
+/** handler_kind: 0=C++, 1=SEH. */
+typedef struct IdaxExceptionBlockDefinition {
+    IdaxExceptionRange* protected_regions;
+    size_t protected_regions_count;
+    int handler_kind;
+    IdaxExceptionCatchHandler* catches;
+    size_t catches_count;
+    IdaxExceptionSehHandler seh;
+} IdaxExceptionBlockDefinition;
+
+typedef struct IdaxExceptionBlock {
+    IdaxExceptionBlockDefinition definition;
+    uint8_t nesting_level;
+} IdaxExceptionBlock;
+
+int idax_exception_list(uint64_t start, uint64_t end,
+                        IdaxExceptionBlock** out, size_t* count);
+void idax_exception_blocks_free(IdaxExceptionBlock* blocks, size_t count);
+int idax_exception_remove(uint64_t start, uint64_t end);
+int idax_exception_add(const IdaxExceptionBlockDefinition* definition);
+int idax_exception_system_region_start(uint64_t address,
+                                       uint64_t* out, int* has_value);
+/** locations is the private shim transport for a safe semantic Rust set. */
+int idax_exception_contains(uint64_t address, uint32_t locations, int* out);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Address (ida::address)
@@ -230,8 +742,28 @@ typedef struct IdaxSegment {
     int      visible;
 } IdaxSegment;
 
+/** Owned semantic segment-register descriptor. */
+typedef struct IdaxSegmentRegisterDescriptor {
+    char* name;
+    size_t bit_width;
+    int is_code;
+    int is_data;
+} IdaxSegmentRegisterDescriptor;
+
+/** Copied half-open segment-register range; source uses the public enum order. */
+typedef struct IdaxSegmentRegisterRange {
+    uint64_t start;
+    uint64_t end;
+    int has_value;
+    uint64_t value;
+    int source;
+} IdaxSegmentRegisterRange;
+
 /** Free strings inside an IdaxSegment (does NOT free the struct itself). */
 void idax_segment_free(IdaxSegment* seg);
+void idax_segment_register_descriptors_free(
+    IdaxSegmentRegisterDescriptor* values, size_t count);
+void idax_segment_register_ranges_free(IdaxSegmentRegisterRange* values);
 
 int idax_segment_at(uint64_t ea, IdaxSegment* out);
 int idax_segment_by_name(const char* name, IdaxSegment* out);
@@ -255,6 +787,38 @@ int idax_segment_set_default_segment_register(uint64_t ea, int register_index,
                                               uint64_t value);
 int idax_segment_set_default_segment_register_for_all(int register_index,
                                                       uint64_t value);
+int idax_segment_registers(IdaxSegmentRegisterDescriptor** out, size_t* count);
+int idax_segment_register_value(uint64_t ea, const char* register_name,
+                                int* has_value, uint64_t* out);
+int idax_segment_default_register_value(uint64_t ea,
+                                        const char* register_name,
+                                        int* has_value, uint64_t* out);
+int idax_segment_register_range(uint64_t ea, const char* register_name,
+                                IdaxSegmentRegisterRange* out);
+int idax_segment_previous_register_range(
+    uint64_t ea, const char* register_name,
+    IdaxSegmentRegisterRange* out, int* has_value);
+int idax_segment_register_ranges(const char* register_name,
+                                 IdaxSegmentRegisterRange** out,
+                                 size_t* count);
+int idax_segment_register_range_index(uint64_t ea, const char* register_name,
+                                      size_t* out, int* has_value);
+int idax_segment_split_register_range(uint64_t ea, const char* register_name,
+                                      int has_value, uint64_t value,
+                                      int source);
+int idax_segment_remove_register_range(uint64_t ea,
+                                       const char* register_name);
+int idax_segment_set_default_segment_register_named(
+    uint64_t ea, const char* register_name, int has_value, uint64_t value);
+int idax_segment_set_default_segment_register_for_all_named(
+    const char* register_name, int has_value, uint64_t value);
+int idax_segment_set_default_data_segment(int has_value, uint64_t value);
+int idax_segment_set_register_at_next_code(
+    uint64_t search_start, uint64_t maximum, const char* register_name,
+    int has_value, uint64_t value);
+int idax_segment_copy_register_ranges(const char* destination_register,
+                                      const char* source_register,
+                                      int map_selectors_to_addresses);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Function (ida::function)
@@ -353,6 +917,9 @@ int idax_function_define_stack_variable(uint64_t function_ea,
                                         void* type);
 int idax_function_set_prototype(uint64_t function_ea, void* type);
 int idax_function_apply_decl(uint64_t function_ea, const char* c_decl);
+int idax_function_declaration(uint64_t function_ea,
+                              const char* name_override,
+                              char** out);
 int idax_function_add_register_variable(uint64_t function_ea,
                                         uint64_t range_start,
                                         uint64_t range_end,
@@ -392,10 +959,12 @@ typedef struct IdaxOperand {
     uint64_t value;
     uint64_t target_address;
     int      byte_width;
+    int32_t  encoded_value_byte_offset; /**< -1 when op_t::offb is absent */
+    int32_t  secondary_encoded_value_byte_offset; /**< -1 when op_t::offo is absent */
     char*    register_name;  /**< malloc'd */
     int      register_category; /**< ida::instruction::RegisterCategory as int */
-    int      is_read;        /**< processor-marked CF_USE for this operand index */
-    int      is_written;     /**< processor-marked CF_CHG for this operand index */
+    int      is_read;        /**< processor canonical feature marks operand used */
+    int      is_written;     /**< processor canonical feature marks operand changed */
 } IdaxOperand;
 
 /** Flat C representation of a decoded instruction. */
@@ -426,17 +995,24 @@ int idax_instruction_set_operand_float(uint64_t ea, int n);
 int idax_instruction_set_operand_format(uint64_t ea, int n, int format,
                                         uint64_t base);
 int idax_instruction_set_operand_offset(uint64_t ea, int n, uint64_t base);
+int idax_instruction_set_operand_enum(uint64_t ea, int n,
+                                      const char* enum_name, uint8_t serial);
+int idax_instruction_operand_enum(uint64_t ea, int n,
+                                  char** out_name, uint8_t* out_serial);
 int idax_instruction_set_operand_struct_offset_by_name(uint64_t ea, int n,
                                                        const char* structure_name,
                                                        int64_t delta);
 int idax_instruction_set_operand_struct_offset_by_id(uint64_t ea, int n,
                                                      uint64_t structure_id,
                                                      int64_t delta);
+int idax_instruction_ensure_operand_struct_member_offset(
+    uint64_t ea, int n, const char* structure_name,
+    size_t member_byte_offset, int64_t delta, int* out_added);
 int idax_instruction_set_operand_based_struct_offset(uint64_t ea, int n,
                                                      uint64_t operand_value,
                                                      uint64_t base);
 int idax_instruction_operand_struct_offset_path(uint64_t ea, int n,
-                                                uint64_t** out_ids,
+                                                char*** out_names,
                                                 size_t* out_count,
                                                 int64_t* out_delta);
 int idax_instruction_operand_struct_offset_path_names(uint64_t ea, int n,
@@ -481,6 +1057,38 @@ int idax_data_read_dword(uint64_t ea, uint32_t* out);
 int idax_data_read_qword(uint64_t ea, uint64_t* out);
 int idax_data_read_bytes(uint64_t ea, uint64_t count, uint8_t** out, size_t* out_len);
 int idax_data_read_string(uint64_t ea, uint64_t max_len, char** out);
+
+typedef struct IdaxDataStringListOptions {
+    int32_t* string_types;
+    size_t string_type_count;
+    int64_t minimum_length;
+    int only_7bit;
+    int ignore_instructions;
+    int display_only_existing_strings;
+} IdaxDataStringListOptions;
+
+typedef struct IdaxDataStringLiteral {
+    uint64_t address;
+    uint64_t byte_length;
+    int32_t string_type;
+    char* text;
+} IdaxDataStringLiteral;
+
+int idax_data_string_list_options(IdaxDataStringListOptions* out);
+void idax_data_string_list_options_free(IdaxDataStringListOptions* options);
+int idax_data_configure_string_list(const int32_t* string_types,
+                                    size_t string_type_count,
+                                    int64_t minimum_length,
+                                    int only_7bit,
+                                    int ignore_instructions,
+                                    int display_only_existing_strings);
+int idax_data_rebuild_string_list(void);
+int idax_data_clear_string_list(void);
+int idax_data_string_literals(int rebuild,
+                              IdaxDataStringLiteral** out,
+                              size_t* count);
+void idax_data_string_literals_free(IdaxDataStringLiteral* literals,
+                                    size_t count);
 
 typedef enum IdaxDataTypedValueKind {
     IDAX_DATA_TYPED_UNSIGNED_INTEGER = 0,
@@ -534,11 +1142,149 @@ int idax_data_define_word(uint64_t ea, uint64_t count);
 int idax_data_define_dword(uint64_t ea, uint64_t count);
 int idax_data_define_qword(uint64_t ea, uint64_t count);
 int idax_data_define_oword(uint64_t ea, uint64_t count);
+int idax_data_define_yword(uint64_t ea, uint64_t count);
+int idax_data_define_zword(uint64_t ea, uint64_t count);
+int idax_data_tbyte_element_size(uint64_t* out);
 int idax_data_define_tbyte(uint64_t ea, uint64_t count);
+int idax_data_packed_real_element_size(uint64_t* out);
+int idax_data_define_packed_real(uint64_t ea, uint64_t count);
 int idax_data_define_float(uint64_t ea, uint64_t count);
 int idax_data_define_double(uint64_t ea, uint64_t count);
 int idax_data_define_string(uint64_t ea, uint64_t length, int32_t string_type);
 int idax_data_define_struct(uint64_t ea, uint64_t length, uint64_t structure_id);
+
+typedef int (*IdaxCustomDataMayCreateCallback)(void* user_data,
+                                                uint64_t address,
+                                                uint64_t byte_length);
+typedef uint64_t (*IdaxCustomDataSizeCallback)(void* user_data,
+                                               uint64_t address,
+                                               uint64_t maximum_size);
+
+typedef struct IdaxCustomDataCallbackBuffer {
+    uint8_t* data;
+    size_t   length;
+} IdaxCustomDataCallbackBuffer;
+
+typedef void (*IdaxCustomDataReleaseBufferCallback)(
+    void* user_data, uint8_t* data, size_t length);
+typedef int (*IdaxCustomDataRenderCallback)(
+    void* user_data, const uint8_t* value, size_t value_length,
+    uint64_t address, int operand_index, uint16_t type_id,
+    IdaxCustomDataCallbackBuffer* output,
+    IdaxCustomDataCallbackBuffer* error);
+typedef int (*IdaxCustomDataScanCallback)(
+    void* user_data, const char* text, uint64_t address, int operand_index,
+    IdaxCustomDataCallbackBuffer* output,
+    IdaxCustomDataCallbackBuffer* error);
+typedef void (*IdaxCustomDataAnalyzeCallback)(
+    void* user_data, uint64_t address, int operand_index);
+
+typedef struct IdaxCustomDataTypeDefinition {
+    const char* name;
+    const char* menu_name;
+    const char* hotkey;
+    const char* assembler_keyword;
+    uint64_t value_size;
+    int allow_duplicates;
+    void* user_data;
+    IdaxCustomDataMayCreateCallback may_create_at;
+    IdaxCustomDataSizeCallback calculate_size;
+} IdaxCustomDataTypeDefinition;
+
+typedef struct IdaxCustomDataFormatDefinition {
+    const char* name;
+    const char* menu_name;
+    const char* hotkey;
+    uint64_t value_size;
+    int32_t text_width;
+    void* user_data;
+    IdaxCustomDataRenderCallback render;
+    IdaxCustomDataScanCallback scan;
+    IdaxCustomDataAnalyzeCallback analyze;
+    IdaxCustomDataReleaseBufferCallback release_buffer;
+} IdaxCustomDataFormatDefinition;
+
+typedef struct IdaxCustomDataTypeInfo {
+    uint16_t id;
+    char* name;
+    char* menu_name;
+    char* hotkey;
+    char* assembler_keyword;
+    uint64_t value_size;
+    int allow_duplicates;
+    int visible_in_menu;
+    int has_creation_filter;
+    int variable_size;
+} IdaxCustomDataTypeInfo;
+
+typedef struct IdaxCustomDataFormatInfo {
+    uint16_t id;
+    char* name;
+    char* menu_name;
+    char* hotkey;
+    uint64_t value_size;
+    int32_t text_width;
+    int visible_in_menu;
+    int can_render;
+    int can_scan;
+    int can_analyze;
+} IdaxCustomDataFormatInfo;
+
+typedef struct IdaxCustomDataItemInfo {
+    uint16_t type_id;
+    uint16_t format_id;
+    uint64_t byte_length;
+} IdaxCustomDataItemInfo;
+
+int idax_data_register_custom_type(const IdaxCustomDataTypeDefinition* definition,
+                                   uint16_t* out_id);
+int idax_data_unregister_custom_type(uint16_t type_id);
+int idax_data_custom_type(uint16_t type_id, IdaxCustomDataTypeInfo* out);
+int idax_data_find_custom_type(const char* name, uint16_t* out_id);
+int idax_data_custom_types(uint64_t minimum_size, uint64_t maximum_size,
+                           IdaxCustomDataTypeInfo** out, size_t* count);
+void idax_data_custom_type_info_free(IdaxCustomDataTypeInfo* info);
+void idax_data_custom_type_infos_free(IdaxCustomDataTypeInfo* infos,
+                                      size_t count);
+
+int idax_data_register_custom_format(
+    const IdaxCustomDataFormatDefinition* definition, uint16_t* out_id);
+int idax_data_unregister_custom_format(uint16_t format_id);
+int idax_data_custom_format(uint16_t format_id, IdaxCustomDataFormatInfo* out);
+int idax_data_find_custom_format(const char* name, uint16_t* out_id);
+int idax_data_custom_formats(uint16_t type_id,
+                             IdaxCustomDataFormatInfo** out, size_t* count);
+int idax_data_standard_custom_formats(IdaxCustomDataFormatInfo** out,
+                                      size_t* count);
+void idax_data_custom_format_info_free(IdaxCustomDataFormatInfo* info);
+void idax_data_custom_format_infos_free(IdaxCustomDataFormatInfo* infos,
+                                        size_t count);
+
+int idax_data_attach_custom_format(uint16_t type_id, uint16_t format_id);
+int idax_data_detach_custom_format(uint16_t type_id, uint16_t format_id);
+int idax_data_is_custom_format_attached(uint16_t type_id, uint16_t format_id,
+                                        int* out);
+int idax_data_attach_custom_format_to_standard_types(uint16_t format_id);
+int idax_data_detach_custom_format_from_standard_types(uint16_t format_id);
+int idax_data_is_custom_format_attached_to_standard_types(uint16_t format_id,
+                                                          int* out);
+
+int idax_data_custom_item_size(uint16_t type_id, uint64_t address,
+                               uint64_t maximum_size, uint64_t* out);
+int idax_data_define_custom(uint64_t address, uint64_t byte_length,
+                            uint16_t type_id, uint16_t format_id);
+int idax_data_define_custom_inferred(uint64_t address, uint16_t type_id,
+                                     uint16_t format_id,
+                                     uint64_t maximum_size);
+int idax_data_custom_at(uint64_t address, IdaxCustomDataItemInfo* out);
+int idax_data_render_custom(uint16_t format_id, const uint8_t* value,
+                            size_t value_length, uint64_t address,
+                            int operand_index, uint16_t type_id, char** out);
+int idax_data_scan_custom(uint16_t format_id, const char* text,
+                          uint64_t address, int operand_index,
+                          uint8_t** out, size_t* out_length);
+int idax_data_analyze_custom(uint16_t format_id, uint64_t address,
+                             int operand_index, uint16_t type_id);
 int idax_data_undefine(uint64_t ea, uint64_t count);
 
 int idax_data_find_binary_pattern(uint64_t start, uint64_t end,
@@ -554,6 +1300,7 @@ int idax_name_set(uint64_t ea, const char* name);
 int idax_name_force_set(uint64_t ea, const char* name);
 int idax_name_remove(uint64_t ea);
 int idax_name_demangled(uint64_t ea, int form, char** out);
+int idax_name_demangle(const char* symbol, int form, char** out);
 int idax_name_resolve(const char* name, uint64_t context, uint64_t* out);
 
 typedef struct IdaxNameEntry {
@@ -563,6 +1310,9 @@ typedef struct IdaxNameEntry {
     int      auto_generated;
 } IdaxNameEntry;
 
+int idax_name_all(uint64_t start, uint64_t end,
+                  int include_user_defined, int include_auto_generated,
+                  IdaxNameEntry** out, size_t* count);
 int idax_name_all_user_defined(uint64_t start, uint64_t end,
                                IdaxNameEntry** out, size_t* count);
 void idax_name_entries_free(IdaxNameEntry* entries, size_t count);
@@ -607,6 +1357,120 @@ int idax_xref_add_code(uint64_t from, uint64_t to, int type);
 int idax_xref_add_data(uint64_t from, uint64_t to, int type);
 int idax_xref_remove_code(uint64_t from, uint64_t to);
 int idax_xref_remove_data(uint64_t from, uint64_t to);
+
+/* Offset/reference semantics (ida::offset) */
+
+/** Owned reference-format identity returned by the shim. */
+typedef struct IdaxOffsetReferenceType {
+    int   kind;             /**< ida::offset::ReferenceKind as int */
+    char* custom_name;      /**< Empty for standard formats. */
+} IdaxOffsetReferenceType;
+
+/** Owned live reference-format descriptor returned by the shim. */
+typedef struct IdaxOffsetReferenceTypeDescriptor {
+    IdaxOffsetReferenceType type;
+    char* name;
+    char* description;
+    int   target_optional;
+} IdaxOffsetReferenceTypeDescriptor;
+
+/** Borrowed input representation of opaque reference metadata. */
+typedef struct IdaxOffsetReferenceInfoInput {
+    int         kind;
+    const char* custom_name;
+    int         has_target;
+    uint64_t    target;
+    int         has_base;
+    uint64_t    base;
+    int64_t     target_delta;
+    int         relative_virtual_address;
+    int         allow_past_end;
+    int         suppress_base_reference;
+    int         subtract_operand;
+    int         sign_extend_operand;
+    int         accept_zero;
+    int         reject_all_ones;
+    int         self_relative;
+    int         ignore_fixup;
+} IdaxOffsetReferenceInfoInput;
+
+/** Owned output representation of opaque reference metadata. */
+typedef struct IdaxOffsetReferenceInfo {
+    int      kind;
+    char*    custom_name;
+    int      has_target;
+    uint64_t target;
+    int      has_base;
+    uint64_t base;
+    int64_t  target_delta;
+    int      relative_virtual_address;
+    int      allow_past_end;
+    int      suppress_base_reference;
+    int      subtract_operand;
+    int      sign_extend_operand;
+    int      accept_zero;
+    int      reject_all_ones;
+    int      self_relative;
+    int      ignore_fixup;
+} IdaxOffsetReferenceInfo;
+
+typedef struct IdaxOffsetRenderedExpression {
+    char* text;
+    int   complexity;       /**< ida::offset::ExpressionComplexity as int */
+} IdaxOffsetRenderedExpression;
+
+typedef struct IdaxOffsetReferenceCalculation {
+    int      has_target;
+    uint64_t target;
+    int      has_base;
+    uint64_t base;
+} IdaxOffsetReferenceCalculation;
+
+int idax_offset_reference_types(
+    IdaxOffsetReferenceTypeDescriptor** out, size_t* count);
+void idax_offset_reference_types_free(
+    IdaxOffsetReferenceTypeDescriptor* values, size_t count);
+int idax_offset_default_reference_type(
+    uint64_t address, IdaxOffsetReferenceType* out);
+void idax_offset_reference_type_free(IdaxOffsetReferenceType* value);
+int idax_offset_reference_info(
+    uint64_t address, size_t operand_index, int outer,
+    IdaxOffsetReferenceInfo* out, int* has_info);
+void idax_offset_reference_info_free(IdaxOffsetReferenceInfo* value);
+int idax_offset_apply_reference(
+    uint64_t address, size_t operand_index, int outer,
+    const IdaxOffsetReferenceInfoInput* info);
+int idax_offset_remove_reference(
+    uint64_t address, size_t operand_index, int outer, int* removed);
+int idax_offset_render_stored_expression(
+    uint64_t address, size_t operand_index, int outer,
+    uint64_t from, int64_t operand_value,
+    int append_zero_field, int avoid_dummy_names,
+    IdaxOffsetRenderedExpression* out);
+int idax_offset_render_expression(
+    uint64_t address, size_t operand_index, int outer,
+    const IdaxOffsetReferenceInfoInput* info,
+    uint64_t from, int64_t operand_value,
+    int append_zero_field, int avoid_dummy_names,
+    IdaxOffsetRenderedExpression* out);
+void idax_offset_rendered_expression_free(
+    IdaxOffsetRenderedExpression* value);
+int idax_offset_possible_offset32_target(
+    uint64_t address, uint64_t* out, int* has_value);
+int idax_offset_calculate_offset_base(
+    uint64_t address, size_t operand_index, int outer,
+    uint64_t* out, int* has_value);
+int idax_offset_probable_base(
+    uint64_t address, uint64_t operand_value,
+    uint64_t* out, int* has_value);
+int idax_offset_calculate_reference(
+    uint64_t from, const IdaxOffsetReferenceInfoInput* info,
+    int64_t operand_value, IdaxOffsetReferenceCalculation* out);
+int idax_offset_add_operand_data_references(
+    uint64_t instruction_address, size_t operand_index, int outer,
+    int data_type, uint64_t* out);
+int idax_offset_calculate_base_value(
+    uint64_t target, uint64_t base, uint64_t* out, int* has_value);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Comment (ida::comment)
@@ -697,8 +1561,51 @@ typedef struct IdaxTypeMember {
     IdaxTypeHandle type;
     size_t         byte_offset;
     size_t         bit_size;
+    size_t         bit_offset;
+    size_t         storage_byte_width;
+    int            is_baseclass;
+    int            is_vftable;
+    int            is_gap;
+    int            is_bitfield;
     char*          comment;
 } IdaxTypeMember;
+
+typedef struct IdaxTypeFunctionArgument {
+    char*          name;
+    IdaxTypeHandle type;
+} IdaxTypeFunctionArgument;
+
+typedef struct IdaxTypeFunctionDetails {
+    IdaxTypeHandle            return_type;
+    IdaxTypeFunctionArgument* arguments;
+    size_t                    argument_count;
+    int                       calling_convention;
+    int                       variadic;
+} IdaxTypeFunctionDetails;
+
+typedef struct IdaxTypeEnumDetails {
+    size_t              byte_width;
+    int                 signed_values;
+    int                 radix;
+    IdaxTypeEnumMember* members;
+    size_t              member_count;
+} IdaxTypeEnumDetails;
+
+typedef struct IdaxTypeUdtDetails {
+    size_t          total_size;
+    int             is_union;
+    int             is_cpp_object;
+    int             is_vftable;
+    IdaxTypeMember* members;
+    size_t          member_count;
+} IdaxTypeUdtDetails;
+
+typedef struct IdaxTypePointerDetails {
+    IdaxTypeHandle pointee_type;
+    IdaxTypeHandle shifted_parent;
+    int32_t        shift_delta;
+    int            is_shifted;
+} IdaxTypePointerDetails;
 
 IdaxTypeHandle idax_type_void(void);
 IdaxTypeHandle idax_type_int8(void);
@@ -741,10 +1648,24 @@ int idax_type_is_struct(IdaxTypeHandle ti);
 int idax_type_is_union(IdaxTypeHandle ti);
 int idax_type_is_enum(IdaxTypeHandle ti);
 int idax_type_is_typedef(IdaxTypeHandle ti);
+int idax_type_is_bool(IdaxTypeHandle ti);
+int idax_type_is_char(IdaxTypeHandle ti);
+int idax_type_is_unsigned_char(IdaxTypeHandle ti);
+int idax_type_is_signed(IdaxTypeHandle ti);
+int idax_type_is_forward_declaration(IdaxTypeHandle ti);
+int idax_type_forward_declaration_kind(IdaxTypeHandle ti, int* out);
+int idax_type_kind(IdaxTypeHandle ti, int* out);
 
 int idax_type_size(IdaxTypeHandle ti, size_t* out);
 int idax_type_to_string(IdaxTypeHandle ti, char** out);
+int idax_type_name(IdaxTypeHandle ti, char** out);
+int idax_type_declaration(IdaxTypeHandle ti, const char* declarator_name, char** out);
 int idax_type_pointee_type(IdaxTypeHandle ti, IdaxTypeHandle* out);
+int idax_type_pointer_details(IdaxTypeHandle ti, IdaxTypePointerDetails** out);
+int idax_type_with_shifted_parent(IdaxTypeHandle ti,
+                                  IdaxTypeHandle parent,
+                                  int64_t byte_delta,
+                                  IdaxTypeHandle* out);
 int idax_type_array_element_type(IdaxTypeHandle ti, IdaxTypeHandle* out);
 int idax_type_array_length(IdaxTypeHandle ti, size_t* out);
 int idax_type_resolve_typedef(IdaxTypeHandle ti, IdaxTypeHandle* out);
@@ -752,23 +1673,51 @@ int idax_type_function_return_type(IdaxTypeHandle ti, IdaxTypeHandle* out);
 int idax_type_function_argument_types(IdaxTypeHandle ti,
                                       IdaxTypeHandle** out,
                                       size_t* count);
+int idax_type_with_function_argument_type(IdaxTypeHandle ti,
+                                          size_t index,
+                                          IdaxTypeHandle replacement,
+                                          IdaxTypeHandle* out);
+int idax_type_with_function_argument_name(IdaxTypeHandle ti,
+                                          size_t index,
+                                          const char* name,
+                                          IdaxTypeHandle* out);
+int idax_type_with_function_return_type(IdaxTypeHandle ti,
+                                        IdaxTypeHandle replacement,
+                                        IdaxTypeHandle* out);
+int idax_type_function_details(IdaxTypeHandle ti, IdaxTypeFunctionDetails** out);
 int idax_type_calling_convention(IdaxTypeHandle ti, int* out);
 int idax_type_is_variadic_function(IdaxTypeHandle ti, int* out);
 int idax_type_enum_members(IdaxTypeHandle ti, IdaxTypeEnumMember** out,
                            size_t* count);
+int idax_type_enum_details(IdaxTypeHandle ti, IdaxTypeEnumDetails** out);
 int idax_type_by_name(const char* name, IdaxTypeHandle* out);
 int idax_type_from_declaration(const char* c_decl, IdaxTypeHandle* out);
 
 int idax_type_apply(IdaxTypeHandle ti, uint64_t ea);
 int idax_type_save_as(IdaxTypeHandle ti, const char* name);
+int idax_type_replace_forward_declaration(IdaxTypeHandle ti,
+                                          const char* name,
+                                          IdaxTypeHandle* out);
 int idax_type_retrieve(uint64_t ea, IdaxTypeHandle* out);
 int idax_type_retrieve_operand(uint64_t ea, int operand_index, IdaxTypeHandle* out);
 int idax_type_remove(uint64_t ea);
 
 int idax_type_member_count(IdaxTypeHandle ti, size_t* out);
 int idax_type_members(IdaxTypeHandle ti, IdaxTypeMember** out, size_t* count);
+int idax_type_udt_details(IdaxTypeHandle ti, IdaxTypeUdtDetails** out);
+int idax_type_set_udt_semantics(IdaxTypeHandle ti,
+                                int is_cpp_object,
+                                int is_vftable);
 int idax_type_member_by_name(IdaxTypeHandle ti, const char* name, IdaxTypeMember* out);
 int idax_type_member_by_offset(IdaxTypeHandle ti, size_t byte_offset, IdaxTypeMember* out);
+int idax_type_member_references(IdaxTypeHandle ti,
+                                size_t byte_offset,
+                                uint64_t** out,
+                                size_t* count);
+int idax_type_ensure_member_reference(IdaxTypeHandle ti,
+                                      size_t byte_offset,
+                                      uint64_t source_address,
+                                      int* created);
 int idax_type_add_member(IdaxTypeHandle ti, const char* name,
                          IdaxTypeHandle member_type, size_t byte_offset);
 
@@ -790,6 +1739,10 @@ void idax_type_handle_array_free(IdaxTypeHandle* handles, size_t count);
 void idax_type_enum_members_free(IdaxTypeEnumMember* members, size_t count);
 void idax_type_member_free(IdaxTypeMember* member);
 void idax_type_members_free(IdaxTypeMember* members, size_t count);
+void idax_type_function_details_free(IdaxTypeFunctionDetails* details);
+void idax_type_enum_details_free(IdaxTypeEnumDetails* details);
+void idax_type_udt_details_free(IdaxTypeUdtDetails* details);
+void idax_type_pointer_details_free(IdaxTypePointerDetails* details);
 
 /* ═══════════════════════════════════════════════════════════════════════════
  * Entry (ida::entry)
@@ -865,6 +1818,16 @@ typedef struct IdaxEvent {
     const char* old_name;
     uint32_t old_value;
     int      repeatable;
+    uint64_t size;
+    int      operand_index;
+    int      line_index;
+    const char* text;
+    int      will_disable_range;
+    int      address_mapping_changed;
+    int      extra_comment_placement;
+    int      local_type_change;
+    uint32_t type_ordinal;
+    const char* type_name;
 } IdaxEvent;
 
 /**
@@ -905,6 +1868,24 @@ int idax_event_on_byte_patched(IdaxEventBytePatchedCallback callback,
                                void* context, uint64_t* token_out);
 int idax_event_on_comment_changed(IdaxEventCommentChangedCallback callback,
                                   void* context, uint64_t* token_out);
+int idax_event_on_segment_moved(IdaxEventExCallback callback,
+                                void* context, uint64_t* token_out);
+int idax_event_on_function_updated(IdaxEventExCallback callback,
+                                   void* context, uint64_t* token_out);
+int idax_event_on_item_type_changed(IdaxEventExCallback callback,
+                                    void* context, uint64_t* token_out);
+int idax_event_on_operand_type_changed(IdaxEventExCallback callback,
+                                       void* context, uint64_t* token_out);
+int idax_event_on_code_created(IdaxEventExCallback callback,
+                               void* context, uint64_t* token_out);
+int idax_event_on_data_created(IdaxEventExCallback callback,
+                               void* context, uint64_t* token_out);
+int idax_event_on_items_destroyed(IdaxEventExCallback callback,
+                                  void* context, uint64_t* token_out);
+int idax_event_on_extra_comment_changed(IdaxEventExCallback callback,
+                                        void* context, uint64_t* token_out);
+int idax_event_on_local_types_changed(IdaxEventExCallback callback,
+                                      void* context, uint64_t* token_out);
 int idax_event_on_event(IdaxEventExCallback callback,
                         void* context, uint64_t* token_out);
 int idax_event_on_event_filtered(IdaxEventFilterCallback filter,
@@ -961,6 +1942,7 @@ int idax_plugin_register_action_ex(const char* id, const char* label,
                                    IdaxActionEnabledCheckEx enabled_check_ex,
                                    void* enabled_context);
 int idax_plugin_unregister_action(const char* action_id);
+int idax_plugin_activate_action(const char* action_id);
 int idax_plugin_attach_to_menu(const char* menu_path, const char* action_id);
 int idax_plugin_attach_to_toolbar(const char* toolbar, const char* action_id);
 int idax_plugin_attach_to_popup(const char* widget_title, const char* action_id);
@@ -1644,6 +2626,10 @@ int idax_decompiler_on_refresh_pseudocode(
     IdaxDecompilerPseudocodeCallback callback,
     void* context,
     IdaxDecompilerToken* token_out);
+int idax_decompiler_on_switch_pseudocode(
+    IdaxDecompilerPseudocodeCallback callback,
+    void* context,
+    IdaxDecompilerToken* token_out);
 int idax_decompiler_on_curpos_changed(
     IdaxDecompilerCursorPositionCallback callback,
     void* context,
@@ -1688,6 +2674,36 @@ typedef struct IdaxLocalVariable {
                                    variables; -1 otherwise. On ARM64 x<n> = 8 + 8*n. */
 } IdaxLocalVariable;
 
+typedef enum IdaxDecompilerCommentPositionKind {
+    IDAX_DECOMPILER_COMMENT_DEFAULT = 0,
+    IDAX_DECOMPILER_COMMENT_ARGUMENT = 1,
+    IDAX_DECOMPILER_COMMENT_PARENTHESIS_OPEN = 2,
+    IDAX_DECOMPILER_COMMENT_ASSEMBLY = 3,
+    IDAX_DECOMPILER_COMMENT_ELSE_LINE = 4,
+    IDAX_DECOMPILER_COMMENT_DO_LINE = 5,
+    IDAX_DECOMPILER_COMMENT_SEMICOLON = 6,
+    IDAX_DECOMPILER_COMMENT_OPEN_BRACE = 7,
+    IDAX_DECOMPILER_COMMENT_CLOSE_BRACE = 8,
+    IDAX_DECOMPILER_COMMENT_PARENTHESIS_CLOSE = 9,
+    IDAX_DECOMPILER_COMMENT_LABEL_COLON = 10,
+    IDAX_DECOMPILER_COMMENT_BLOCK_BEFORE = 11,
+    IDAX_DECOMPILER_COMMENT_BLOCK_AFTER = 12,
+    IDAX_DECOMPILER_COMMENT_TRY_LINE = 13,
+    IDAX_DECOMPILER_COMMENT_SWITCH_CASE = 14
+} IdaxDecompilerCommentPositionKind;
+
+/** Semantic comment position. value is argument index or switch-case value only. */
+typedef struct IdaxDecompilerCommentPosition {
+    int     kind;
+    int64_t value;
+} IdaxDecompilerCommentPosition;
+
+typedef struct IdaxPseudocodeComment {
+    uint64_t address;
+    IdaxDecompilerCommentPosition position;
+    char* text;
+} IdaxPseudocodeComment;
+
 void idax_local_variable_free(IdaxLocalVariable* var);
 void idax_decompiled_variables_free(IdaxLocalVariable* vars, size_t count);
 
@@ -1714,10 +2730,17 @@ int idax_lvar_snapshot_saved_variable_count(IdaxLvarSnapshotHandle snapshot,
                                             size_t* out);
 
 int idax_decompiled_set_comment(IdaxDecompiledHandle handle, uint64_t ea,
-                                const char* text, int position);
+                                const char* text,
+                                const IdaxDecompilerCommentPosition* position);
 int idax_decompiled_get_comment(IdaxDecompiledHandle handle, uint64_t ea,
-                                int position, char** out);
+                                const IdaxDecompilerCommentPosition* position,
+                                char** out);
+int idax_decompiled_comments(IdaxDecompiledHandle handle,
+                             IdaxPseudocodeComment** out, size_t* count);
+void idax_decompiled_comments_free(IdaxPseudocodeComment* comments, size_t count);
 int idax_decompiled_save_comments(IdaxDecompiledHandle handle);
+int idax_decompiled_has_orphan_comments(IdaxDecompiledHandle handle, int* out);
+int idax_decompiled_remove_orphan_comments(IdaxDecompiledHandle handle, int* out);
 
 int idax_decompiled_line_to_address(IdaxDecompiledHandle handle,
                                     int line_number, uint64_t* out);
@@ -1884,11 +2907,17 @@ typedef struct IdaxMicrocodeOperand {
     int64_t stack_offset;
     char* helper_name;
     int block_index;
+    int processor_register_id;
     struct IdaxMicrocodeInstruction* nested_instruction;
     uint64_t unsigned_immediate;
     int64_t signed_immediate;
     int byte_width;
     int mark_user_defined_type;
+    struct IdaxMicrocodeOperand* referenced_operand;
+    struct IdaxMicrocodeOperand* call_arguments;
+    size_t call_argument_count;
+    uint64_t call_target;
+    char* text;
 } IdaxMicrocodeOperand;
 
 typedef struct IdaxMicrocodeInstruction {
@@ -1897,9 +2926,71 @@ typedef struct IdaxMicrocodeInstruction {
     IdaxMicrocodeOperand right;
     IdaxMicrocodeOperand destination;
     int floating_point_instruction;
+    int modifies_destination;
+    uint64_t address;
+    char* text;
 } IdaxMicrocodeInstruction;
 
 void idax_microcode_instruction_free(IdaxMicrocodeInstruction* instruction);
+
+typedef struct IdaxMicrocodeLocationPart {
+    int kind;
+    int register_id;
+    int second_register_id;
+    int register_offset;
+    int64_t register_relative_offset;
+    int64_t stack_offset;
+    uint64_t static_address;
+    int byte_offset;
+    int byte_size;
+} IdaxMicrocodeLocationPart;
+
+typedef struct IdaxMicrocodeValueLocation {
+    int kind;
+    int register_id;
+    int second_register_id;
+    int register_offset;
+    int64_t register_relative_offset;
+    int64_t stack_offset;
+    uint64_t static_address;
+    IdaxMicrocodeLocationPart* scattered_parts;
+    size_t scattered_part_count;
+} IdaxMicrocodeValueLocation;
+
+typedef struct IdaxMicrocodeFunctionArgument {
+    char* name;
+    IdaxMicrocodeValueLocation location;
+    int byte_width;
+} IdaxMicrocodeFunctionArgument;
+
+typedef struct IdaxMicrocodeBlock {
+    int index;
+    uint64_t start_address;
+    uint64_t end_address;
+    int* predecessors;
+    size_t predecessor_count;
+    int* successors;
+    size_t successor_count;
+    IdaxMicrocodeInstruction* instructions;
+    size_t instruction_count;
+} IdaxMicrocodeBlock;
+
+typedef struct IdaxMicrocodeFunction {
+    uint64_t entry_address;
+    int maturity;
+    IdaxMicrocodeFunctionArgument* arguments;
+    size_t argument_count;
+    int has_return_location;
+    IdaxMicrocodeValueLocation return_location;
+    IdaxMicrocodeBlock* blocks;
+    size_t block_count;
+} IdaxMicrocodeFunction;
+
+int idax_decompiler_generate_microcode(uint64_t function_address,
+                                       int maturity,
+                                       int analyze_calls,
+                                       IdaxMicrocodeFunction** out);
+void idax_decompiler_microcode_function_free(IdaxMicrocodeFunction* function);
 
 int idax_decompiler_microcode_context_address(const void* mctx, uint64_t* out);
 int idax_decompiler_microcode_context_instruction_type(const void* mctx, int* out);
@@ -1914,6 +3005,7 @@ int idax_decompiler_microcode_context_instruction_at_index(const void* mctx,
 int idax_decompiler_microcode_context_has_last_emitted_instruction(const void* mctx, int* out);
 int idax_decompiler_microcode_context_last_emitted_instruction(const void* mctx,
                                                                IdaxMicrocodeInstruction* out);
+
 
 /* DecompiledFunction extended operations */
 int idax_decompiled_retype_variable(void* handle, const char* variable_name,
@@ -2169,6 +3261,7 @@ int idax_ui_ask_long(const char* prompt, int64_t default_value, int64_t* out);
 int idax_ui_jump_to(uint64_t address);
 int idax_ui_screen_address(uint64_t* out);
 int idax_ui_selection(uint64_t* start_out, uint64_t* end_out);
+int idax_ui_current_widget(void** widget_out, uint64_t* widget_id_out);
 
 void idax_ui_refresh_all_views(void);
 int idax_ui_user_directory(char** out);
@@ -2407,6 +3500,18 @@ int idax_ui_unsubscribe(uint64_t token);
 /* ═══════════════════════════════════════════════════════════════════════════
  * Lines (ida::lines)
  * ═══════════════════════════════════════════════════════════════════════════ */
+
+typedef struct IdaxLinesSourceFile {
+    char* filename;
+    uint64_t start;
+    uint64_t end;
+} IdaxLinesSourceFile;
+
+int idax_lines_add_source_file(uint64_t start, uint64_t end,
+                               const char* filename);
+int idax_lines_source_file_at(uint64_t address, IdaxLinesSourceFile* out);
+void idax_lines_source_file_free(IdaxLinesSourceFile* source_file);
+int idax_lines_remove_source_file(uint64_t address);
 
 int idax_lines_colstr(const char* text, uint8_t color, char** out);
 int idax_lines_tag_remove(const char* tagged_text, char** out);

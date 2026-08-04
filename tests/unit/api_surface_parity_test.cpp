@@ -131,6 +131,27 @@ void check_data_surface() {
     (void)static_cast<ReadTypedFn>(&ida::data::read_typed);
     (void)static_cast<WriteTypedFn>(&ida::data::write_typed);
 
+    ida::data::StringListOptions string_options;
+    (void)string_options.string_types;
+    (void)string_options.minimum_length;
+    (void)string_options.only_7bit;
+    (void)string_options.ignore_instructions;
+    (void)string_options.display_only_existing_strings;
+    ida::data::StringLiteral string_literal;
+    (void)string_literal.address;
+    (void)string_literal.byte_length;
+    (void)string_literal.string_type;
+    (void)string_literal.text;
+    using StringOptionsFn = ida::Result<ida::data::StringListOptions>(*)();
+    using ConfigureStringsFn = ida::Status(*)(const ida::data::StringListOptions&);
+    using StringListLifecycleFn = ida::Status(*)();
+    using StringLiteralsFn = ida::Result<std::vector<ida::data::StringLiteral>>(*)(bool);
+    (void)static_cast<StringOptionsFn>(&ida::data::string_list_options);
+    (void)static_cast<ConfigureStringsFn>(&ida::data::configure_string_list);
+    (void)static_cast<StringListLifecycleFn>(&ida::data::rebuild_string_list);
+    (void)static_cast<StringListLifecycleFn>(&ida::data::clear_string_list);
+    (void)static_cast<StringLiteralsFn>(&ida::data::string_literals);
+
     using PatchByteFn = ida::Status(*)(ida::Address, std::uint8_t);
     (void)static_cast<PatchByteFn>(&ida::data::patch_byte);
 
@@ -139,22 +160,121 @@ void check_data_surface() {
     (void)static_cast<RevertPatchFn>(&ida::data::revert_patch);
     (void)static_cast<RevertPatchesFn>(&ida::data::revert_patches);
 
-    using DefineOwordFn = ida::Status(*)(ida::Address, ida::AddressSize);
-    using DefineTbyteFn = ida::Status(*)(ida::Address, ida::AddressSize);
-    using DefineFloatFn = ida::Status(*)(ida::Address, ida::AddressSize);
-    using DefineDoubleFn = ida::Status(*)(ida::Address, ida::AddressSize);
+    using DefineFixedFn = ida::Status(*)(ida::Address, ida::AddressSize);
+    using ElementSizeFn = ida::Result<ida::AddressSize>(*)();
     using DefineStructFn = ida::Status(*)(ida::Address, ida::AddressSize, std::uint64_t);
-    (void)static_cast<DefineOwordFn>(&ida::data::define_oword);
-    (void)static_cast<DefineTbyteFn>(&ida::data::define_tbyte);
-    (void)static_cast<DefineFloatFn>(&ida::data::define_float);
-    (void)static_cast<DefineDoubleFn>(&ida::data::define_double);
+    (void)static_cast<DefineFixedFn>(&ida::data::define_byte);
+    (void)static_cast<DefineFixedFn>(&ida::data::define_word);
+    (void)static_cast<DefineFixedFn>(&ida::data::define_dword);
+    (void)static_cast<DefineFixedFn>(&ida::data::define_qword);
+    (void)static_cast<DefineFixedFn>(&ida::data::define_oword);
+    (void)static_cast<DefineFixedFn>(&ida::data::define_yword);
+    (void)static_cast<DefineFixedFn>(&ida::data::define_zword);
+    (void)static_cast<ElementSizeFn>(&ida::data::tbyte_element_size);
+    (void)static_cast<DefineFixedFn>(&ida::data::define_tbyte);
+    (void)static_cast<ElementSizeFn>(&ida::data::packed_real_element_size);
+    (void)static_cast<DefineFixedFn>(&ida::data::define_packed_real);
+    (void)static_cast<DefineFixedFn>(&ida::data::define_float);
+    (void)static_cast<DefineFixedFn>(&ida::data::define_double);
     (void)static_cast<DefineStructFn>(&ida::data::define_struct);
+
+    using TypeId = ida::data::CustomDataTypeId;
+    using FormatId = ida::data::CustomDataFormatId;
+    static_assert(sizeof(TypeId) == sizeof(std::uint16_t));
+    static_assert(sizeof(FormatId) == sizeof(std::uint16_t));
+    static_assert(std::is_copy_constructible_v<ida::data::CustomDataTypeInfo>);
+    static_assert(std::is_copy_constructible_v<ida::data::CustomDataFormatInfo>);
+
+    using RegisterTypeFn = ida::Result<TypeId>(*)(
+        const ida::data::CustomDataTypeDefinition&);
+    using UnregisterTypeFn = ida::Status(*)(TypeId);
+    using TypeInfoFn = ida::Result<ida::data::CustomDataTypeInfo>(*)(TypeId);
+    using FindTypeFn = ida::Result<TypeId>(*)(std::string_view);
+    using TypesFn = ida::Result<std::vector<ida::data::CustomDataTypeInfo>>(*)(
+        ida::AddressSize, ida::AddressSize);
+    using RegisterFormatFn = ida::Result<FormatId>(*)(
+        const ida::data::CustomDataFormatDefinition&);
+    using UnregisterFormatFn = ida::Status(*)(FormatId);
+    using FormatInfoFn = ida::Result<ida::data::CustomDataFormatInfo>(*)(FormatId);
+    using FindFormatFn = ida::Result<FormatId>(*)(std::string_view);
+    using FormatsFn =
+        ida::Result<std::vector<ida::data::CustomDataFormatInfo>>(*)(TypeId);
+    using StandardFormatsFn =
+        ida::Result<std::vector<ida::data::CustomDataFormatInfo>>(*)();
+    using AttachmentFn = ida::Status(*)(TypeId, FormatId);
+    using AttachmentQueryFn = ida::Result<bool>(*)(TypeId, FormatId);
+    using StandardAttachmentFn = ida::Status(*)(FormatId);
+    using StandardAttachmentQueryFn = ida::Result<bool>(*)(FormatId);
+    using CustomSizeFn = ida::Result<ida::AddressSize>(*)(
+        TypeId, ida::Address, ida::AddressSize);
+    using DefineCustomFn = ida::Status(*)(
+        ida::Address, ida::AddressSize, TypeId, FormatId);
+    using DefineCustomInferredFn = ida::Status(*)(
+        ida::Address, TypeId, FormatId, ida::AddressSize);
+    using CustomAtFn = ida::Result<ida::data::CustomDataItemInfo>(*)(ida::Address);
+    using RenderCustomFn = ida::Result<std::string>(*)(
+        FormatId, std::span<const std::uint8_t>,
+        const ida::data::CustomDataFormatContext&);
+    using ScanCustomFn = ida::Result<std::vector<std::uint8_t>>(*)(
+        FormatId, std::string_view,
+        const ida::data::CustomDataFormatContext&);
+    using AnalyzeCustomFn = ida::Status(*)(
+        FormatId, const ida::data::CustomDataFormatContext&);
+    (void)static_cast<RegisterTypeFn>(&ida::data::register_custom_data_type);
+    (void)static_cast<UnregisterTypeFn>(&ida::data::unregister_custom_data_type);
+    (void)static_cast<TypeInfoFn>(&ida::data::custom_data_type);
+    (void)static_cast<FindTypeFn>(&ida::data::find_custom_data_type);
+    (void)static_cast<TypesFn>(&ida::data::custom_data_types);
+    (void)static_cast<RegisterFormatFn>(&ida::data::register_custom_data_format);
+    (void)static_cast<UnregisterFormatFn>(&ida::data::unregister_custom_data_format);
+    (void)static_cast<FormatInfoFn>(&ida::data::custom_data_format);
+    (void)static_cast<FindFormatFn>(&ida::data::find_custom_data_format);
+    (void)static_cast<FormatsFn>(&ida::data::custom_data_formats);
+    (void)static_cast<StandardFormatsFn>(&ida::data::standard_custom_data_formats);
+    (void)static_cast<AttachmentFn>(&ida::data::attach_custom_data_format);
+    (void)static_cast<AttachmentFn>(&ida::data::detach_custom_data_format);
+    (void)static_cast<AttachmentQueryFn>(
+        &ida::data::is_custom_data_format_attached);
+    (void)static_cast<StandardAttachmentFn>(
+        &ida::data::attach_custom_data_format_to_standard_types);
+    (void)static_cast<StandardAttachmentFn>(
+        &ida::data::detach_custom_data_format_from_standard_types);
+    (void)static_cast<StandardAttachmentQueryFn>(
+        &ida::data::is_custom_data_format_attached_to_standard_types);
+    (void)static_cast<CustomSizeFn>(&ida::data::custom_data_item_size);
+    (void)static_cast<DefineCustomFn>(&ida::data::define_custom);
+    (void)static_cast<DefineCustomInferredFn>(
+        &ida::data::define_custom_inferred);
+    (void)static_cast<CustomAtFn>(&ida::data::custom_data_at);
+    (void)static_cast<RenderCustomFn>(&ida::data::render_custom_data);
+    (void)static_cast<ScanCustomFn>(&ida::data::scan_custom_data);
+    (void)static_cast<AnalyzeCustomFn>(&ida::data::analyze_custom_data);
+}
+
+// ─── ida::lines ─────────────────────────────────────────────────────────
+
+void check_lines_surface() {
+    ida::lines::SourceFile source;
+    (void)source.filename;
+    (void)source.range;
+
+    using AddSourceFileFn = ida::Status(*)(const ida::address::Range&,
+                                            std::string_view);
+    using SourceFileAtFn = ida::Result<ida::lines::SourceFile>(*)(ida::Address);
+    using RemoveSourceFileFn = ida::Status(*)(ida::Address);
+    (void)static_cast<AddSourceFileFn>(&ida::lines::add_source_file);
+    (void)static_cast<SourceFileAtFn>(&ida::lines::source_file_at);
+    (void)static_cast<RemoveSourceFileFn>(&ida::lines::remove_source_file);
 }
 
 // ─── ida::segment ───────────────────────────────────────────────────────
 
 void check_segment_surface() {
     static_assert(std::is_copy_constructible_v<ida::segment::Segment>);
+    static_assert(std::is_copy_constructible_v<
+                  ida::segment::SegmentRegisterDescriptor>);
+    static_assert(std::is_copy_constructible_v<
+                  ida::segment::SegmentRegisterRange>);
     (void)ida::segment::Type::Normal;
     (void)ida::segment::Type::Code;
     (void)ida::segment::Type::Data;
@@ -162,6 +282,20 @@ void check_segment_surface() {
 
     ida::segment::Permissions p{};
     (void)p.read; (void)p.write; (void)p.execute;
+    ida::segment::SegmentRegisterDescriptor descriptor{};
+    (void)descriptor.name;
+    (void)descriptor.bit_width;
+    (void)descriptor.is_code;
+    (void)descriptor.is_data;
+    ida::segment::SegmentRegisterRange register_range{};
+    (void)register_range.start;
+    (void)register_range.end;
+    (void)register_range.value;
+    (void)register_range.source;
+    (void)ida::segment::SegmentRegisterSource::Inherited;
+    (void)ida::segment::SegmentRegisterSource::User;
+    (void)ida::segment::SegmentRegisterSource::Analysis;
+    (void)ida::segment::SegmentRegisterSource::AnalysisAtSegmentStart;
 
     using SegmentCommentFn = ida::Result<std::string>(*)(ida::Address, bool);
     using SegmentSetCommentFn = ida::Status(*)(ida::Address, std::string_view, bool);
@@ -169,6 +303,34 @@ void check_segment_surface() {
     using SegmentMoveFn = ida::Status(*)(ida::Address, ida::Address);
     using SegmentSetDefaultRegisterFn = ida::Status(*)(ida::Address, int, std::uint64_t);
     using SegmentSetDefaultRegisterAllFn = ida::Status(*)(int, std::uint64_t);
+    using SegmentRegistersFn = ida::Result<std::vector<
+        ida::segment::SegmentRegisterDescriptor>>(*)();
+    using SegmentRegisterValueFn = ida::Result<std::optional<std::uint64_t>>(*)(
+        ida::Address, std::string_view);
+    using SegmentRegisterRangeFn = ida::Result<
+        ida::segment::SegmentRegisterRange>(*)(ida::Address, std::string_view);
+    using SegmentRegisterPreviousRangeFn = ida::Result<std::optional<
+        ida::segment::SegmentRegisterRange>>(*)(ida::Address, std::string_view);
+    using SegmentRegisterRangesFn = ida::Result<std::vector<
+        ida::segment::SegmentRegisterRange>>(*)(std::string_view);
+    using SegmentRegisterRangeIndexFn = ida::Result<std::optional<std::size_t>>(*)(
+        ida::Address, std::string_view);
+    using SegmentRegisterSplitFn = ida::Status(*)(
+        ida::Address, std::string_view, std::optional<std::uint64_t>,
+        ida::segment::SegmentRegisterSource);
+    using SegmentRegisterRemoveFn = ida::Status(*)(
+        ida::Address, std::string_view);
+    using SegmentRegisterSetDefaultNamedFn = ida::Status(*)(
+        ida::Address, std::string_view, std::optional<std::uint64_t>);
+    using SegmentRegisterSetDefaultAllNamedFn = ida::Status(*)(
+        std::string_view, std::optional<std::uint64_t>);
+    using SegmentRegisterSetDataDefaultFn = ida::Status(*)(
+        std::optional<std::uint64_t>);
+    using SegmentRegisterNextCodeFn = ida::Status(*)(
+        ida::Address, ida::Address, std::string_view,
+        std::optional<std::uint64_t>);
+    using SegmentRegisterCopyFn = ida::Status(*)(
+        std::string_view, std::string_view, bool);
     using SegmentFirstFn = ida::Result<ida::segment::Segment>(*)();
     using SegmentLastFn = ida::Result<ida::segment::Segment>(*)();
     using SegmentNextFn = ida::Result<ida::segment::Segment>(*)(ida::Address);
@@ -180,6 +342,20 @@ void check_segment_surface() {
     (void)static_cast<SegmentMoveFn>(&ida::segment::move);
     (void)static_cast<SegmentSetDefaultRegisterFn>(&ida::segment::set_default_segment_register);
     (void)static_cast<SegmentSetDefaultRegisterAllFn>(&ida::segment::set_default_segment_register_for_all);
+    (void)static_cast<SegmentRegistersFn>(&ida::segment::segment_registers);
+    (void)static_cast<SegmentRegisterValueFn>(&ida::segment::segment_register_value);
+    (void)static_cast<SegmentRegisterValueFn>(&ida::segment::default_segment_register_value);
+    (void)static_cast<SegmentRegisterRangeFn>(&ida::segment::segment_register_range);
+    (void)static_cast<SegmentRegisterPreviousRangeFn>(&ida::segment::previous_segment_register_range);
+    (void)static_cast<SegmentRegisterRangesFn>(&ida::segment::segment_register_ranges);
+    (void)static_cast<SegmentRegisterRangeIndexFn>(&ida::segment::segment_register_range_index);
+    (void)static_cast<SegmentRegisterSplitFn>(&ida::segment::split_segment_register_range);
+    (void)static_cast<SegmentRegisterRemoveFn>(&ida::segment::remove_segment_register_range);
+    (void)static_cast<SegmentRegisterSetDefaultNamedFn>(&ida::segment::set_default_segment_register);
+    (void)static_cast<SegmentRegisterSetDefaultAllNamedFn>(&ida::segment::set_default_segment_register_for_all);
+    (void)static_cast<SegmentRegisterSetDataDefaultFn>(&ida::segment::set_default_data_segment);
+    (void)static_cast<SegmentRegisterNextCodeFn>(&ida::segment::set_segment_register_at_next_code);
+    (void)static_cast<SegmentRegisterCopyFn>(&ida::segment::copy_segment_register_ranges);
     (void)static_cast<SegmentFirstFn>(&ida::segment::first);
     (void)static_cast<SegmentLastFn>(&ida::segment::last);
     (void)static_cast<SegmentNextFn>(&ida::segment::next);
@@ -236,8 +412,18 @@ void check_instruction_surface() {
     (void)ida::instruction::RegisterCategory::Mask;
 
     ida::instruction::StructOffsetPath stroff_path;
-    (void)stroff_path.structure_ids;
+    (void)stroff_path.structure_name;
+    (void)stroff_path.member_names;
     (void)stroff_path.delta;
+    ida::instruction::OperandEnum operand_enum;
+    (void)operand_enum.name;
+    (void)operand_enum.serial;
+
+    ida::instruction::Operand operand;
+    (void)operand.is_read();
+    (void)operand.is_written();
+    (void)operand.encoded_value_byte_offset();
+    (void)operand.secondary_encoded_value_byte_offset();
 
     ida::instruction::Operand operand;
     (void)operand.is_read();
@@ -251,10 +437,12 @@ void check_instruction_surface() {
                                                                       int,
                                                                       std::string_view,
                                                                       ida::AddressDelta);
-    using InstructionSetOperandStructOffsetByIdFn = ida::Status(*)(ida::Address,
-                                                                    int,
-                                                                    std::uint64_t,
-                                                                    ida::AddressDelta);
+    using InstructionEnsureOperandStructMemberOffsetFn = ida::Result<bool>(*)(
+        ida::Address,
+        int,
+        std::string_view,
+        std::size_t,
+        ida::AddressDelta);
     using InstructionSetOperandBasedStructOffsetFn = ida::Status(*)(ida::Address,
                                                                      int,
                                                                      ida::Address,
@@ -262,7 +450,13 @@ void check_instruction_surface() {
     using InstructionStructOffsetPathFn = ida::Result<ida::instruction::StructOffsetPath>(*)(ida::Address,
                                                                                                int);
     using InstructionStructOffsetPathNamesFn = ida::Result<std::vector<std::string>>(*)(ida::Address,
-                                                                                          int);
+                                                                                        int);
+    using InstructionSetOperandEnumFn = ida::Status(*)(ida::Address,
+                                                       int,
+                                                       std::string_view,
+                                                       std::uint8_t);
+    using InstructionOperandEnumFn = ida::Result<ida::instruction::OperandEnum>(*)(ida::Address,
+                                                                                    int);
     using InstructionOperandTextFn = ida::Result<std::string>(*)(ida::Address, int);
     using InstructionOperandByteWidthFn = ida::Result<int>(*)(ida::Address, int);
     using InstructionOperandRegisterNameFn = ida::Result<std::string>(*)(ida::Address, int);
@@ -270,10 +464,12 @@ void check_instruction_surface() {
     using InstructionPredicateFn = bool(*)(ida::Address);
 
     (void)static_cast<InstructionSetOperandFormatFn>(&ida::instruction::set_operand_format);
+    (void)static_cast<InstructionSetOperandEnumFn>(&ida::instruction::set_operand_enum);
+    (void)static_cast<InstructionOperandEnumFn>(&ida::instruction::operand_enum);
     (void)static_cast<InstructionSetOperandStructOffsetByNameFn>(
         &ida::instruction::set_operand_struct_offset);
-    (void)static_cast<InstructionSetOperandStructOffsetByIdFn>(
-        &ida::instruction::set_operand_struct_offset);
+    (void)static_cast<InstructionEnsureOperandStructMemberOffsetFn>(
+        &ida::instruction::ensure_operand_struct_member_offset);
     (void)static_cast<InstructionSetOperandBasedStructOffsetFn>(
         &ida::instruction::set_operand_based_struct_offset);
     (void)static_cast<InstructionStructOffsetPathFn>(
@@ -310,12 +506,16 @@ void check_name_surface() {
     using NamePredicateFn = bool(*)(ida::Address);
     using IsValidIdentifierFn = ida::Result<bool>(*)(std::string_view);
     using SanitizeIdentifierFn = ida::Result<std::string>(*)(std::string_view);
+    using DemangledAddressFn = ida::Result<std::string>(*)(ida::Address, ida::name::DemangleForm);
+    using DemangledSymbolFn = ida::Result<std::string>(*)(std::string_view, ida::name::DemangleForm);
     using NameAllFn = ida::Result<std::vector<ida::name::Entry>>(*)(const ida::name::ListOptions&);
     using NameAllUserDefinedFn = ida::Result<std::vector<ida::name::Entry>>(*)(ida::Address, ida::Address);
 
     (void)static_cast<NamePredicateFn>(&ida::name::is_user_defined);
     (void)static_cast<IsValidIdentifierFn>(&ida::name::is_valid_identifier);
     (void)static_cast<SanitizeIdentifierFn>(&ida::name::sanitize_identifier);
+    (void)static_cast<DemangledAddressFn>(&ida::name::demangled);
+    (void)static_cast<DemangledSymbolFn>(&ida::name::demangled);
     (void)static_cast<NameAllFn>(&ida::name::all);
     (void)static_cast<NameAllUserDefinedFn>(&ida::name::all_user_defined);
 }
@@ -356,6 +556,98 @@ void check_xref_surface() {
     (void)static_cast<RefTypePredicateFn>(&ida::xref::is_data_write);
 }
 
+// ─── ida::offset ────────────────────────────────────────────────────────
+
+void check_offset_surface() {
+    using namespace ida::offset;
+    (void)ReferenceKind::Offset8;
+    (void)ReferenceKind::Offset16;
+    (void)ReferenceKind::Offset32;
+    (void)ReferenceKind::Offset64;
+    (void)ReferenceKind::Low8;
+    (void)ReferenceKind::Low16;
+    (void)ReferenceKind::Low32;
+    (void)ReferenceKind::High8;
+    (void)ReferenceKind::High16;
+    (void)ReferenceKind::High32;
+    (void)ReferenceKind::Custom;
+
+    ReferenceType type;
+    (void)type.kind;
+    (void)type.custom_name;
+    ReferenceTypeDescriptor descriptor;
+    (void)descriptor.type;
+    (void)descriptor.name;
+    (void)descriptor.description;
+    (void)descriptor.target_optional;
+    OperandLocation location;
+    (void)location.index;
+    (void)location.outer;
+    ReferenceOptions options;
+    (void)options.relative_virtual_address;
+    (void)options.allow_past_end;
+    (void)options.suppress_base_reference;
+    (void)options.subtract_operand;
+    (void)options.sign_extend_operand;
+    (void)options.accept_zero;
+    (void)options.reject_all_ones;
+    (void)options.self_relative;
+    (void)options.ignore_fixup;
+    ReferenceInfo info;
+    (void)info.type;
+    (void)info.target;
+    (void)info.base;
+    (void)info.target_delta;
+    (void)info.options;
+    RenderOptions render_options;
+    (void)render_options.append_zero_field;
+    (void)render_options.avoid_dummy_names;
+    RenderedExpression rendered;
+    (void)rendered.text;
+    (void)rendered.complexity;
+    ReferenceCalculation calculation;
+    (void)calculation.target;
+    (void)calculation.base;
+
+    using TypesFn = ida::Result<std::vector<ReferenceTypeDescriptor>>(*)();
+    using DefaultFn = ida::Result<ReferenceType>(*)(ida::Address);
+    using QueryFn = ida::Result<std::optional<ReferenceInfo>>(*)(
+        ida::Address, OperandLocation);
+    using ApplyFn = ida::Status(*)(
+        ida::Address, OperandLocation, const ReferenceInfo&);
+    using RemoveFn = ida::Result<bool>(*)(ida::Address, OperandLocation);
+    using StoredRenderFn = ida::Result<RenderedExpression>(*)(
+        ida::Address, OperandLocation, ida::Address, ida::AddressDelta,
+        RenderOptions);
+    using ExplicitRenderFn = ida::Result<RenderedExpression>(*)(
+        ida::Address, OperandLocation, const ReferenceInfo&, ida::Address,
+        ida::AddressDelta, RenderOptions);
+    using CandidateFn = ida::Result<std::optional<ida::Address>>(*)(ida::Address);
+    using BaseFn = ida::Result<std::optional<ida::Address>>(*)(
+        ida::Address, OperandLocation);
+    using ProbableFn = ida::Result<std::optional<ida::Address>>(*)(
+        ida::Address, std::uint64_t);
+    using CalculateFn = ida::Result<ReferenceCalculation>(*)(
+        ida::Address, const ReferenceInfo&, ida::AddressDelta);
+    using AddRefsFn = ida::Result<ida::Address>(*)(
+        ida::Address, OperandLocation, ida::xref::DataType);
+    using BaseValueFn = ida::Result<std::optional<ida::Address>>(*)(
+        ida::Address, ida::Address);
+    (void)static_cast<TypesFn>(&reference_types);
+    (void)static_cast<DefaultFn>(&default_reference_type);
+    (void)static_cast<QueryFn>(&reference_info);
+    (void)static_cast<ApplyFn>(&apply_reference);
+    (void)static_cast<RemoveFn>(&remove_reference);
+    (void)static_cast<StoredRenderFn>(&render_stored_expression);
+    (void)static_cast<ExplicitRenderFn>(&render_expression);
+    (void)static_cast<CandidateFn>(&possible_offset32_target);
+    (void)static_cast<BaseFn>(&calculate_offset_base);
+    (void)static_cast<ProbableFn>(&probable_base);
+    (void)static_cast<CalculateFn>(&calculate_reference);
+    (void)static_cast<AddRefsFn>(&add_operand_data_references);
+    (void)static_cast<BaseValueFn>(&calculate_base_value);
+}
+
 // ─── ida::comment ───────────────────────────────────────────────────────
 
 void check_comment_surface() {
@@ -379,13 +671,29 @@ void check_type_surface() {
     static_assert(std::is_copy_constructible_v<ida::type::TypeInfo>);
 
     ida::type::Member m;
-    (void)m.name; (void)m.byte_offset; (void)m.bit_size;
+    (void)m.name; (void)m.byte_offset; (void)m.bit_offset; (void)m.bit_size;
+    (void)m.storage_byte_width;
+    (void)m.is_baseclass; (void)m.is_vftable; (void)m.is_gap; (void)m.is_bitfield;
 
     (void)ida::type::CallingConvention::Cdecl;
     (void)ida::type::CallingConvention::Stdcall;
+    (void)ida::type::TypeKind::SignedInteger;
+    (void)ida::type::EnumRadix::Hexadecimal;
 
     ida::type::EnumMember em;
     (void)em.name; (void)em.value; (void)em.comment;
+    ida::type::FunctionArgument fa;
+    (void)fa.name; (void)fa.type;
+    ida::type::FunctionDetails fd;
+    (void)fd.return_type; (void)fd.arguments; (void)fd.calling_convention; (void)fd.variadic;
+    ida::type::UdtDetails ud;
+    (void)ud.total_size; (void)ud.is_union; (void)ud.is_cpp_object; (void)ud.is_vftable; (void)ud.members;
+    ida::type::PointerDetails pd;
+    (void)pd.pointee_type; (void)pd.shifted_parent; (void)pd.shift_delta; (void)pd.is_shifted;
+    using SetUdtSemanticsFn = ida::Status(ida::type::TypeInfo::*)(bool, bool);
+    (void)static_cast<SetUdtSemanticsFn>(&ida::type::TypeInfo::set_udt_semantics);
+    ida::type::EnumDetails ed;
+    (void)ed.byte_width; (void)ed.signed_values; (void)ed.radix; (void)ed.members;
 
     using FunctionTypeFactoryFn = ida::Result<ida::type::TypeInfo>(*)(
         const ida::type::TypeInfo&,
@@ -398,11 +706,35 @@ void check_type_surface() {
         bool);
     using FunctionReturnTypeFn = ida::Result<ida::type::TypeInfo>(ida::type::TypeInfo::*)() const;
     using FunctionArgsFn = ida::Result<std::vector<ida::type::TypeInfo>>(ida::type::TypeInfo::*)() const;
+    using FunctionDetailsFn = ida::Result<ida::type::FunctionDetails>(ida::type::TypeInfo::*)() const;
+    using WithFunctionArgumentTypeFn = ida::Result<ida::type::TypeInfo>(
+        ida::type::TypeInfo::*)(std::size_t, const ida::type::TypeInfo&) const;
+    using WithFunctionArgumentNameFn = ida::Result<ida::type::TypeInfo>(
+        ida::type::TypeInfo::*)(std::size_t, std::string_view) const;
+    using WithFunctionReturnTypeFn = ida::Result<ida::type::TypeInfo>(
+        ida::type::TypeInfo::*)(const ida::type::TypeInfo&) const;
     using CallingConventionFn = ida::Result<ida::type::CallingConvention>(ida::type::TypeInfo::*)() const;
     using VariadicFn = ida::Result<bool>(ida::type::TypeInfo::*)() const;
     using EnumMembersFn = ida::Result<std::vector<ida::type::EnumMember>>(ida::type::TypeInfo::*)() const;
+    using EnumDetailsFn = ida::Result<ida::type::EnumDetails>(ida::type::TypeInfo::*)() const;
+    using UdtDetailsFn = ida::Result<ida::type::UdtDetails>(ida::type::TypeInfo::*)() const;
+    using TypeNameFn = ida::Result<std::string>(ida::type::TypeInfo::*)() const;
+    using TypeDeclarationFn = ida::Result<std::string>(ida::type::TypeInfo::*)(std::string_view) const;
+    using TypeKindFn = ida::type::TypeKind(ida::type::TypeInfo::*)() const;
     using IsTypedefFn = bool(ida::type::TypeInfo::*)() const;
+    using IsForwardDeclarationFn = bool(ida::type::TypeInfo::*)() const;
+    using ForwardDeclarationKindFn = ida::type::TypeKind(
+        ida::type::TypeInfo::*)() const;
+    using ReplaceForwardDeclarationFn = ida::Result<ida::type::TypeInfo>(
+        ida::type::TypeInfo::*)(std::string_view) const;
+    using MemberReferencesFn = ida::Result<std::vector<ida::Address>>(
+        ida::type::TypeInfo::*)(std::size_t) const;
+    using EnsureMemberReferenceFn = ida::Result<bool>(
+        ida::type::TypeInfo::*)(std::size_t, ida::Address) const;
     using PointeeTypeFn = ida::Result<ida::type::TypeInfo>(ida::type::TypeInfo::*)() const;
+    using PointerDetailsFn = ida::Result<ida::type::PointerDetails>(ida::type::TypeInfo::*)() const;
+    using WithShiftedParentFn = ida::Result<ida::type::TypeInfo>(
+        ida::type::TypeInfo::*)(const ida::type::TypeInfo&, std::int64_t) const;
     using ArrayElementTypeFn = ida::Result<ida::type::TypeInfo>(ida::type::TypeInfo::*)() const;
     using ArrayLengthFn = ida::Result<std::size_t>(ida::type::TypeInfo::*)() const;
     using ResolveTypedefFn = ida::Result<ida::type::TypeInfo>(ida::type::TypeInfo::*)() const;
@@ -428,11 +760,35 @@ void check_type_surface() {
     (void)static_cast<EnumTypeFactoryFn>(&ida::type::TypeInfo::enum_type);
     (void)static_cast<FunctionReturnTypeFn>(&ida::type::TypeInfo::function_return_type);
     (void)static_cast<FunctionArgsFn>(&ida::type::TypeInfo::function_argument_types);
+    (void)static_cast<FunctionDetailsFn>(&ida::type::TypeInfo::function_details);
+    (void)static_cast<WithFunctionArgumentTypeFn>(
+        &ida::type::TypeInfo::with_function_argument_type);
+    (void)static_cast<WithFunctionArgumentNameFn>(
+        &ida::type::TypeInfo::with_function_argument_name);
+    (void)static_cast<WithFunctionReturnTypeFn>(
+        &ida::type::TypeInfo::with_function_return_type);
     (void)static_cast<CallingConventionFn>(&ida::type::TypeInfo::calling_convention);
     (void)static_cast<VariadicFn>(&ida::type::TypeInfo::is_variadic_function);
     (void)static_cast<EnumMembersFn>(&ida::type::TypeInfo::enum_members);
+    (void)static_cast<EnumDetailsFn>(&ida::type::TypeInfo::enum_details);
+    (void)static_cast<UdtDetailsFn>(&ida::type::TypeInfo::udt_details);
+    (void)static_cast<TypeNameFn>(&ida::type::TypeInfo::name);
+    (void)static_cast<TypeDeclarationFn>(&ida::type::TypeInfo::declaration);
+    (void)static_cast<TypeKindFn>(&ida::type::TypeInfo::kind);
     (void)static_cast<IsTypedefFn>(&ida::type::TypeInfo::is_typedef);
+    (void)static_cast<IsForwardDeclarationFn>(
+        &ida::type::TypeInfo::is_forward_declaration);
+    (void)static_cast<ForwardDeclarationKindFn>(
+        &ida::type::TypeInfo::forward_declaration_kind);
+    (void)static_cast<ReplaceForwardDeclarationFn>(
+        &ida::type::TypeInfo::replace_forward_declaration);
+    (void)static_cast<MemberReferencesFn>(
+        &ida::type::TypeInfo::member_references);
+    (void)static_cast<EnsureMemberReferenceFn>(
+        &ida::type::TypeInfo::ensure_member_reference);
     (void)static_cast<PointeeTypeFn>(&ida::type::TypeInfo::pointee_type);
+    (void)static_cast<PointerDetailsFn>(&ida::type::TypeInfo::pointer_details);
+    (void)static_cast<WithShiftedParentFn>(&ida::type::TypeInfo::with_shifted_parent);
     (void)static_cast<ArrayElementTypeFn>(&ida::type::TypeInfo::array_element_type);
     (void)static_cast<ArrayLengthFn>(&ida::type::TypeInfo::array_length);
     (void)static_cast<ResolveTypedefFn>(&ida::type::TypeInfo::resolve_typedef);
@@ -553,6 +909,363 @@ void check_analysis_surface() {
     (void)static_cast<AnalysisScheduleRangeFn>(&ida::analysis::revert_decisions);
 }
 
+// ─── ida::undo ──────────────────────────────────────────────────────────
+
+void check_undo_surface() {
+    using CreatePointFn = ida::Result<bool>(*)(std::string_view, std::string_view);
+    using LabelFn = ida::Result<std::optional<std::string>>(*)();
+    using PerformFn = ida::Result<bool>(*)();
+
+    (void)static_cast<CreatePointFn>(&ida::undo::create_point);
+    (void)static_cast<LabelFn>(&ida::undo::undo_action_label);
+    (void)static_cast<LabelFn>(&ida::undo::redo_action_label);
+    (void)static_cast<PerformFn>(&ida::undo::perform_undo);
+    (void)static_cast<PerformFn>(&ida::undo::perform_redo);
+}
+
+// ─── ida::problem ───────────────────────────────────────────────────────
+
+void check_problem_surface() {
+    using DescriptionFn = ida::Result<std::optional<std::string>>(*)(
+        ida::problem::Kind, ida::Address);
+    using RememberFn = ida::Status(*)(
+        ida::problem::Kind, ida::Address,
+        std::optional<std::string_view>);
+    using NextFn = ida::Result<std::optional<ida::Address>>(*)(
+        ida::problem::Kind, ida::Address);
+    using BooleanFn = ida::Result<bool>(*)(
+        ida::problem::Kind, ida::Address);
+    using NameFn = ida::Result<std::string>(*)(ida::problem::Kind, bool);
+
+    (void)static_cast<DescriptionFn>(&ida::problem::description);
+    (void)static_cast<RememberFn>(&ida::problem::remember);
+    (void)static_cast<NextFn>(&ida::problem::next);
+    (void)static_cast<BooleanFn>(&ida::problem::remove);
+    (void)static_cast<NameFn>(&ida::problem::name);
+    (void)static_cast<BooleanFn>(&ida::problem::contains);
+
+    static_assert(static_cast<int>(ida::problem::Kind::MissingOffsetBase) == 1);
+    static_assert(static_cast<int>(ida::problem::Kind::MissingName) == 2);
+    static_assert(static_cast<int>(ida::problem::Kind::MissingForcedOperand) == 3);
+    static_assert(static_cast<int>(ida::problem::Kind::MissingComment) == 4);
+    static_assert(static_cast<int>(ida::problem::Kind::MissingReferences) == 5);
+    static_assert(static_cast<int>(ida::problem::Kind::IgnoredJumpTable) == 6);
+    static_assert(static_cast<int>(ida::problem::Kind::DisassemblyFailure) == 7);
+    static_assert(static_cast<int>(ida::problem::Kind::AlreadyItemHead) == 8);
+    static_assert(static_cast<int>(ida::problem::Kind::FlowBeyondLimits) == 9);
+    static_assert(static_cast<int>(ida::problem::Kind::TooManyLines) == 10);
+    static_assert(static_cast<int>(ida::problem::Kind::StackTraceFailure) == 11);
+    static_assert(static_cast<int>(ida::problem::Kind::Attention) == 12);
+    static_assert(static_cast<int>(ida::problem::Kind::AnalysisDecision) == 13);
+    static_assert(static_cast<int>(ida::problem::Kind::RolledBackDecision) == 14);
+    static_assert(static_cast<int>(ida::problem::Kind::FlairCollision) == 15);
+    static_assert(static_cast<int>(ida::problem::Kind::FlairIndecision) == 16);
+}
+
+// ─── ida::bookmark ──────────────────────────────────────────────────────
+
+void check_bookmark_surface() {
+    using AllFn = ida::Result<std::vector<ida::bookmark::Bookmark>>(*)();
+    using AtAddressFn = ida::Result<std::optional<ida::bookmark::Bookmark>>(*)(
+        ida::Address);
+    using AtSlotFn = ida::Result<std::optional<ida::bookmark::Bookmark>>(*)(
+        std::uint32_t);
+    using SetFn = ida::Result<ida::bookmark::Bookmark>(*)(
+        ida::Address, std::string_view, std::optional<std::uint32_t>);
+    using RemoveAddressFn = ida::Result<bool>(*)(ida::Address);
+    using RemoveSlotFn = ida::Result<bool>(*)(std::uint32_t);
+
+    (void)static_cast<AllFn>(&ida::bookmark::all);
+    (void)static_cast<AtAddressFn>(&ida::bookmark::at);
+    (void)static_cast<AtSlotFn>(&ida::bookmark::at_slot);
+    (void)static_cast<SetFn>(&ida::bookmark::set);
+    (void)static_cast<RemoveAddressFn>(&ida::bookmark::remove);
+    (void)static_cast<RemoveSlotFn>(&ida::bookmark::remove_slot);
+
+    static_assert(ida::bookmark::MaxSlots == 1024);
+    static_assert(std::is_same_v<
+        decltype(ida::bookmark::Bookmark::slot), std::uint32_t>);
+}
+
+// ─── ida::navigation ────────────────────────────────────────────────────
+
+void check_navigation_surface() {
+    using OpenFn = ida::Result<ida::navigation::History>(*)(
+        std::string_view, const ida::navigation::Entry&);
+
+    (void)static_cast<OpenFn>(&ida::navigation::History::open);
+    static_assert(std::is_copy_constructible_v<ida::navigation::History>);
+    static_assert(std::is_copy_assignable_v<ida::navigation::History>);
+    static_assert(std::is_same_v<
+        decltype(ida::navigation::Entry::address), ida::Address>);
+    static_assert(std::is_same_v<
+        decltype(std::declval<const ida::navigation::History&>().entries()),
+        ida::Result<std::vector<ida::navigation::Entry>>>);
+    static_assert(std::is_same_v<
+        decltype(std::declval<const ida::navigation::History&>().back()),
+        ida::Result<std::optional<ida::navigation::Entry>>>);
+    static_assert(std::is_same_v<
+        decltype(std::declval<const ida::navigation::History&>()
+                     .transfer_channel_to(
+                         std::declval<const ida::navigation::History&>(),
+                         std::string_view{}, true)),
+        ida::Status>);
+}
+
+// ─── ida::exception ─────────────────────────────────────────────────────
+
+void check_exception_surface() {
+    using ListFn = ida::Result<std::vector<ida::exception::Block>>(*)(
+        ida::address::Range);
+    using RemoveFn = ida::Status(*)(ida::address::Range);
+    using AddFn = ida::Status(*)(const ida::exception::BlockDefinition&);
+    using SystemFn = ida::Result<std::optional<ida::Address>>(*)(ida::Address);
+    using ContainsFn = ida::Result<bool>(*)(
+        ida::Address, ida::exception::Location);
+
+    (void)static_cast<ListFn>(&ida::exception::list);
+    (void)static_cast<RemoveFn>(&ida::exception::remove);
+    (void)static_cast<AddFn>(&ida::exception::add);
+    (void)static_cast<SystemFn>(&ida::exception::system_region_start);
+    (void)static_cast<ContainsFn>(&ida::exception::contains);
+
+    static_assert(std::is_same_v<
+        ida::exception::HandlerSet,
+        std::variant<ida::exception::CppHandlers, ida::exception::SehHandler>>);
+    static_assert(static_cast<std::uint32_t>(
+        ida::exception::Location::Any) == 0x1f);
+    static_assert(static_cast<std::int8_t>(
+        ida::exception::SehDisposition::ContinueExecution) == -1);
+}
+
+// ─── ida::parser ────────────────────────────────────────────────────────
+
+void check_parser_surface() {
+    using SelectFn = ida::Status(*)(std::optional<std::string_view>);
+    using SelectForFn = ida::Status(*)(ida::parser::Language);
+    using SelectedNameFn = ida::Result<std::optional<std::string>>(*)();
+    using SetArgumentsFn = ida::Status(*)(std::string_view, std::string_view);
+    using ParseForFn = ida::Result<ida::parser::ParseReport>(*)(
+        ida::parser::Language, std::string_view, ida::parser::InputKind);
+    using ParseWithFn = ida::Result<ida::parser::ParseReport>(*)(
+        std::string_view, std::string_view, ida::parser::InputKind);
+    using ParseWithOptionsFn = ida::Result<ida::parser::ParseReport>(*)(
+        std::string_view, std::string_view, const ida::parser::ParseOptions&);
+    using OptionFn = ida::Result<std::string>(*)(
+        std::string_view, std::string_view);
+    using SetOptionFn = ida::Status(*)(
+        std::string_view, std::string_view, std::string_view);
+
+    (void)static_cast<SelectFn>(&ida::parser::select);
+    (void)static_cast<SelectForFn>(&ida::parser::select_for);
+    (void)static_cast<SelectedNameFn>(&ida::parser::selected_name);
+    (void)static_cast<SetArgumentsFn>(&ida::parser::set_arguments);
+    (void)static_cast<ParseForFn>(&ida::parser::parse_for);
+    (void)static_cast<ParseWithFn>(&ida::parser::parse_with);
+    (void)static_cast<ParseWithOptionsFn>(&ida::parser::parse_with_options);
+    (void)static_cast<OptionFn>(&ida::parser::option);
+    (void)static_cast<SetOptionFn>(&ida::parser::set_option);
+
+    static_assert(static_cast<std::uint32_t>(ida::parser::Language::C) == 0x01);
+    static_assert(static_cast<std::uint32_t>(ida::parser::Language::Cpp) == 0x02);
+    static_assert(static_cast<std::uint32_t>(ida::parser::Language::ObjectiveC) == 0x04);
+    static_assert(static_cast<std::uint32_t>(ida::parser::Language::Swift) == 0x08);
+    static_assert(static_cast<std::uint32_t>(ida::parser::Language::Go) == 0x10);
+    static_assert(static_cast<std::uint32_t>(ida::parser::Language::ObjectiveCpp) == 0x20);
+    static_assert(static_cast<std::uint32_t>(
+        ida::parser::Language::C | ida::parser::Language::Cpp) == 0x03);
+
+    ida::parser::ParseOptions options;
+    (void)options.input_kind;
+    (void)options.pack_alignment;
+    ida::parser::ParseReport report;
+    (void)report.error_count;
+    (void)report.ok();
+}
+
+// ─── ida::script ────────────────────────────────────────────────────────
+
+void check_script_surface() {
+    static_assert(std::is_copy_constructible_v<ida::script::Value>);
+    static_assert(std::is_move_constructible_v<ida::script::Value>);
+    static_assert(std::is_copy_assignable_v<ida::script::Value>);
+    static_assert(std::is_move_assignable_v<ida::script::Value>);
+
+    ida::script::Value integer(std::int64_t{42});
+    ida::script::Value text(std::string_view("text"));
+    (void)integer;
+    (void)text;
+    (void)ida::script::ValueKind::Integer;
+    (void)ida::script::ValueKind::Reference;
+    (void)ida::script::DereferenceMode::Once;
+
+    ida::script::ResolvedName resolved{"constant", 1};
+    ida::script::CompileOptions compile_options;
+    compile_options.resolved_names.push_back(resolved);
+    ida::script::FileCompileOptions file_options;
+    ida::script::CompilationResult compilation;
+    ida::script::ExecutionResult execution;
+    ida::script::IntegerExecutionResult integer_execution;
+    (void)file_options;
+    (void)compilation;
+    (void)execution;
+    (void)integer_execution;
+
+    using EvaluateFn = ida::Result<ida::script::ExecutionResult>(*)(
+        std::string_view, ida::Address);
+    using CompileFileFn = ida::Result<ida::script::CompilationResult>(*)(
+        std::string_view, const ida::script::FileCompileOptions&);
+    using CompileTextFn = ida::Result<ida::script::CompilationResult>(*)(
+        std::string_view, const ida::script::CompileOptions&);
+    using CompileSnippetFn = ida::Result<ida::script::CompilationResult>(*)(
+        std::string_view, std::string_view,
+        const ida::script::CompileOptions&);
+    using CallFn = ida::Result<ida::script::ExecutionResult>(*)(
+        std::string_view, const std::vector<ida::script::Value>&,
+        const std::vector<ida::script::ResolvedName>&);
+    using ExecuteScriptFn = ida::Result<ida::script::ExecutionResult>(*)(
+        std::string_view, std::string_view,
+        const std::vector<ida::script::Value>&,
+        const ida::script::FileCompileOptions&);
+
+    (void)static_cast<EvaluateFn>(&ida::script::evaluate);
+    (void)static_cast<EvaluateFn>(&ida::script::evaluate_idc);
+    (void)static_cast<CompileFileFn>(&ida::script::compile_file);
+    (void)static_cast<CompileTextFn>(&ida::script::compile_text);
+    (void)static_cast<CompileSnippetFn>(&ida::script::compile_snippet);
+    (void)static_cast<CallFn>(&ida::script::call);
+    (void)static_cast<ExecuteScriptFn>(&ida::script::execute_script);
+}
+
+// ─── ida::directory ─────────────────────────────────────────────────────
+
+void check_directory_surface() {
+    using Tree = ida::directory::Tree;
+    static_assert(std::is_copy_constructible_v<Tree>);
+    static_assert(!std::is_default_constructible_v<Tree>);
+    static_assert(static_cast<std::uint8_t>(ida::directory::Kind::LocalTypes) == 0);
+    static_assert(static_cast<std::uint8_t>(ida::directory::Kind::Snippets) == 7);
+    static_assert(static_cast<std::uint8_t>(
+        ida::directory::OperationError::AlreadyExists) == 1);
+    static_assert(static_cast<std::uint8_t>(
+        ida::directory::OperationError::SdkFailure) == 10);
+
+    (void)&Tree::open;
+    (void)&Tree::kind;
+    (void)&Tree::is_orderable;
+    (void)&Tree::current_directory;
+    (void)&Tree::change_directory;
+    (void)&Tree::absolute_path;
+    (void)&Tree::contains;
+    (void)&Tree::entry;
+    (void)&Tree::children;
+    (void)&Tree::snapshot;
+    (void)&Tree::find_items;
+    (void)&Tree::create_directory;
+    (void)&Tree::remove_directory;
+    (void)&Tree::link;
+    (void)&Tree::unlink;
+    (void)&Tree::rename;
+    (void)&Tree::fold_common_prefix;
+    (void)&Tree::has_natural_order;
+    (void)&Tree::set_natural_order;
+    (void)&Tree::rank;
+    (void)&Tree::change_rank;
+    (void)&Tree::move;
+    (void)&Tree::remove;
+
+    ida::directory::Entry entry;
+    (void)entry.path;
+    (void)entry.name;
+    (void)entry.display_name;
+    (void)entry.attributes;
+    (void)entry.kind;
+    (void)entry.is_directory();
+    ida::directory::BulkFailure failure;
+    (void)failure.input_index;
+    (void)failure.path;
+    (void)failure.error;
+    (void)failure.message;
+    ida::directory::BulkReport report;
+    (void)report.affected_paths;
+    (void)report.failures;
+    (void)report.ok();
+}
+
+// ─── ida::registry ──────────────────────────────────────────────────────
+
+void check_registry_surface() {
+    using Store = ida::registry::Store;
+    static_assert(std::is_copy_constructible_v<Store>);
+    static_assert(!std::is_default_constructible_v<Store>);
+    static_assert(static_cast<std::uint8_t>(ida::registry::ValueKind::String) == 1);
+    static_assert(static_cast<std::uint8_t>(ida::registry::ValueKind::Binary) == 3);
+    static_assert(static_cast<std::uint8_t>(ida::registry::ValueKind::Integer) == 4);
+    (void)&Store::open;
+    (void)&Store::key;
+    (void)&Store::child;
+    (void)&Store::exists;
+    (void)&Store::child_keys;
+    (void)&Store::value_names;
+    (void)&Store::contains;
+    (void)&Store::value_kind;
+    (void)&Store::read_string;
+    (void)&Store::write_string;
+    (void)&Store::read_binary;
+    (void)&Store::write_binary;
+    (void)&Store::read_integer;
+    (void)&Store::write_integer;
+    (void)&Store::read_boolean;
+    (void)&Store::write_boolean;
+    (void)&Store::erase_value;
+    (void)&Store::erase_key;
+    (void)&Store::erase_tree;
+    (void)&Store::read_string_list;
+    (void)&Store::write_string_list;
+    (void)&Store::update_string_list;
+    ida::registry::StringListUpdate update;
+    (void)update.add;
+    (void)update.remove;
+    (void)update.max_records;
+    (void)update.ignore_case;
+}
+
+// ─── ida::registers ────────────────────────────────────────────────────
+
+void check_registers_surface() {
+    using namespace ida::registers;
+    static_assert(static_cast<std::uint8_t>(TrackingState::Undefined) == 0);
+    static_assert(static_cast<std::uint8_t>(TrackingState::StackPointerDelta)
+                  == 11);
+    static_assert(static_cast<std::uint8_t>(ReferenceMutation::Added) == 0);
+    TrackedValue value;
+    (void)value.state;
+    (void)value.candidates;
+    (void)value.cause;
+    (void)value.aborting_depth;
+    (void)value.description;
+    (void)value.known();
+    ValueCandidate candidate;
+    (void)candidate.constant;
+    (void)candidate.stack_pointer_delta;
+    (void)candidate.origin;
+    NearestValue nearest;
+    (void)nearest.selected_index;
+    (void)nearest.register_name;
+    (void)nearest.value;
+    (void)&track;
+    (void)&constant_at;
+    (void)static_cast<ida::Result<std::optional<ida::AddressDelta>> (*)(
+        ida::Address)>(&stack_delta_at);
+    (void)static_cast<ida::Result<std::optional<ida::AddressDelta>> (*)(
+        ida::Address, std::string_view)>(&stack_delta_at);
+    (void)&nearest_at;
+    (void)&clear_control_flow_cache;
+    (void)&clear_data_reference_cache;
+    (void)&control_flow_reference_changed;
+    (void)&data_reference_changed;
+}
+
 // ─── ida::database ──────────────────────────────────────────────────────
 
 void check_database_surface() {
@@ -565,6 +1278,21 @@ void check_database_surface() {
     (void)ida::database::ProcessorId::Arm;
     (void)ida::database::ProcessorId::RiscV;
     (void)ida::database::ProcessorId::Mcore;
+    static_assert(ida::database::processor_id_from_raw(0)
+                  == ida::database::ProcessorId::IntelX86);
+    static_assert(ida::database::processor_id_from_raw(76)
+                  == ida::database::ProcessorId::Nds32);
+    static_assert(!ida::database::processor_id_from_raw(-1));
+    static_assert(!ida::database::processor_id_from_raw(77));
+    static_assert(!ida::database::processor_id_from_raw(0x8001));
+
+    ida::database::ProcessorProfile processor_profile;
+    (void)processor_profile.raw_id;
+    (void)processor_profile.known_id;
+    (void)processor_profile.name;
+    (void)processor_profile.address_bitness;
+    (void)processor_profile.big_endian;
+    (void)processor_profile.abi_name;
 
     ida::database::PluginLoadPolicy plugin_policy;
     (void)plugin_policy.disable_user_plugins;
@@ -607,7 +1335,9 @@ void check_database_surface() {
     using CompilerInfoFn = ida::Result<ida::database::CompilerInfo>(*)();
     using ImportModulesFn = ida::Result<std::vector<ida::database::ImportModule>>(*)();
     using ProcessorEnumFn = ida::Result<ida::database::ProcessorId>(*)();
+    using ProcessorProfileFn = ida::Result<ida::database::ProcessorProfile>(*)();
     using IdbPathFn = ida::Result<std::string>(*)();
+
     using SaveToFunction = ida::Status (*)(std::string_view);
 
     (void)static_cast<InitBasicFn>(&ida::database::init);
@@ -626,12 +1356,14 @@ void check_database_surface() {
     (void)static_cast<CompilerInfoFn>(&ida::database::compiler_info);
     (void)static_cast<ImportModulesFn>(&ida::database::import_modules);
     (void)static_cast<ProcessorEnumFn>(&ida::database::processor);
+    (void)static_cast<ProcessorProfileFn>(&ida::database::processor_profile);
     (void)static_cast<IdbPathFn>(&ida::database::idb_path);
 
     (void)&ida::database::input_file_path;
     (void)&ida::database::input_md5;
     (void)&ida::database::image_base;
     (void)&ida::database::processor_id;
+    (void)&ida::database::processor_id_from_raw;
     (void)&ida::database::processor_name;
     (void)&ida::database::address_bitness;
     (void)&ida::database::set_address_bitness;
@@ -761,6 +1493,20 @@ void check_plugin_surface() {
     (void)action.enabled;
     (void)action.enabled_with_context;
 
+    static_assert(!std::is_copy_constructible_v<ida::plugin::ScopedHotkey>);
+    static_assert(!std::is_copy_assignable_v<ida::plugin::ScopedHotkey>);
+    static_assert(std::is_nothrow_move_constructible_v<ida::plugin::ScopedHotkey>);
+    static_assert(std::is_nothrow_move_assignable_v<ida::plugin::ScopedHotkey>);
+
+    ida::plugin::ScopedHotkey hotkey;
+    (void)hotkey.active();
+    (void)hotkey.hotkey();
+    using ActivateActionFn = ida::Status(*)(std::string_view);
+    using RegisterHotkeyFn = ida::Result<ida::plugin::ScopedHotkey>(*)(
+        std::string_view, ida::plugin::HotkeyCallback);
+    (void)static_cast<ActivateActionFn>(&ida::plugin::activate_action);
+    (void)static_cast<RegisterHotkeyFn>(&ida::plugin::register_hotkey);
+
     using AttachPopupFn = ida::Status(*)(std::string_view, std::string_view);
     using DetachMenuFn = ida::Status(*)(std::string_view, std::string_view);
     using DetachToolbarFn = ida::Status(*)(std::string_view, std::string_view);
@@ -842,10 +1588,15 @@ void check_processor_surface() {
     (void)ida::processor::ProcessorFlag::Segments;
     (void)ida::processor::ProcessorFlag::Use32;
     (void)ida::processor::ProcessorFlag::Use64;
+    (void)ida::processor::ProcessorFlag::ConditionalInsns;
+    (void)ida::processor::ProcessorFlag2::None;
+    (void)ida::processor::ProcessorFlag2::Code16Bit;
 
     (void)ida::processor::InstructionFeature::None;
     (void)ida::processor::InstructionFeature::Stop;
     (void)ida::processor::InstructionFeature::Call;
+    (void)ida::processor::InstructionFeature::Change8;
+    (void)ida::processor::InstructionFeature::Use8;
 
     (void)ida::processor::EmulateResult::Success;
     (void)ida::processor::OutputInstructionResult::Success;
@@ -892,6 +1643,7 @@ void check_processor_surface() {
     (void)analyzed_operand.processor_flags;
 
     ida::processor::AnalyzeDetails analyze_details;
+    (void)analyze_details.instruction_code;
     (void)analyze_details.size;
     (void)analyze_details.operands;
 
@@ -1107,6 +1859,7 @@ void check_ui_surface() {
     using CloseCustomViewerFn = ida::Status(*)(ida::ui::Widget&);
     using ShowWidgetFn = ida::Status(*)(ida::ui::Widget&, const ida::ui::ShowWidgetOptions&);
     using ActivateWidgetFn = ida::Status(*)(ida::ui::Widget&);
+    using CurrentWidgetFn = ida::ui::Widget(*)();
     using FindWidgetFn = ida::ui::Widget(*)(std::string_view);
     using CloseWidgetFn = ida::Status(*)(ida::ui::Widget&);
     using IsWidgetVisibleFn = bool(*)(const ida::ui::Widget&);
@@ -1168,6 +1921,7 @@ void check_ui_surface() {
     (void)static_cast<CloseCustomViewerFn>(&ida::ui::close_custom_viewer);
     (void)static_cast<ShowWidgetFn>(&ida::ui::show_widget);
     (void)static_cast<ActivateWidgetFn>(&ida::ui::activate_widget);
+    (void)static_cast<CurrentWidgetFn>(&ida::ui::current_widget);
     (void)static_cast<FindWidgetFn>(&ida::ui::find_widget);
     (void)static_cast<CloseWidgetFn>(&ida::ui::close_widget);
     (void)static_cast<IsWidgetVisibleFn>(&ida::ui::is_widget_visible);
@@ -1301,13 +2055,76 @@ void check_graph_surface() {
 // ─── ida::event ─────────────────────────────────────────────────────────
 
 void check_event_surface() {
+    static_assert(static_cast<int>(ida::event::EventKind::SegmentAdded) == 0);
+    static_assert(static_cast<int>(ida::event::EventKind::CommentChanged) == 6);
+    static_assert(static_cast<int>(ida::event::EventKind::SegmentMoved) == 7);
+    static_assert(static_cast<int>(ida::event::EventKind::LocalTypesChanged) == 15);
+    static_assert(static_cast<int>(ida::event::ExtraCommentPlacement::Posterior) == 2);
+    static_assert(static_cast<int>(ida::event::LocalTypeChangeKind::OrdinalsCompacted) == 8);
     (void)ida::event::EventKind::SegmentAdded;
     (void)ida::event::EventKind::FunctionAdded;
     (void)ida::event::EventKind::Renamed;
     (void)ida::event::EventKind::BytePatched;
+    (void)ida::event::EventKind::SegmentMoved;
+    (void)ida::event::EventKind::FunctionUpdated;
+    (void)ida::event::EventKind::ItemTypeChanged;
+    (void)ida::event::EventKind::OperandTypeChanged;
+    (void)ida::event::EventKind::CodeCreated;
+    (void)ida::event::EventKind::DataCreated;
+    (void)ida::event::EventKind::ItemsDestroyed;
+    (void)ida::event::EventKind::ExtraCommentChanged;
+    (void)ida::event::EventKind::LocalTypesChanged;
+    (void)ida::event::ExtraCommentPlacement::Unknown;
+    (void)ida::event::ExtraCommentPlacement::Anterior;
+    (void)ida::event::ExtraCommentPlacement::Posterior;
+    (void)ida::event::LocalTypeChangeKind::Added;
+    (void)ida::event::LocalTypeChangeKind::OrdinalsCompacted;
 
     ida::event::Event ev;
-    (void)ev.kind; (void)ev.address; (void)ev.new_name;
+    (void)ev.kind; (void)ev.address; (void)ev.new_name; (void)ev.size;
+    (void)ev.operand_index; (void)ev.line_index; (void)ev.text;
+    (void)ev.will_disable_range; (void)ev.address_mapping_changed;
+    (void)ev.extra_comment_placement; (void)ev.local_type_change;
+    (void)ev.type_ordinal; (void)ev.type_name;
+
+    ida::event::SegmentMovedEvent segment_moved;
+    (void)segment_moved.from; (void)segment_moved.to; (void)segment_moved.size;
+    (void)segment_moved.address_mapping_changed;
+    ida::event::ItemCreatedEvent item_created;
+    (void)item_created.address; (void)item_created.size;
+    ida::event::ItemsDestroyedEvent items_destroyed;
+    (void)items_destroyed.start; (void)items_destroyed.end;
+    (void)items_destroyed.will_disable_range;
+    ida::event::ExtraCommentChangedEvent extra_comment;
+    (void)extra_comment.address; (void)extra_comment.placement;
+    (void)extra_comment.line_index; (void)extra_comment.text;
+    ida::event::LocalTypesChangedEvent local_types;
+    (void)local_types.change; (void)local_types.ordinal; (void)local_types.name;
+
+    using AddressEventFn = ida::Result<ida::event::Token>(*)(
+        std::function<void(ida::Address)>);
+    using AddressIndexEventFn = ida::Result<ida::event::Token>(*)(
+        std::function<void(ida::Address, int)>);
+    using SegmentMovedEventFn = ida::Result<ida::event::Token>(*)(
+        std::function<void(const ida::event::SegmentMovedEvent&)>);
+    using ItemCreatedEventFn = ida::Result<ida::event::Token>(*)(
+        std::function<void(const ida::event::ItemCreatedEvent&)>);
+    using ItemsDestroyedEventFn = ida::Result<ida::event::Token>(*)(
+        std::function<void(const ida::event::ItemsDestroyedEvent&)>);
+    using ExtraCommentEventFn = ida::Result<ida::event::Token>(*)(
+        std::function<void(const ida::event::ExtraCommentChangedEvent&)>);
+    using LocalTypesEventFn = ida::Result<ida::event::Token>(*)(
+        std::function<void(const ida::event::LocalTypesChangedEvent&)>);
+
+    (void)static_cast<SegmentMovedEventFn>(&ida::event::on_segment_moved);
+    (void)static_cast<AddressEventFn>(&ida::event::on_function_updated);
+    (void)static_cast<AddressEventFn>(&ida::event::on_item_type_changed);
+    (void)static_cast<AddressIndexEventFn>(&ida::event::on_operand_type_changed);
+    (void)static_cast<ItemCreatedEventFn>(&ida::event::on_code_created);
+    (void)static_cast<ItemCreatedEventFn>(&ida::event::on_data_created);
+    (void)static_cast<ItemsDestroyedEventFn>(&ida::event::on_items_destroyed);
+    (void)static_cast<ExtraCommentEventFn>(&ida::event::on_extra_comment_changed);
+    (void)static_cast<LocalTypesEventFn>(&ida::event::on_local_types_changed);
 
     static_assert(std::is_move_constructible_v<ida::event::ScopedSubscription>);
     static_assert(!std::is_copy_constructible_v<ida::event::ScopedSubscription>);
@@ -1332,6 +2149,9 @@ void check_decompiler_surface() {
     (void)ida::decompiler::LocalVariableLocationKind::Stack;
 
     using DecompileFn = ida::Result<ida::decompiler::DecompiledFunction>(*)(ida::Address);
+    using GenerateMicrocodeFn = ida::Result<ida::decompiler::MicrocodeFunction>(*)(
+        ida::Address,
+        const ida::decompiler::MicrocodeGenerationOptions&);
     using SavedUserLvarSettingsFn = ida::Result<std::vector<ida::decompiler::LocalVariableUserSetting>>(*)(ida::Address);
     using ApplyUserLvarSettingFn = ida::Status(*)(ida::Address, const ida::decompiler::LocalVariableUserSetting&);
     using ApplyUserLvarSettingsFn = ida::Status(*)(
@@ -1362,6 +2182,20 @@ void check_decompiler_surface() {
         ida::decompiler::DecompiledFunction::*)(std::size_t) const;
     using HasOrphanCommentsFn = ida::Result<bool>(ida::decompiler::DecompiledFunction::*)() const;
     using RemoveOrphanCommentsFn = ida::Result<int>(ida::decompiler::DecompiledFunction::*)();
+    using SetCommentFn = ida::Status(ida::decompiler::DecompiledFunction::*)(
+        ida::Address, std::string_view, ida::decompiler::CommentPosition);
+    using GetCommentFn = ida::Result<std::string>(ida::decompiler::DecompiledFunction::*)(
+        ida::Address, ida::decompiler::CommentPosition) const;
+    using CommentsFn = ida::Result<std::vector<ida::decompiler::PseudocodeComment>>(
+        ida::decompiler::DecompiledFunction::*)() const;
+    using CommentArgumentFn = ida::Result<ida::decompiler::CommentPosition>(*)(std::size_t);
+    using CommentSwitchCaseFn = ida::Result<ida::decompiler::CommentPosition>(*)(std::int64_t);
+    using CommentKindFn = ida::decompiler::CommentPositionKind(
+        ida::decompiler::CommentPosition::*)() const noexcept;
+    using CommentArgumentIndexFn = std::optional<std::size_t>(
+        ida::decompiler::CommentPosition::*)() const noexcept;
+    using CommentSwitchCaseValueFn = std::optional<std::int64_t>(
+        ida::decompiler::CommentPosition::*)() const noexcept;
     using DecompilerViewFunctionNameFn = ida::Result<std::string>(ida::decompiler::DecompilerView::*)() const;
     using DecompilerViewDecompileFn = ida::Result<ida::decompiler::DecompiledFunction>(ida::decompiler::DecompilerView::*)() const;
     using DecompilerViewRenameVariableFn = ida::Status(ida::decompiler::DecompilerView::*)(std::string_view, std::string_view) const;
@@ -1386,6 +2220,8 @@ void check_decompiler_surface() {
     using DecompilerViewGetCommentFn = ida::Result<std::string>(ida::decompiler::DecompilerView::*)(
         ida::Address,
         ida::decompiler::CommentPosition) const;
+    using DecompilerViewCommentsFn = ida::Result<std::vector<ida::decompiler::PseudocodeComment>>(
+        ida::decompiler::DecompilerView::*)() const;
     using DecompilerViewStatusFn = ida::Status(ida::decompiler::DecompilerView::*)() const;
     using ViewFromHostFn = ida::Result<ida::decompiler::DecompilerView>(*)(void*);
     using ViewForFunctionFn = ida::Result<ida::decompiler::DecompilerView>(*)(ida::Address);
@@ -1407,6 +2243,8 @@ void check_decompiler_surface() {
         ida::decompiler::StatementView::*)() const;
     using OnMaturityChangedFn = ida::Result<ida::decompiler::Token>(*)(
         std::function<void(const ida::decompiler::MaturityEvent&)>);
+    using OnPseudocodeEventFn = ida::Result<ida::decompiler::Token>(*)(
+        std::function<void(const ida::decompiler::PseudocodeEvent&)>);
     using DecompilerUnsubscribeFn = ida::Status(*)(ida::decompiler::Token);
     using MarkDirtyFn = ida::Status(*)(ida::Address, bool);
     using RegisterMicrocodeFilterFn = ida::Result<ida::decompiler::FilterToken>(*)(
@@ -1587,6 +2425,13 @@ void check_decompiler_surface() {
     (void)ida::decompiler::MicrocodeOpcode::ShiftRightLogical;
     (void)ida::decompiler::MicrocodeOpcode::ShiftRightArithmetic;
     (void)ida::decompiler::MicrocodeOpcode::FloatToFloat;
+    (void)ida::decompiler::MicrocodeOpcode::SignedExtend;
+    (void)ida::decompiler::MicrocodeOpcode::Call;
+    (void)ida::decompiler::MicrocodeOpcode::IndirectCall;
+    (void)ida::decompiler::MicrocodeOpcode::Goto;
+    (void)ida::decompiler::MicrocodeOpcode::IndirectJump;
+    (void)ida::decompiler::MicrocodeOpcode::Return;
+    (void)ida::decompiler::MicrocodeOpcode::Other;
     (void)ida::decompiler::MicrocodeOperandKind::Empty;
     (void)ida::decompiler::MicrocodeOperandKind::Register;
     (void)ida::decompiler::MicrocodeOperandKind::LocalVariable;
@@ -1596,6 +2441,11 @@ void check_decompiler_surface() {
     (void)ida::decompiler::MicrocodeOperandKind::HelperReference;
     (void)ida::decompiler::MicrocodeOperandKind::BlockReference;
     (void)ida::decompiler::MicrocodeOperandKind::NestedInstruction;
+    (void)ida::decompiler::MicrocodeOperandKind::AddressReference;
+    (void)ida::decompiler::MicrocodeOperandKind::CallArguments;
+    (void)ida::decompiler::MicrocodeOperandKind::StringConstant;
+    (void)ida::decompiler::MicrocodeOperandKind::FloatingPointConstant;
+    (void)ida::decompiler::MicrocodeOperandKind::Other;
     (void)ida::decompiler::MicrocodeInsertPolicy::Tail;
     (void)ida::decompiler::MicrocodeInsertPolicy::Beginning;
     (void)ida::decompiler::MicrocodeInsertPolicy::BeforeTail;
@@ -1608,6 +2458,7 @@ void check_decompiler_surface() {
     ida::decompiler::MicrocodeOperand typed_operand;
     (void)typed_operand.kind;
     (void)typed_operand.register_id;
+    (void)typed_operand.processor_register_id;
     (void)typed_operand.local_variable_index;
     (void)typed_operand.local_variable_offset;
     (void)typed_operand.second_register_id;
@@ -1620,12 +2471,26 @@ void check_decompiler_surface() {
     (void)typed_operand.signed_immediate;
     (void)typed_operand.byte_width;
     (void)typed_operand.mark_user_defined_type;
+    (void)typed_operand.referenced_operand;
+    (void)typed_operand.call_arguments;
+    (void)typed_operand.call_target;
+    (void)typed_operand.text;
     ida::decompiler::MicrocodeInstruction instruction;
     (void)instruction.opcode;
     (void)instruction.left;
     (void)instruction.right;
     (void)instruction.destination;
     (void)instruction.floating_point_instruction;
+    (void)instruction.modifies_destination;
+    (void)instruction.address;
+    (void)instruction.text;
+    ida::decompiler::MicrocodeGenerationOptions generation_options;
+    (void)generation_options.maturity;
+    (void)generation_options.analyze_calls;
+    static_assert(!ida::decompiler::MicrocodeGenerationOptions{}.analyze_calls);
+    (void)ida::decompiler::MicrocodeMaturity::Generated;
+    (void)ida::decompiler::MicrocodeMaturity::Preoptimized;
+    (void)ida::decompiler::MicrocodeMaturity::LocalVariables;
     (void)ida::decompiler::MicrocodeValueKind::Register;
     (void)ida::decompiler::MicrocodeValueKind::LocalVariable;
     (void)ida::decompiler::MicrocodeValueKind::RegisterPair;
@@ -1664,6 +2529,23 @@ void check_decompiler_surface() {
     (void)location.stack_offset;
     (void)location.static_address;
     (void)location.scattered_parts;
+    ida::decompiler::MicrocodeFunctionArgument function_argument;
+    (void)function_argument.name;
+    (void)function_argument.location;
+    (void)function_argument.byte_width;
+    ida::decompiler::MicrocodeBlock microcode_block;
+    (void)microcode_block.index;
+    (void)microcode_block.start_address;
+    (void)microcode_block.end_address;
+    (void)microcode_block.predecessors;
+    (void)microcode_block.successors;
+    (void)microcode_block.instructions;
+    ida::decompiler::MicrocodeFunction microcode_function;
+    (void)microcode_function.entry_address;
+    (void)microcode_function.maturity;
+    (void)microcode_function.arguments;
+    (void)microcode_function.return_location;
+    (void)microcode_function.blocks;
     ida::decompiler::MicrocodeValue value;
     (void)value.kind;
     (void)value.register_id;
@@ -1729,6 +2611,7 @@ void check_decompiler_surface() {
 
     (void)&ida::decompiler::available;
     (void)static_cast<DecompileFn>(&ida::decompiler::decompile);
+    (void)static_cast<GenerateMicrocodeFn>(&ida::decompiler::generate_microcode);
     (void)static_cast<SavedUserLvarSettingsFn>(&ida::decompiler::saved_user_lvar_settings);
     (void)static_cast<ApplyUserLvarSettingFn>(&ida::decompiler::apply_user_lvar_setting);
     (void)static_cast<ApplyUserLvarSettingsFn>(&ida::decompiler::apply_user_lvar_settings);
@@ -1746,8 +2629,21 @@ void check_decompiler_surface() {
     (void)static_cast<SetVariableCommentByNameFn>(&ida::decompiler::DecompiledFunction::set_variable_comment);
     (void)static_cast<SetVariableCommentByIndexFn>(&ida::decompiler::DecompiledFunction::set_variable_comment);
     (void)static_cast<VariableByIndexFn>(&ida::decompiler::DecompiledFunction::variable);
+    (void)static_cast<SetCommentFn>(&ida::decompiler::DecompiledFunction::set_comment);
+    (void)static_cast<GetCommentFn>(&ida::decompiler::DecompiledFunction::get_comment);
+    (void)static_cast<CommentsFn>(&ida::decompiler::DecompiledFunction::comments);
     (void)static_cast<HasOrphanCommentsFn>(&ida::decompiler::DecompiledFunction::has_orphan_comments);
     (void)static_cast<RemoveOrphanCommentsFn>(&ida::decompiler::DecompiledFunction::remove_orphan_comments);
+    (void)static_cast<CommentArgumentFn>(&ida::decompiler::CommentPosition::argument);
+    (void)static_cast<CommentSwitchCaseFn>(&ida::decompiler::CommentPosition::switch_case);
+    (void)static_cast<CommentKindFn>(&ida::decompiler::CommentPosition::kind);
+    (void)static_cast<CommentArgumentIndexFn>(&ida::decompiler::CommentPosition::argument_index);
+    (void)static_cast<CommentSwitchCaseValueFn>(&ida::decompiler::CommentPosition::switch_case_value);
+    ida::decompiler::PseudocodeComment pseudocode_comment;
+    (void)pseudocode_comment.address;
+    (void)pseudocode_comment.position;
+    (void)pseudocode_comment.text;
+    (void)ida::decompiler::CommentPositionKind::SwitchCase;
     (void)static_cast<ExprCallArgCountFn>(&ida::decompiler::ExpressionView::call_argument_count);
     (void)static_cast<ExprCallCalleeFn>(&ida::decompiler::ExpressionView::call_callee);
     (void)static_cast<ExprCallArgFn>(&ida::decompiler::ExpressionView::call_argument);
@@ -1763,6 +2659,7 @@ void check_decompiler_surface() {
     (void)static_cast<StmtParentFn>(&ida::decompiler::StatementView::parent);
     (void)static_cast<StmtParentsFn>(&ida::decompiler::StatementView::parents);
     (void)static_cast<OnMaturityChangedFn>(&ida::decompiler::on_maturity_changed);
+    (void)static_cast<OnPseudocodeEventFn>(&ida::decompiler::on_switch_pseudocode);
     using OnPopulatingPopupFn = ida::Result<ida::decompiler::Token>(*)(
         std::function<void(const ida::decompiler::PopulatingPopupEvent&)>);
     (void)static_cast<OnPopulatingPopupFn>(&ida::decompiler::on_populating_popup);
@@ -1831,6 +2728,7 @@ void check_decompiler_surface() {
     (void)static_cast<DecompilerViewSetVariableCommentByIndexFn>(&ida::decompiler::DecompilerView::set_variable_comment);
     (void)static_cast<DecompilerViewSetCommentFn>(&ida::decompiler::DecompilerView::set_comment);
     (void)static_cast<DecompilerViewGetCommentFn>(&ida::decompiler::DecompilerView::get_comment);
+    (void)static_cast<DecompilerViewCommentsFn>(&ida::decompiler::DecompilerView::comments);
     (void)static_cast<DecompilerViewStatusFn>(&ida::decompiler::DecompilerView::save_comments);
     (void)static_cast<DecompilerViewStatusFn>(&ida::decompiler::DecompilerView::refresh);
 
@@ -1983,12 +2881,23 @@ int main() {
     surface_check::check_instruction_surface();namespaces_verified++;
     surface_check::check_name_surface();       namespaces_verified++;
     surface_check::check_xref_surface();       namespaces_verified++;
+    surface_check::check_offset_surface();     namespaces_verified++;
     surface_check::check_comment_surface();    namespaces_verified++;
     surface_check::check_type_surface();       namespaces_verified++;
     surface_check::check_fixup_surface();      namespaces_verified++;
     surface_check::check_entry_surface();      namespaces_verified++;
     surface_check::check_search_surface();     namespaces_verified++;
     surface_check::check_analysis_surface();   namespaces_verified++;
+    surface_check::check_undo_surface();       namespaces_verified++;
+    surface_check::check_problem_surface();    namespaces_verified++;
+    surface_check::check_bookmark_surface();   namespaces_verified++;
+    surface_check::check_navigation_surface(); namespaces_verified++;
+    surface_check::check_exception_surface();  namespaces_verified++;
+    surface_check::check_parser_surface();     namespaces_verified++;
+    surface_check::check_script_surface();     namespaces_verified++;
+    surface_check::check_directory_surface();  namespaces_verified++;
+    surface_check::check_registry_surface();   namespaces_verified++;
+    surface_check::check_registers_surface();  namespaces_verified++;
     surface_check::check_database_surface();   namespaces_verified++;
     surface_check::check_path_surface();       namespaces_verified++;
     surface_check::check_lumina_surface();     namespaces_verified++;
@@ -2001,13 +2910,14 @@ int main() {
     surface_check::check_event_surface();      namespaces_verified++;
     surface_check::check_decompiler_surface(); namespaces_verified++;
     surface_check::check_storage_surface();    namespaces_verified++;
+    surface_check::check_lines_surface();      namespaces_verified++;
     surface_check::check_diagnostics_surface();namespaces_verified++;
     surface_check::check_core_surface();       namespaces_verified++;
     surface_check::check_dyld_cache_surface(); namespaces_verified++;
 
-    CHECK(namespaces_verified == 28, "all 28 namespace surfaces verified");
+    CHECK(namespaces_verified == 40, "all 40 namespace surfaces verified");
 
-    std::printf("\n=== Results: %d passed, %d failed (28 namespaces) ===\n",
+    std::printf("\n=== Results: %d passed, %d failed (40 namespaces) ===\n",
                 g_pass, g_fail);
     return g_fail > 0 ? 1 : 0;
 }

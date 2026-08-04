@@ -1,11 +1,48 @@
 //! Byte-level read, write, patch, and define operations.
 //!
 //! Mirrors the C++ `ida::data` namespace.
+//! Integer and floating-point definition functions accept positive element
+//! counts. Extended-real widths are resolved from active processor metadata;
+//! structure definitions and `undefine` retain explicit byte units.
 
 use crate::address::{Address, AddressSize, BAD_ADDRESS};
 use crate::error::{self, Error, Result, Status};
 use crate::types::TypeInfo;
-use std::ffi::CString;
+use std::collections::HashMap;
+use std::ffi::{CStr, CString, c_void};
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::{Arc, Mutex, OnceLock};
+
+/// Owned snapshot of IDA's process-global string-list configuration.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StringListOptions {
+    pub string_types: Vec<i32>,
+    pub minimum_length: i64,
+    pub only_7bit: bool,
+    pub ignore_instructions: bool,
+    pub display_only_existing_strings: bool,
+}
+
+impl Default for StringListOptions {
+    fn default() -> Self {
+        Self {
+            string_types: vec![0],
+            minimum_length: 5,
+            only_7bit: true,
+            ignore_instructions: false,
+            display_only_existing_strings: false,
+        }
+    }
+}
+
+/// Owned string-list entry. `byte_length` is measured in octets.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StringLiteral {
+    pub address: Address,
+    pub byte_length: AddressSize,
+    pub string_type: i32,
+    pub text: String,
+}
 
 /// Semantic typed value used by `read_typed` and `write_typed`.
 #[derive(Debug, Clone, PartialEq)]
@@ -212,6 +249,96 @@ pub fn read_string(address: Address, max_length: AddressSize) -> Result<String> 
     }
 }
 
+/// Return a copied snapshot of IDA's shared string-list configuration.
+pub fn string_list_options() -> Result<StringListOptions> {
+    unsafe {
+        let mut raw = idax_sys::IdaxDataStringListOptions::default();
+        let ret = idax_sys::idax_data_string_list_options(&mut raw);
+        if ret != 0 {
+            return Err(error::consume_last_error("string_list_options failed"));
+        }
+        let string_types = if raw.string_types.is_null() || raw.string_type_count == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(raw.string_types, raw.string_type_count).to_vec()
+        };
+        let options = StringListOptions {
+            string_types,
+            minimum_length: raw.minimum_length,
+            only_7bit: raw.only_7bit != 0,
+            ignore_instructions: raw.ignore_instructions != 0,
+            display_only_existing_strings: raw.display_only_existing_strings != 0,
+        };
+        idax_sys::idax_data_string_list_options_free(&mut raw);
+        Ok(options)
+    }
+}
+
+/// Replace IDA's shared string-list configuration and rebuild the cache.
+pub fn configure_string_list(options: &StringListOptions) -> Status {
+    let pointer = if options.string_types.is_empty() {
+        std::ptr::null()
+    } else {
+        options.string_types.as_ptr()
+    };
+    let ret = unsafe {
+        idax_sys::idax_data_configure_string_list(
+            pointer,
+            options.string_types.len(),
+            options.minimum_length,
+            options.only_7bit as i32,
+            options.ignore_instructions as i32,
+            options.display_only_existing_strings as i32,
+        )
+    };
+    error::int_to_status(ret, "configure_string_list failed")
+}
+
+/// Rebuild IDA's cached string list using the shared configuration.
+pub fn rebuild_string_list() -> Status {
+    let ret = unsafe { idax_sys::idax_data_rebuild_string_list() };
+    error::int_to_status(ret, "rebuild_string_list failed")
+}
+
+/// Clear IDA's persisted string-list cache.
+pub fn clear_string_list() -> Status {
+    let ret = unsafe { idax_sys::idax_data_clear_string_list() };
+    error::int_to_status(ret, "clear_string_list failed")
+}
+
+/// Enumerate copied string-list entries, optionally rebuilding first.
+pub fn string_literals(rebuild: bool) -> Result<Vec<StringLiteral>> {
+    unsafe {
+        let mut raw: *mut idax_sys::IdaxDataStringLiteral = std::ptr::null_mut();
+        let mut count = 0usize;
+        let ret = idax_sys::idax_data_string_literals(rebuild as i32, &mut raw, &mut count);
+        if ret != 0 {
+            return Err(error::consume_last_error("string_literals failed"));
+        }
+        if count != 0 && raw.is_null() {
+            return Err(Error::internal(
+                "string_literals returned a null array with a nonzero count",
+            ));
+        }
+        let mut literals = Vec::with_capacity(count);
+        for index in 0..count {
+            let item = &*raw.add(index);
+            if item.text.is_null() {
+                idax_sys::idax_data_string_literals_free(raw, count);
+                return Err(Error::internal("string literal text pointer is null"));
+            }
+            literals.push(StringLiteral {
+                address: item.address,
+                byte_length: item.byte_length,
+                string_type: item.string_type,
+                text: CStr::from_ptr(item.text).to_string_lossy().into_owned(),
+            });
+        }
+        idax_sys::idax_data_string_literals_free(raw, count);
+        Ok(literals)
+    }
+}
+
 /// Read a value at `address` interpreted using `ty` semantics.
 pub fn read_typed(address: Address, ty: &TypeInfo) -> Result<TypedValue> {
     unsafe {
@@ -400,10 +527,50 @@ pub fn define_oword(address: Address, count: AddressSize) -> Status {
     error::int_to_status(ret, "define_oword failed")
 }
 
-/// Define tbyte item(s) at address.
+/// Define 256-bit yword item(s) at address.
+pub fn define_yword(address: Address, count: AddressSize) -> Status {
+    let ret = unsafe { idax_sys::idax_data_define_yword(address, count) };
+    error::int_to_status(ret, "define_yword failed")
+}
+
+/// Define 512-bit zword item(s) at address.
+pub fn define_zword(address: Address, count: AddressSize) -> Status {
+    let ret = unsafe { idax_sys::idax_data_define_zword(address, count) };
+    error::int_to_status(ret, "define_zword failed")
+}
+
+/// Return the active processor's tbyte element size in bytes.
+pub fn tbyte_element_size() -> Result<AddressSize> {
+    let mut size = 0;
+    let ret = unsafe { idax_sys::idax_data_tbyte_element_size(&mut size) };
+    if ret != 0 {
+        Err(error::consume_last_error("tbyte_element_size failed"))
+    } else {
+        Ok(size)
+    }
+}
+
+/// Define active-processor-sized tbyte item(s) at address.
 pub fn define_tbyte(address: Address, count: AddressSize) -> Status {
     let ret = unsafe { idax_sys::idax_data_define_tbyte(address, count) };
     error::int_to_status(ret, "define_tbyte failed")
+}
+
+/// Return the active processor's packed-real element size in bytes.
+pub fn packed_real_element_size() -> Result<AddressSize> {
+    let mut size = 0;
+    let ret = unsafe { idax_sys::idax_data_packed_real_element_size(&mut size) };
+    if ret != 0 {
+        Err(error::consume_last_error("packed_real_element_size failed"))
+    } else {
+        Ok(size)
+    }
+}
+
+/// Define active-processor-sized packed-real item(s) at address.
+pub fn define_packed_real(address: Address, count: AddressSize) -> Status {
+    let ret = unsafe { idax_sys::idax_data_define_packed_real(address, count) };
+    error::int_to_status(ret, "define_packed_real failed")
 }
 
 /// Define float item(s) at address.
@@ -418,19 +585,791 @@ pub fn define_double(address: Address, count: AddressSize) -> Status {
     error::int_to_status(ret, "define_double failed")
 }
 
-/// Define a string literal at address.
+/// Define a string literal using an explicit byte length.
 pub fn define_string(address: Address, length: AddressSize, string_type: i32) -> Status {
     let ret = unsafe { idax_sys::idax_data_define_string(address, length, string_type) };
     error::int_to_status(ret, "define_string failed")
 }
 
-/// Define a structure item at address.
+/// Define a structure item using an explicit byte length.
 pub fn define_struct(address: Address, length: AddressSize, structure_id: u64) -> Status {
     let ret = unsafe { idax_sys::idax_data_define_struct(address, length, structure_id) };
     error::int_to_status(ret, "define_struct failed")
 }
 
-/// Undefine items at address.
+/// Opaque registered custom-data type identifier (`1..=0xFFFE`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CustomDataTypeId(pub u16);
+
+/// Opaque registered custom-data format identifier (`1..=0xFFFE`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CustomDataFormatId(pub u16);
+
+/// Context supplied to custom format callbacks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CustomDataFormatContext {
+    pub address: Address,
+    pub operand_index: i32,
+    /// Zero means a standard or unknown type.
+    pub type_id: CustomDataTypeId,
+}
+
+impl Default for CustomDataFormatContext {
+    fn default() -> Self {
+        Self {
+            address: BAD_ADDRESS,
+            operand_index: -1,
+            type_id: CustomDataTypeId(0),
+        }
+    }
+}
+
+pub type CustomDataCreationFilter =
+    Arc<dyn Fn(Address, AddressSize) -> bool + Send + Sync + 'static>;
+pub type CustomDataSizeCallback =
+    Arc<dyn Fn(Address, AddressSize) -> AddressSize + Send + Sync + 'static>;
+pub type CustomDataRenderCallback =
+    Arc<dyn Fn(&[u8], &CustomDataFormatContext) -> Result<String> + Send + Sync + 'static>;
+pub type CustomDataScanCallback =
+    Arc<dyn Fn(&str, &CustomDataFormatContext) -> Result<Vec<u8>> + Send + Sync + 'static>;
+pub type CustomDataAnalyzeCallback = Arc<dyn Fn(&CustomDataFormatContext) + Send + Sync + 'static>;
+
+/// Owned custom-data type registration definition.
+#[derive(Clone)]
+pub struct CustomDataTypeDefinition {
+    pub name: String,
+    pub menu_name: String,
+    pub hotkey: String,
+    pub assembler_keyword: String,
+    /// Exact fixed width, or minimum width when `calculate_size` is present.
+    pub value_size: AddressSize,
+    pub allow_duplicates: bool,
+    pub may_create_at: Option<CustomDataCreationFilter>,
+    pub calculate_size: Option<CustomDataSizeCallback>,
+}
+
+impl Default for CustomDataTypeDefinition {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            menu_name: String::new(),
+            hotkey: String::new(),
+            assembler_keyword: String::new(),
+            value_size: 0,
+            allow_duplicates: true,
+            may_create_at: None,
+            calculate_size: None,
+        }
+    }
+}
+
+/// Copied custom-data type metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomDataTypeInfo {
+    pub id: CustomDataTypeId,
+    pub name: String,
+    pub menu_name: String,
+    pub hotkey: String,
+    pub assembler_keyword: String,
+    pub value_size: AddressSize,
+    pub allow_duplicates: bool,
+    pub visible_in_menu: bool,
+    pub has_creation_filter: bool,
+    pub variable_size: bool,
+}
+
+/// Owned custom-data format registration definition.
+#[derive(Clone, Default)]
+pub struct CustomDataFormatDefinition {
+    pub name: String,
+    pub menu_name: String,
+    pub hotkey: String,
+    /// Zero accepts any value width.
+    pub value_size: AddressSize,
+    pub text_width: i32,
+    pub render: Option<CustomDataRenderCallback>,
+    pub scan: Option<CustomDataScanCallback>,
+    pub analyze: Option<CustomDataAnalyzeCallback>,
+}
+
+/// Copied custom-data format metadata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CustomDataFormatInfo {
+    pub id: CustomDataFormatId,
+    pub name: String,
+    pub menu_name: String,
+    pub hotkey: String,
+    pub value_size: AddressSize,
+    pub text_width: i32,
+    pub visible_in_menu: bool,
+    pub can_render: bool,
+    pub can_scan: bool,
+    pub can_analyze: bool,
+}
+
+/// Custom type/format identity stored on an existing item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CustomDataItemInfo {
+    pub type_id: CustomDataTypeId,
+    pub format_id: CustomDataFormatId,
+    pub byte_length: AddressSize,
+}
+
+struct TypeCallbackContext {
+    may_create_at: Option<CustomDataCreationFilter>,
+    calculate_size: Option<CustomDataSizeCallback>,
+}
+
+struct FormatCallbackContext {
+    render: Option<CustomDataRenderCallback>,
+    scan: Option<CustomDataScanCallback>,
+    analyze: Option<CustomDataAnalyzeCallback>,
+}
+
+fn type_callback_contexts() -> &'static Mutex<HashMap<u16, Arc<TypeCallbackContext>>> {
+    static CONTEXTS: OnceLock<Mutex<HashMap<u16, Arc<TypeCallbackContext>>>> = OnceLock::new();
+    CONTEXTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn format_callback_contexts() -> &'static Mutex<HashMap<u16, Arc<FormatCallbackContext>>> {
+    static CONTEXTS: OnceLock<Mutex<HashMap<u16, Arc<FormatCallbackContext>>>> = OnceLock::new();
+    CONTEXTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+unsafe fn retain_callback_context<T>(user_data: *mut c_void) -> Option<Arc<T>> {
+    if user_data.is_null() {
+        return None;
+    }
+    let pointer = user_data.cast::<T>();
+    unsafe { Arc::increment_strong_count(pointer) };
+    Some(unsafe { Arc::from_raw(pointer) })
+}
+
+unsafe extern "C" fn custom_type_may_create_trampoline(
+    user_data: *mut c_void,
+    address: u64,
+    byte_length: u64,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(context) = (unsafe { retain_callback_context::<TypeCallbackContext>(user_data) })
+        else {
+            return 0;
+        };
+        context
+            .may_create_at
+            .as_ref()
+            .is_some_and(|callback| callback(address, byte_length)) as i32
+    }))
+    .unwrap_or(0)
+}
+
+unsafe extern "C" fn custom_type_size_trampoline(
+    user_data: *mut c_void,
+    address: u64,
+    maximum_size: u64,
+) -> u64 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(context) = (unsafe { retain_callback_context::<TypeCallbackContext>(user_data) })
+        else {
+            return 0;
+        };
+        context
+            .calculate_size
+            .as_ref()
+            .map_or(0, |callback| callback(address, maximum_size))
+    }))
+    .unwrap_or(0)
+}
+
+unsafe fn set_callback_buffer(
+    output: *mut idax_sys::IdaxCustomDataCallbackBuffer,
+    bytes: Vec<u8>,
+) -> bool {
+    if output.is_null() {
+        return false;
+    }
+    if bytes.is_empty() {
+        unsafe {
+            (*output).data = std::ptr::null_mut();
+            (*output).length = 0;
+        }
+        return true;
+    }
+    let mut boxed = bytes.into_boxed_slice();
+    unsafe {
+        (*output).data = boxed.as_mut_ptr();
+        (*output).length = boxed.len();
+    }
+    std::mem::forget(boxed);
+    true
+}
+
+unsafe extern "C" fn custom_data_release_buffer_trampoline(
+    _user_data: *mut c_void,
+    data: *mut u8,
+    length: usize,
+) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        if data.is_null() {
+            return;
+        }
+        let slice = std::ptr::slice_from_raw_parts_mut(data, length);
+        drop(unsafe { Box::<[u8]>::from_raw(slice) });
+    }));
+}
+
+unsafe extern "C" fn custom_format_render_trampoline(
+    user_data: *mut c_void,
+    value: *const u8,
+    value_length: usize,
+    address: u64,
+    operand_index: i32,
+    type_id: u16,
+    output: *mut idax_sys::IdaxCustomDataCallbackBuffer,
+    error_output: *mut idax_sys::IdaxCustomDataCallbackBuffer,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(context) =
+            (unsafe { retain_callback_context::<FormatCallbackContext>(user_data) })
+        else {
+            return 0;
+        };
+        let Some(callback) = context.render.as_ref() else {
+            return 0;
+        };
+        if value.is_null() && value_length != 0 {
+            unsafe { set_callback_buffer(error_output, b"render value pointer is null".to_vec()) };
+            return 0;
+        }
+        let bytes = if value_length == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(value, value_length) }
+        };
+        let context = CustomDataFormatContext {
+            address,
+            operand_index,
+            type_id: CustomDataTypeId(type_id),
+        };
+        match callback(bytes, &context) {
+            Ok(text) => unsafe { set_callback_buffer(output, text.into_bytes()) as i32 },
+            Err(error) => {
+                unsafe { set_callback_buffer(error_output, error.message.into_bytes()) };
+                0
+            }
+        }
+    }))
+    .unwrap_or(0)
+}
+
+unsafe extern "C" fn custom_format_scan_trampoline(
+    user_data: *mut c_void,
+    text: *const std::ffi::c_char,
+    address: u64,
+    operand_index: i32,
+    output: *mut idax_sys::IdaxCustomDataCallbackBuffer,
+    error_output: *mut idax_sys::IdaxCustomDataCallbackBuffer,
+) -> i32 {
+    catch_unwind(AssertUnwindSafe(|| {
+        let Some(context) =
+            (unsafe { retain_callback_context::<FormatCallbackContext>(user_data) })
+        else {
+            return 0;
+        };
+        let Some(callback) = context.scan.as_ref() else {
+            return 0;
+        };
+        if text.is_null() {
+            unsafe { set_callback_buffer(error_output, b"scan text pointer is null".to_vec()) };
+            return 0;
+        }
+        let text = unsafe { CStr::from_ptr(text) }.to_string_lossy();
+        let context = CustomDataFormatContext {
+            address,
+            operand_index,
+            type_id: CustomDataTypeId(0),
+        };
+        match callback(&text, &context) {
+            Ok(bytes) => unsafe { set_callback_buffer(output, bytes) as i32 },
+            Err(error) => {
+                unsafe { set_callback_buffer(error_output, error.message.into_bytes()) };
+                0
+            }
+        }
+    }))
+    .unwrap_or(0)
+}
+
+unsafe extern "C" fn custom_format_analyze_trampoline(
+    user_data: *mut c_void,
+    address: u64,
+    operand_index: i32,
+) {
+    let _ = catch_unwind(AssertUnwindSafe(|| {
+        let Some(context) =
+            (unsafe { retain_callback_context::<FormatCallbackContext>(user_data) })
+        else {
+            return;
+        };
+        if let Some(callback) = context.analyze.as_ref() {
+            callback(&CustomDataFormatContext {
+                address,
+                operand_index,
+                type_id: CustomDataTypeId(0),
+            });
+        }
+    }));
+}
+
+fn ffi_string(value: *const std::ffi::c_char) -> String {
+    if value.is_null() {
+        String::new()
+    } else {
+        unsafe { CStr::from_ptr(value) }
+            .to_string_lossy()
+            .into_owned()
+    }
+}
+
+fn convert_custom_type_info(raw: &idax_sys::IdaxCustomDataTypeInfo) -> CustomDataTypeInfo {
+    CustomDataTypeInfo {
+        id: CustomDataTypeId(raw.id),
+        name: ffi_string(raw.name),
+        menu_name: ffi_string(raw.menu_name),
+        hotkey: ffi_string(raw.hotkey),
+        assembler_keyword: ffi_string(raw.assembler_keyword),
+        value_size: raw.value_size,
+        allow_duplicates: raw.allow_duplicates != 0,
+        visible_in_menu: raw.visible_in_menu != 0,
+        has_creation_filter: raw.has_creation_filter != 0,
+        variable_size: raw.variable_size != 0,
+    }
+}
+
+fn convert_custom_format_info(raw: &idax_sys::IdaxCustomDataFormatInfo) -> CustomDataFormatInfo {
+    CustomDataFormatInfo {
+        id: CustomDataFormatId(raw.id),
+        name: ffi_string(raw.name),
+        menu_name: ffi_string(raw.menu_name),
+        hotkey: ffi_string(raw.hotkey),
+        value_size: raw.value_size,
+        text_width: raw.text_width,
+        visible_in_menu: raw.visible_in_menu != 0,
+        can_render: raw.can_render != 0,
+        can_scan: raw.can_scan != 0,
+        can_analyze: raw.can_analyze != 0,
+    }
+}
+
+fn required_c_string(value: &str, field: &str) -> Result<CString> {
+    CString::new(value).map_err(|_| Error::validation(format!("{field} contains an interior null")))
+}
+
+fn optional_c_string(value: &str, field: &str) -> Result<Option<CString>> {
+    if value.is_empty() {
+        Ok(None)
+    } else {
+        required_c_string(value, field).map(Some)
+    }
+}
+
+/// Register a custom data type. Explicit unregister is required before unload.
+pub fn register_custom_data_type(
+    definition: &CustomDataTypeDefinition,
+) -> Result<CustomDataTypeId> {
+    let name = required_c_string(&definition.name, "custom type name")?;
+    let menu_name = optional_c_string(&definition.menu_name, "custom type menu name")?;
+    let hotkey = optional_c_string(&definition.hotkey, "custom type hotkey")?;
+    let assembler_keyword = optional_c_string(
+        &definition.assembler_keyword,
+        "custom type assembler keyword",
+    )?;
+    let context = Arc::new(TypeCallbackContext {
+        may_create_at: definition.may_create_at.clone(),
+        calculate_size: definition.calculate_size.clone(),
+    });
+    let raw = idax_sys::IdaxCustomDataTypeDefinition {
+        name: name.as_ptr(),
+        menu_name: menu_name.as_ref().map_or(std::ptr::null(), |v| v.as_ptr()),
+        hotkey: hotkey.as_ref().map_or(std::ptr::null(), |v| v.as_ptr()),
+        assembler_keyword: assembler_keyword
+            .as_ref()
+            .map_or(std::ptr::null(), |v| v.as_ptr()),
+        value_size: definition.value_size,
+        allow_duplicates: definition.allow_duplicates as i32,
+        user_data: Arc::as_ptr(&context).cast_mut().cast(),
+        may_create_at: definition
+            .may_create_at
+            .as_ref()
+            .map(|_| custom_type_may_create_trampoline as _),
+        calculate_size: definition
+            .calculate_size
+            .as_ref()
+            .map(|_| custom_type_size_trampoline as _),
+    };
+    let mut id = 0u16;
+    let ret = unsafe { idax_sys::idax_data_register_custom_type(&raw, &mut id) };
+    if ret != 0 {
+        return Err(error::consume_last_error(
+            "register_custom_data_type failed",
+        ));
+    }
+    type_callback_contexts()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(id, context);
+    Ok(CustomDataTypeId(id))
+}
+
+pub fn unregister_custom_data_type(type_id: CustomDataTypeId) -> Status {
+    let ret = unsafe { idax_sys::idax_data_unregister_custom_type(type_id.0) };
+    type_callback_contexts()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&type_id.0);
+    error::int_to_status(ret, "unregister_custom_data_type failed")
+}
+
+pub fn custom_data_type(type_id: CustomDataTypeId) -> Result<CustomDataTypeInfo> {
+    let mut raw = idax_sys::IdaxCustomDataTypeInfo::default();
+    let ret = unsafe { idax_sys::idax_data_custom_type(type_id.0, &mut raw) };
+    if ret != 0 {
+        return Err(error::consume_last_error("custom_data_type failed"));
+    }
+    let info = convert_custom_type_info(&raw);
+    unsafe { idax_sys::idax_data_custom_type_info_free(&mut raw) };
+    Ok(info)
+}
+
+pub fn find_custom_data_type(name: &str) -> Result<CustomDataTypeId> {
+    let name = required_c_string(name, "custom type name")?;
+    let mut id = 0u16;
+    let ret = unsafe { idax_sys::idax_data_find_custom_type(name.as_ptr(), &mut id) };
+    if ret != 0 {
+        Err(error::consume_last_error("find_custom_data_type failed"))
+    } else {
+        Ok(CustomDataTypeId(id))
+    }
+}
+
+pub fn custom_data_types(
+    minimum_size: AddressSize,
+    maximum_size: AddressSize,
+) -> Result<Vec<CustomDataTypeInfo>> {
+    let mut raw = std::ptr::null_mut();
+    let mut count = 0usize;
+    let ret = unsafe {
+        idax_sys::idax_data_custom_types(minimum_size, maximum_size, &mut raw, &mut count)
+    };
+    if ret != 0 {
+        return Err(error::consume_last_error("custom_data_types failed"));
+    }
+    let infos = if raw.is_null() || count == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(raw, count) }
+            .iter()
+            .map(convert_custom_type_info)
+            .collect()
+    };
+    unsafe { idax_sys::idax_data_custom_type_infos_free(raw, count) };
+    Ok(infos)
+}
+
+/// Register a custom data format. Explicit unregister is required before unload.
+pub fn register_custom_data_format(
+    definition: &CustomDataFormatDefinition,
+) -> Result<CustomDataFormatId> {
+    let name = required_c_string(&definition.name, "custom format name")?;
+    let menu_name = optional_c_string(&definition.menu_name, "custom format menu name")?;
+    let hotkey = optional_c_string(&definition.hotkey, "custom format hotkey")?;
+    let context = Arc::new(FormatCallbackContext {
+        render: definition.render.clone(),
+        scan: definition.scan.clone(),
+        analyze: definition.analyze.clone(),
+    });
+    let raw = idax_sys::IdaxCustomDataFormatDefinition {
+        name: name.as_ptr(),
+        menu_name: menu_name.as_ref().map_or(std::ptr::null(), |v| v.as_ptr()),
+        hotkey: hotkey.as_ref().map_or(std::ptr::null(), |v| v.as_ptr()),
+        value_size: definition.value_size,
+        text_width: definition.text_width,
+        user_data: Arc::as_ptr(&context).cast_mut().cast(),
+        render: definition
+            .render
+            .as_ref()
+            .map(|_| custom_format_render_trampoline as _),
+        scan: definition
+            .scan
+            .as_ref()
+            .map(|_| custom_format_scan_trampoline as _),
+        analyze: definition
+            .analyze
+            .as_ref()
+            .map(|_| custom_format_analyze_trampoline as _),
+        release_buffer: Some(custom_data_release_buffer_trampoline),
+    };
+    let mut id = 0u16;
+    let ret = unsafe { idax_sys::idax_data_register_custom_format(&raw, &mut id) };
+    if ret != 0 {
+        return Err(error::consume_last_error(
+            "register_custom_data_format failed",
+        ));
+    }
+    format_callback_contexts()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(id, context);
+    Ok(CustomDataFormatId(id))
+}
+
+pub fn unregister_custom_data_format(format_id: CustomDataFormatId) -> Status {
+    let ret = unsafe { idax_sys::idax_data_unregister_custom_format(format_id.0) };
+    format_callback_contexts()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .remove(&format_id.0);
+    error::int_to_status(ret, "unregister_custom_data_format failed")
+}
+
+pub fn custom_data_format(format_id: CustomDataFormatId) -> Result<CustomDataFormatInfo> {
+    let mut raw = idax_sys::IdaxCustomDataFormatInfo::default();
+    let ret = unsafe { idax_sys::idax_data_custom_format(format_id.0, &mut raw) };
+    if ret != 0 {
+        return Err(error::consume_last_error("custom_data_format failed"));
+    }
+    let info = convert_custom_format_info(&raw);
+    unsafe { idax_sys::idax_data_custom_format_info_free(&mut raw) };
+    Ok(info)
+}
+
+pub fn find_custom_data_format(name: &str) -> Result<CustomDataFormatId> {
+    let name = required_c_string(name, "custom format name")?;
+    let mut id = 0u16;
+    let ret = unsafe { idax_sys::idax_data_find_custom_format(name.as_ptr(), &mut id) };
+    if ret != 0 {
+        Err(error::consume_last_error("find_custom_data_format failed"))
+    } else {
+        Ok(CustomDataFormatId(id))
+    }
+}
+
+fn custom_format_list(
+    call: impl FnOnce(*mut *mut idax_sys::IdaxCustomDataFormatInfo, *mut usize) -> i32,
+) -> Result<Vec<CustomDataFormatInfo>> {
+    let mut raw = std::ptr::null_mut();
+    let mut count = 0usize;
+    let ret = call(&mut raw, &mut count);
+    if ret != 0 {
+        return Err(error::consume_last_error("custom data format list failed"));
+    }
+    let infos = if raw.is_null() || count == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(raw, count) }
+            .iter()
+            .map(convert_custom_format_info)
+            .collect()
+    };
+    unsafe { idax_sys::idax_data_custom_format_infos_free(raw, count) };
+    Ok(infos)
+}
+
+pub fn custom_data_formats(type_id: CustomDataTypeId) -> Result<Vec<CustomDataFormatInfo>> {
+    custom_format_list(|out, count| unsafe {
+        idax_sys::idax_data_custom_formats(type_id.0, out, count)
+    })
+}
+
+pub fn standard_custom_data_formats() -> Result<Vec<CustomDataFormatInfo>> {
+    custom_format_list(|out, count| unsafe {
+        idax_sys::idax_data_standard_custom_formats(out, count)
+    })
+}
+
+pub fn attach_custom_data_format(
+    type_id: CustomDataTypeId,
+    format_id: CustomDataFormatId,
+) -> Status {
+    let ret = unsafe { idax_sys::idax_data_attach_custom_format(type_id.0, format_id.0) };
+    error::int_to_status(ret, "attach_custom_data_format failed")
+}
+
+pub fn detach_custom_data_format(
+    type_id: CustomDataTypeId,
+    format_id: CustomDataFormatId,
+) -> Status {
+    let ret = unsafe { idax_sys::idax_data_detach_custom_format(type_id.0, format_id.0) };
+    error::int_to_status(ret, "detach_custom_data_format failed")
+}
+
+pub fn is_custom_data_format_attached(
+    type_id: CustomDataTypeId,
+    format_id: CustomDataFormatId,
+) -> Result<bool> {
+    let mut attached = 0;
+    let ret = unsafe {
+        idax_sys::idax_data_is_custom_format_attached(type_id.0, format_id.0, &mut attached)
+    };
+    if ret != 0 {
+        Err(error::consume_last_error(
+            "is_custom_data_format_attached failed",
+        ))
+    } else {
+        Ok(attached != 0)
+    }
+}
+
+pub fn attach_custom_data_format_to_standard_types(format_id: CustomDataFormatId) -> Status {
+    let ret = unsafe { idax_sys::idax_data_attach_custom_format_to_standard_types(format_id.0) };
+    error::int_to_status(ret, "attach custom format to standard types failed")
+}
+
+pub fn detach_custom_data_format_from_standard_types(format_id: CustomDataFormatId) -> Status {
+    let ret = unsafe { idax_sys::idax_data_detach_custom_format_from_standard_types(format_id.0) };
+    error::int_to_status(ret, "detach custom format from standard types failed")
+}
+
+pub fn is_custom_data_format_attached_to_standard_types(
+    format_id: CustomDataFormatId,
+) -> Result<bool> {
+    let mut attached = 0;
+    let ret = unsafe {
+        idax_sys::idax_data_is_custom_format_attached_to_standard_types(format_id.0, &mut attached)
+    };
+    if ret != 0 {
+        Err(error::consume_last_error(
+            "standard custom format attachment query failed",
+        ))
+    } else {
+        Ok(attached != 0)
+    }
+}
+
+pub fn custom_data_item_size(
+    type_id: CustomDataTypeId,
+    address: Address,
+    maximum_size: AddressSize,
+) -> Result<AddressSize> {
+    let mut size = 0;
+    let ret = unsafe {
+        idax_sys::idax_data_custom_item_size(type_id.0, address, maximum_size, &mut size)
+    };
+    if ret != 0 {
+        Err(error::consume_last_error("custom_data_item_size failed"))
+    } else {
+        Ok(size)
+    }
+}
+
+pub fn define_custom(
+    address: Address,
+    byte_length: AddressSize,
+    type_id: CustomDataTypeId,
+    format_id: CustomDataFormatId,
+) -> Status {
+    let ret =
+        unsafe { idax_sys::idax_data_define_custom(address, byte_length, type_id.0, format_id.0) };
+    error::int_to_status(ret, "define_custom failed")
+}
+
+pub fn define_custom_inferred(
+    address: Address,
+    type_id: CustomDataTypeId,
+    format_id: CustomDataFormatId,
+    maximum_size: AddressSize,
+) -> Status {
+    let ret = unsafe {
+        idax_sys::idax_data_define_custom_inferred(address, type_id.0, format_id.0, maximum_size)
+    };
+    error::int_to_status(ret, "define_custom_inferred failed")
+}
+
+pub fn custom_data_at(address: Address) -> Result<CustomDataItemInfo> {
+    let mut raw = idax_sys::IdaxCustomDataItemInfo::default();
+    let ret = unsafe { idax_sys::idax_data_custom_at(address, &mut raw) };
+    if ret != 0 {
+        Err(error::consume_last_error("custom_data_at failed"))
+    } else {
+        Ok(CustomDataItemInfo {
+            type_id: CustomDataTypeId(raw.type_id),
+            format_id: CustomDataFormatId(raw.format_id),
+            byte_length: raw.byte_length,
+        })
+    }
+}
+
+pub fn render_custom_data(
+    format_id: CustomDataFormatId,
+    value: &[u8],
+    context: CustomDataFormatContext,
+) -> Result<String> {
+    let mut output = std::ptr::null_mut();
+    let ret = unsafe {
+        idax_sys::idax_data_render_custom(
+            format_id.0,
+            value.as_ptr(),
+            value.len(),
+            context.address,
+            context.operand_index,
+            context.type_id.0,
+            &mut output,
+        )
+    };
+    if ret != 0 {
+        return Err(error::consume_last_error("render_custom_data failed"));
+    }
+    let text = ffi_string(output);
+    unsafe { idax_sys::idax_free_string(output) };
+    Ok(text)
+}
+
+pub fn scan_custom_data(
+    format_id: CustomDataFormatId,
+    text: &str,
+    context: CustomDataFormatContext,
+) -> Result<Vec<u8>> {
+    let text = required_c_string(text, "custom scan text")?;
+    let mut output = std::ptr::null_mut();
+    let mut length = 0usize;
+    let ret = unsafe {
+        idax_sys::idax_data_scan_custom(
+            format_id.0,
+            text.as_ptr(),
+            context.address,
+            context.operand_index,
+            &mut output,
+            &mut length,
+        )
+    };
+    if ret != 0 {
+        return Err(error::consume_last_error("scan_custom_data failed"));
+    }
+    let bytes = if output.is_null() || length == 0 {
+        Vec::new()
+    } else {
+        unsafe { std::slice::from_raw_parts(output, length).to_vec() }
+    };
+    unsafe { idax_sys::idax_free_bytes(output) };
+    Ok(bytes)
+}
+
+pub fn analyze_custom_data(
+    format_id: CustomDataFormatId,
+    context: CustomDataFormatContext,
+) -> Status {
+    let ret = unsafe {
+        idax_sys::idax_data_analyze_custom(
+            format_id.0,
+            context.address,
+            context.operand_index,
+            context.type_id.0,
+        )
+    };
+    error::int_to_status(ret, "analyze_custom_data failed")
+}
+
+/// Undefine a byte count beginning at address.
 pub fn undefine(address: Address, count: AddressSize) -> Status {
     let ret = unsafe { idax_sys::idax_data_undefine(address, count) };
     error::int_to_status(ret, "undefine failed")

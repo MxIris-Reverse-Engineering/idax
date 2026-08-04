@@ -72,33 +72,52 @@ idax was born from a simple observation: **the IDA SDK's power is extraordinary,
 ## What it covers
 
 idax spans the SDK surface across core analysis, module-authoring, and interactive workflows. 30 public headers across 26 domain namespaces plus cross-cutting core headers:
+idax spans the SDK surface across core analysis, module-authoring, and interactive workflows. 41 public headers cover 38 concept domains plus the umbrella, shared core, and error headers:
 
 | Domain | Namespace | What it wraps |
 |--------|-----------|---------------|
 | **Addresses** | `ida::address` | Predicates, item traversal, range iteration, predicate search |
 | **Byte access** | `ida::data` | Read/write/patch/define bytes, typed values, string extraction, binary pattern search |
 | **Database** | `ida::database` | Open/save/save-to/close, metadata, snapshots, file/memory transfer |
+| **Byte access** | `ida::data` | Read/write/patch bytes, typed values, checked fixed-width arrays through 512 bits, processor-aware tbyte/packed-real definitions, owned custom type/format registration and creation, configurable copied string-list inventory, binary pattern search |
+| **Database** | `ida::database` | Open/save/close, metadata, snapshots, file/memory transfer |
 | **Paths** | `ida::path` | Portable basename/dirname/directory helpers for plugin workflows |
 | **Segments** | `ida::segment` | CRUD, properties, permissions, iteration |
 | **Functions** | `ida::function` | CRUD, chunks, frames, register variables, callers/callees, prototype export/apply |
 | **Instructions** | `ida::instruction` | Decode/create, operand access/read-write metadata, representation controls, xref conveniences |
 | **Names** | `ida::name` | Set/get/force/remove, demangling, resolution, properties |
+| **Names** | `ida::name` | Set/get/force/remove, filtered copied inventories, address-based or arbitrary-symbol demangling, resolution, properties |
 | **Cross-refs** | `ida::xref` | Unified reference model, typed code/data refs, add/remove/enumerate |
+| **Offset references** | `ida::offset` | Opaque operand reference formats/options, copied metadata, rendering, calculation, verified mutation, and reference-aware data xrefs |
 | **Comments** | `ida::comment` | Regular/repeatable, anterior/posterior lines, bulk operations, rendering |
 | **Types** | `ida::type` | Type construction, structs/unions/members, apply/retrieve, bulk declaration import/rendering, dependency-ordered declarations, type graph rendering, type libraries |
+| **Source parsers** | `ida::parser` | Third-party parser selection by name/language, arguments/options, source/file ingestion, and parse reports |
+| **IDC scripts** | `ida::script` | Opaque values, exact access and explicit coercion, objects/slices, evaluation, compilation, calls, globals/references, and script/include resolution |
+| **Directory trees** | `ida::directory` | All eight built-in organization trees, copied entries, directory/item mutation, ordering, search, and partial bulk reports |
+| **Persistent registry** | `ida::registry` | Scoped plugin configuration with typed string/binary/integer/boolean values, copied key/value inventories, ordered string lists, and deletion |
+| **Register tracking** | `ida::registers` | Named backward value tracking, copied constant/stack-relative candidates and origins, nearest-of-two selection, and semantic cache invalidation |
 | **Entries** | `ida::entry` | Entry point enumeration, add/rename/forwarder workflows |
 | **Fixups** | `ida::fixup` | Fixup descriptors, traversal, custom fixup handlers |
 | **Search** | `ida::search` | Text (with regex), immediate, binary pattern, structural search |
 | **Analysis** | `ida::analysis` | Auto-analysis control, scheduling, waiting |
+| **Bookmarks** | `ida::bookmark` | Opaque address bookmarks with copied descriptions, deterministic slots, lookup, update, enumeration, and identity-preserving removal |
+| **Navigation history** | `ida::navigation` | Persistent opaque address histories with semantic channels, copied metadata, cursor movement, exact replacement, and channel transfer |
+| **Problems** | `ida::problem` | Typed analysis-problem recording, descriptions, ordered lookup, names, removal, and presence |
+| **Exception regions** | `ida::exception` | Opaque fragmented C++/SEH protected regions, handlers, membership, mutation, and system-EH lookup |
 | **Lumina** | `ida::lumina` | Lumina metadata pull/push wrappers and connection checks |
+| **Undo** | `ida::undo` | Opaque named restore points, copied next-action labels, and undo/redo execution |
 | **Events** | `ida::event` | Typed IDB subscriptions, generic filtering/routing, RAII guards |
 | **Plugins** | `ida::plugin` | Plugin base class, action registration, menu/toolbar/popup attach+detach, context callbacks with optional Local Types refs |
+| **Plugins** | `ida::plugin` | Plugin base class, owned action registration/activation, scoped one-call hotkeys, menu/toolbar/popup attach+detach, context callbacks with optional Local Types refs |
 | **Loaders** | `ida::loader` | Loader base class, InputFile abstraction, typed request/flag models, registration macro |
-| **Processors** | `ida::processor` | Processor base class, typed analysis details, tokenized output context, switch detection |
+| **Processors** | `ida::processor` | Loadable `LPH`/`procmod_t` bridge, exact processor flags, typed instruction/operand analysis, tokenized output, switch detection |
 | **Debugger** | `ida::debugger` | Process lifecycle, breakpoints, memory, registers, typed event subscriptions |
 | **Decompiler** | `ida::decompiler` | Scoped Hex-Rays ownership, decompile, pseudocode, variables, ctree visitor, lvar metadata, user comments, popup events, address mapping |
 | **Lines** | `ida::lines` | Tagged text/color helpers for pseudocode and listing output |
 | **UI** | `ida::ui` | Messages, dialogs/forms including typed `ask_form` and fixed-shape binding entrypoints, optional Qt clipboard helpers (`IDAX_ENABLE_QT_CLIPBOARD` with IDA-compatible `QT_NAMESPACE=QT` Qt), wait-box progress UI, widget/custom-viewer APIs, choosers, timers, UI/VIEW event subscriptions |
+| **Decompiler** | `ida::decompiler` | Scoped Hex-Rays ownership, decompile, pseudocode, variables, ctree visitor, lvar metadata, semantic persisted-comment positions/enumeration, pseudocode-switch/popup events, address mapping |
+| **Lines** | `ida::lines` | Tagged text/color helpers plus copied half-open source-file address mappings |
+| **UI** | `ida::ui` | Messages, dialogs/forms including typed `ask_form` and fixed-shape binding entrypoints, optional Qt clipboard helpers (`IDAX_ENABLE_QT_CLIPBOARD` with IDA-compatible `QT_NAMESPACE=QT` Qt), wait-box progress UI, stable widget/current-widget and custom-viewer APIs, choosers, timers, UI/VIEW event subscriptions |
 | **Graphs** | `ida::graph` | Graph objects, node/edge CRUD, flow charts, basic blocks, switch-table metadata |
 | **Storage** | `ida::storage` | Netnode abstraction, alt/sup/hash/blob operations |
 
@@ -275,10 +294,10 @@ if (auto avail = ida::decompiler::available(); avail && *avail) {
 ### Event subscriptions with RAII
 
 ```cpp
-// Subscribe to rename events -- automatically unsubscribes when guard goes out of scope
-auto token = ida::event::on_renamed(
-    [](ida::Address addr, std::string new_name, std::string old_name) {
-        ida::ui::message("renamed: " + old_name + " -> " + new_name + "\n");
+// Subscribe to owned mutation snapshots; callback-side unsubscribe is supported.
+auto token = ida::event::on_segment_moved(
+    [](const ida::event::SegmentMovedEvent& event) {
+        ida::ui::message("segment moved to " + std::to_string(event.to) + "\n");
     });
 
 ida::event::ScopedSubscription guard(*token);  // RAII: unsubscribes in destructor
@@ -315,6 +334,32 @@ auto st = ida::type::TypeInfo::create_struct();
 st.add_member("flags",  ida::type::TypeInfo::uint32());
 st.add_member("buffer", ida::type::TypeInfo::array_of(ida::type::TypeInfo::uint8(), 256));
 st.save_as("packet_header");
+
+// Preserve exact IDA shifted-pointer metadata without exposing ptr_type_data_t.
+auto packet = ida::type::TypeInfo::by_name("packet_header");
+if (packet) {
+    auto shifted = ida::type::TypeInfo::pointer_to(*packet)
+        .with_shifted_parent(*packet, 8);
+    if (shifted) {
+        auto details = shifted->pointer_details(); // parent + signed byte delta
+    }
+}
+
+// Replace only an exact local forward declaration, preserving its ordinal.
+auto forward = ida::type::TypeInfo::by_name("packet_forward");
+if (forward && forward->is_forward_declaration()
+    && forward->forward_declaration_kind() == ida::type::TypeKind::Struct) {
+    auto complete = ida::type::TypeInfo::create_struct();
+    complete.add_member("length", ida::type::TypeInfo::uint32(), 0);
+    auto replaced = complete.replace_forward_declaration("packet_forward");
+}
+
+// Keep UDT-member identities opaque while adding persistent informational
+// references from exact instruction item heads.
+if (packet) {
+    auto added = packet->ensure_member_reference(0, instruction_address);
+    auto sources = packet->member_references(0);
+}
 
 // Parse from C declaration
 auto parsed = ida::type::TypeInfo::from_declaration("int (*callback)(void*, size_t)");
@@ -384,7 +429,12 @@ public:
         pi.short_names    = {"myproc"};
         pi.long_names     = {"My Custom Processor"};
         pi.default_bitness = 32;
-        pi.registers      = {{"r0", false}, {"r1", false}, {"sp", false}, {"pc", false}};
+        pi.registers      = {{"r0", false}, {"r1", false}, {"sp", false}, {"pc", false},
+                             {"cs", false}, {"ds", false}};
+        pi.first_segment_register = 4;
+        pi.last_segment_register = 5;
+        pi.code_segment_register = 4;
+        pi.data_segment_register = 5;
         pi.instructions   = {{"nop", 0}, {"mov", 0}, {"add", 0}, {"jmp", 0}};
         return pi;
     }
@@ -394,14 +444,29 @@ public:
         return 4;
     }
 
+    ida::Result<ida::processor::AnalyzeDetails>
+    analyze_with_details(ida::Address address) override {
+        ida::processor::AnalyzeDetails details;
+        details.instruction_code = 0;
+        details.size = 4;
+        return details;
+    }
+
     ida::processor::EmulateResult emulate(ida::Address) override {
         return ida::processor::EmulateResult::Success;
     }
 
-    void output_instruction(ida::Address) override { /* ... */ }
+    void output_instruction(ida::Address) override {}
+
+    ida::processor::OutputInstructionResult
+    output_instruction_with_context(ida::Address,
+                                    ida::processor::OutputContext& output) override {
+        output.mnemonic("nop");
+        return ida::processor::OutputInstructionResult::Success;
+    }
 
     ida::processor::OutputOperandResult output_operand(ida::Address, int) override {
-        return ida::processor::OutputOperandResult::Ok;
+        return ida::processor::OutputOperandResult::Hidden;
     }
 };
 
@@ -459,7 +524,7 @@ tests/
     fixtures/           # Test binaries and pre-analysed databases
 
 examples/
-    plugin/             # Plugin examples (quickstart + advanced ports, including abyss/idapcode)
+    plugin/             # Plugin examples (quickstart + ports including abyss/idapcode/Diaphora/Symless)
     loader/             # Custom ELF loader example
     procmod/            # Custom processor module example
     full/               # Real-world full ports (e.g. JBC)
@@ -505,7 +570,7 @@ Set `IDADIR` to your IDA install path, or let CMake auto-discover it:
 ctest --test-dir build --output-on-failure
 ```
 
-The test suite includes 16 targets: 2 unit tests (pure logic + API surface parity) and 14 integration tests covering every namespace with a real ELF64 fixture binary.
+The test suite includes 33 targets: 8 unit/compile-surface tests and 25 integration tests covering every namespace with a real ELF64 fixture binary.
 
 For repeatable OS/compiler/profile runs, use `scripts/run_validation_matrix.sh` and
 track evidence in `docs/compatibility_matrix.md`.
@@ -546,12 +611,12 @@ idax is validated through layered testing:
 | Layer | What it tests | Runtime needed |
 |-------|---------------|----------------|
 | **Unit tests** | Error model, diagnostics, range semantics, iterator contracts | None |
-| **API surface parity** | Compile-only check that all 23+ namespaces and types exist | None |
-| **Smoke test** | 232 checks across every namespace, end-to-end | idalib + fixture |
+| **API surface parity** | Compile-only check that all 38 domain namespaces and types exist | None |
+| **Smoke test** | 267 checks across every established namespace, end-to-end | idalib + fixture |
 | **Domain integration** | Dedicated suites: types, fixups, operands, decompiler, events, etc. | idalib + fixture |
 | **Scenario tests** | Loader/processor module lifecycle and callback wiring | idalib + fixture |
 
-Current status: **16/16 test targets passing** (232 smoke checks + 15 dedicated suites).
+Current status: **38/38 test targets passing** (267 smoke checks + 37 focused/unit suites).
 
 ---
 

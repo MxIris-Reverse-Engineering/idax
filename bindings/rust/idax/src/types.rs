@@ -21,6 +21,37 @@ pub enum CallingConvention {
     UserDefined = 8,
 }
 
+/// Coarse type kind classification.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(i32)]
+pub enum TypeKind {
+    Unknown = 0,
+    Void = 1,
+    Bool = 2,
+    Character = 3,
+    SignedInteger = 4,
+    UnsignedInteger = 5,
+    FloatingPoint = 6,
+    Pointer = 7,
+    Array = 8,
+    Function = 9,
+    Struct = 10,
+    Union = 11,
+    Enum = 12,
+    Typedef = 13,
+}
+
+/// Enum display radix metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(i32)]
+pub enum EnumRadix {
+    Unknown = 0,
+    Binary = 1,
+    Octal = 2,
+    Decimal = 3,
+    Hexadecimal = 4,
+}
+
 fn calling_convention_from_i32(value: i32) -> Result<CallingConvention> {
     match value {
         0 => Ok(CallingConvention::Unknown),
@@ -33,6 +64,37 @@ fn calling_convention_from_i32(value: i32) -> Result<CallingConvention> {
         7 => Ok(CallingConvention::Golang),
         8 => Ok(CallingConvention::UserDefined),
         _ => Err(Error::validation("invalid calling convention value")),
+    }
+}
+
+fn type_kind_from_i32(value: i32) -> Result<TypeKind> {
+    match value {
+        0 => Ok(TypeKind::Unknown),
+        1 => Ok(TypeKind::Void),
+        2 => Ok(TypeKind::Bool),
+        3 => Ok(TypeKind::Character),
+        4 => Ok(TypeKind::SignedInteger),
+        5 => Ok(TypeKind::UnsignedInteger),
+        6 => Ok(TypeKind::FloatingPoint),
+        7 => Ok(TypeKind::Pointer),
+        8 => Ok(TypeKind::Array),
+        9 => Ok(TypeKind::Function),
+        10 => Ok(TypeKind::Struct),
+        11 => Ok(TypeKind::Union),
+        12 => Ok(TypeKind::Enum),
+        13 => Ok(TypeKind::Typedef),
+        _ => Err(Error::validation("invalid type kind value")),
+    }
+}
+
+fn enum_radix_from_i32(value: i32) -> Result<EnumRadix> {
+    match value {
+        0 => Ok(EnumRadix::Unknown),
+        1 => Ok(EnumRadix::Binary),
+        2 => Ok(EnumRadix::Octal),
+        3 => Ok(EnumRadix::Decimal),
+        4 => Ok(EnumRadix::Hexadecimal),
+        _ => Err(Error::validation("invalid enum radix value")),
     }
 }
 
@@ -51,7 +113,57 @@ pub struct Member {
     pub r#type: TypeInfo,
     pub byte_offset: usize,
     pub bit_size: usize,
+    pub bit_offset: usize,
+    pub storage_byte_width: usize,
+    pub is_baseclass: bool,
+    pub is_vftable: bool,
+    pub is_gap: bool,
+    pub is_bitfield: bool,
     pub comment: String,
+}
+
+/// Function argument descriptor with the original local type argument name.
+#[derive(Debug, Clone)]
+pub struct FunctionArgument {
+    pub name: String,
+    pub r#type: TypeInfo,
+}
+
+/// Function signature details.
+#[derive(Debug, Clone)]
+pub struct FunctionDetails {
+    pub return_type: TypeInfo,
+    pub arguments: Vec<FunctionArgument>,
+    pub calling_convention: CallingConvention,
+    pub variadic: bool,
+}
+
+/// Struct/union layout details.
+#[derive(Debug, Clone)]
+pub struct UdtDetails {
+    pub total_size: usize,
+    pub is_union: bool,
+    pub is_cpp_object: bool,
+    pub is_vftable: bool,
+    pub members: Vec<Member>,
+}
+
+/// Complete pointer metadata, including an exact shifted parent and byte delta.
+#[derive(Debug, Clone)]
+pub struct PointerDetails {
+    pub pointee_type: TypeInfo,
+    pub shifted_parent: Option<TypeInfo>,
+    pub shift_delta: i32,
+    pub is_shifted: bool,
+}
+
+/// Enum metadata and members.
+#[derive(Debug, Clone)]
+pub struct EnumDetails {
+    pub byte_width: usize,
+    pub signed_values: bool,
+    pub radix: EnumRadix,
+    pub members: Vec<EnumMember>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -321,6 +433,48 @@ impl TypeInfo {
         unsafe { idax_sys::idax_type_is_typedef(self.handle) != 0 }
     }
 
+    pub fn is_bool(&self) -> bool {
+        unsafe { idax_sys::idax_type_is_bool(self.handle) != 0 }
+    }
+
+    pub fn is_char(&self) -> bool {
+        unsafe { idax_sys::idax_type_is_char(self.handle) != 0 }
+    }
+
+    pub fn is_unsigned_char(&self) -> bool {
+        unsafe { idax_sys::idax_type_is_unsigned_char(self.handle) != 0 }
+    }
+
+    pub fn is_signed(&self) -> bool {
+        unsafe { idax_sys::idax_type_is_signed(self.handle) != 0 }
+    }
+
+    /// Whether this value denotes a local-type forward declaration.
+    pub fn is_forward_declaration(&self) -> bool {
+        unsafe { idax_sys::idax_type_is_forward_declaration(self.handle) != 0 }
+    }
+
+    /// Declared kind of a forward declaration, or [`TypeKind::Unknown`].
+    pub fn forward_declaration_kind(&self) -> Result<TypeKind> {
+        let mut raw: i32 = 0;
+        let ret = unsafe { idax_sys::idax_type_forward_declaration_kind(self.handle, &mut raw) };
+        if ret != 0 {
+            return Err(error::consume_last_error(
+                "type::forward_declaration_kind failed",
+            ));
+        }
+        type_kind_from_i32(raw)
+    }
+
+    pub fn kind(&self) -> Result<TypeKind> {
+        let mut raw: i32 = 0;
+        let ret = unsafe { idax_sys::idax_type_kind(self.handle, &mut raw) };
+        if ret != 0 {
+            return Err(error::consume_last_error("type::kind failed"));
+        }
+        type_kind_from_i32(raw)
+    }
+
     /// Size of the type in bytes.
     pub fn size(&self) -> Result<usize> {
         let mut sz: usize = 0;
@@ -343,10 +497,83 @@ impl TypeInfo {
         }
     }
 
+    pub fn name(&self) -> Result<String> {
+        let mut out: *mut c_char = std::ptr::null_mut();
+        let ret = unsafe { idax_sys::idax_type_name(self.handle, &mut out) };
+        if ret != 0 || out.is_null() {
+            Err(error::consume_last_error("type::name failed"))
+        } else {
+            unsafe { error::cstr_to_string_free(out, "type::name failed") }
+        }
+    }
+
+    pub fn declaration(&self, declarator_name: Option<&str>) -> Result<String> {
+        let name = CString::new(declarator_name.unwrap_or(""))
+            .map_err(|_| Error::validation("invalid declarator name"))?;
+        let mut out: *mut c_char = std::ptr::null_mut();
+        let ret = unsafe { idax_sys::idax_type_declaration(self.handle, name.as_ptr(), &mut out) };
+        if ret != 0 || out.is_null() {
+            Err(error::consume_last_error("type::declaration failed"))
+        } else {
+            unsafe { error::cstr_to_string_free(out, "type::declaration failed") }
+        }
+    }
+
     pub fn pointee_type(&self) -> Result<Self> {
         let mut out: *mut c_void = std::ptr::null_mut();
         let ret = unsafe { idax_sys::idax_type_pointee_type(self.handle, &mut out) };
         Self::from_out_handle(ret, out, "pointee_type failed")
+    }
+
+    pub fn pointer_details(&self) -> Result<PointerDetails> {
+        let mut raw: *mut idax_sys::IdaxTypePointerDetails = std::ptr::null_mut();
+        let ret = unsafe { idax_sys::idax_type_pointer_details(self.handle, &mut raw) };
+        if ret != 0 || raw.is_null() {
+            return Err(error::consume_last_error("pointer_details failed"));
+        }
+
+        let result = unsafe {
+            let details = &mut *raw;
+            if details.pointee_type.is_null() {
+                idax_sys::idax_type_pointer_details_free(raw);
+                return Err(Error::internal(
+                    "pointer_details returned a null pointee handle",
+                ));
+            }
+            let pointee_type = TypeInfo::from_raw(details.pointee_type);
+            details.pointee_type = std::ptr::null_mut();
+            let shifted_parent = if details.shifted_parent.is_null() {
+                None
+            } else {
+                let parent = TypeInfo::from_raw(details.shifted_parent);
+                details.shifted_parent = std::ptr::null_mut();
+                Some(parent)
+            };
+            let result = PointerDetails {
+                pointee_type,
+                shifted_parent,
+                shift_delta: details.shift_delta,
+                is_shifted: details.is_shifted != 0,
+            };
+            idax_sys::idax_type_pointer_details_free(raw);
+            result
+        };
+        Ok(result)
+    }
+
+    /// Return a pointer copy shifted relative to `parent` by a nonzero signed
+    /// 32-bit byte delta.
+    pub fn with_shifted_parent(&self, parent: &TypeInfo, byte_delta: i64) -> Result<Self> {
+        let mut out: *mut c_void = std::ptr::null_mut();
+        let ret = unsafe {
+            idax_sys::idax_type_with_shifted_parent(
+                self.handle,
+                parent.handle,
+                byte_delta,
+                &mut out,
+            )
+        };
+        Self::from_out_handle(ret, out, "with_shifted_parent failed")
     }
 
     pub fn array_element_type(&self) -> Result<Self> {
@@ -403,6 +630,94 @@ impl TypeInfo {
         Ok(out)
     }
 
+    /// Return a copy with one function argument type replaced while preserving
+    /// names, locations, calling convention, and all unaffected metadata.
+    pub fn with_function_argument_type(
+        &self,
+        index: usize,
+        replacement: &TypeInfo,
+    ) -> Result<Self> {
+        let mut out: *mut c_void = std::ptr::null_mut();
+        let ret = unsafe {
+            idax_sys::idax_type_with_function_argument_type(
+                self.handle,
+                index,
+                replacement.handle,
+                &mut out,
+            )
+        };
+        Self::from_out_handle(ret, out, "with_function_argument_type failed")
+    }
+
+    /// Return a copy with one function argument name replaced while preserving
+    /// its type, location, comment, flags, and all unaffected metadata.
+    pub fn with_function_argument_name(&self, index: usize, name: &str) -> Result<Self> {
+        let name = CString::new(name)
+            .map_err(|_| Error::validation("function argument name contains an embedded NUL"))?;
+        let mut out: *mut c_void = std::ptr::null_mut();
+        let ret = unsafe {
+            idax_sys::idax_type_with_function_argument_name(
+                self.handle,
+                index,
+                name.as_ptr(),
+                &mut out,
+            )
+        };
+        Self::from_out_handle(ret, out, "with_function_argument_name failed")
+    }
+
+    /// Return a copy with the function return type replaced while preserving
+    /// argument metadata, locations, calling convention, and function flags.
+    pub fn with_function_return_type(&self, replacement: &TypeInfo) -> Result<Self> {
+        let mut out: *mut c_void = std::ptr::null_mut();
+        let ret = unsafe {
+            idax_sys::idax_type_with_function_return_type(self.handle, replacement.handle, &mut out)
+        };
+        Self::from_out_handle(ret, out, "with_function_return_type failed")
+    }
+
+    pub fn function_details(&self) -> Result<FunctionDetails> {
+        let mut raw: *mut idax_sys::IdaxTypeFunctionDetails = std::ptr::null_mut();
+        let ret = unsafe { idax_sys::idax_type_function_details(self.handle, &mut raw) };
+        if ret != 0 || raw.is_null() {
+            return Err(error::consume_last_error("function_details failed"));
+        }
+
+        let (return_type, arguments, calling_convention_raw, variadic) = unsafe {
+            let details = &mut *raw;
+            let return_type = TypeInfo {
+                handle: details.return_type,
+            };
+            details.return_type = std::ptr::null_mut();
+
+            let mut arguments = Vec::with_capacity(details.argument_count);
+            if !details.arguments.is_null() && details.argument_count != 0 {
+                let slice =
+                    std::slice::from_raw_parts_mut(details.arguments, details.argument_count);
+                for argument in slice.iter_mut() {
+                    arguments.push(function_argument_from_raw(argument));
+                }
+            }
+
+            (
+                return_type,
+                arguments,
+                details.calling_convention,
+                details.variadic != 0,
+            )
+        };
+        unsafe {
+            idax_sys::idax_type_function_details_free(raw);
+        }
+        let calling_convention = calling_convention_from_i32(calling_convention_raw)?;
+        Ok(FunctionDetails {
+            return_type,
+            arguments,
+            calling_convention,
+            variadic,
+        })
+    }
+
     pub fn calling_convention(&self) -> Result<CallingConvention> {
         let mut raw: i32 = 0;
         let ret = unsafe { idax_sys::idax_type_calling_convention(self.handle, &mut raw) };
@@ -450,6 +765,46 @@ impl TypeInfo {
         Ok(out)
     }
 
+    pub fn enum_details(&self) -> Result<EnumDetails> {
+        let mut raw: *mut idax_sys::IdaxTypeEnumDetails = std::ptr::null_mut();
+        let ret = unsafe { idax_sys::idax_type_enum_details(self.handle, &mut raw) };
+        if ret != 0 || raw.is_null() {
+            return Err(error::consume_last_error("enum_details failed"));
+        }
+
+        let (byte_width, signed_values, radix_raw, members) = unsafe {
+            let details = &*raw;
+            let mut members = Vec::with_capacity(details.member_count);
+            if !details.members.is_null() && details.member_count != 0 {
+                let slice = std::slice::from_raw_parts(details.members, details.member_count);
+                for member in slice {
+                    members.push(EnumMember {
+                        name: c_ptr_to_string(member.name as *const c_char),
+                        value: member.value,
+                        comment: c_ptr_to_string(member.comment as *const c_char),
+                    });
+                }
+            }
+
+            (
+                details.byte_width,
+                details.signed_values != 0,
+                details.radix,
+                members,
+            )
+        };
+        unsafe {
+            idax_sys::idax_type_enum_details_free(raw);
+        }
+        let radix = enum_radix_from_i32(radix_raw)?;
+        Ok(EnumDetails {
+            byte_width,
+            signed_values,
+            radix,
+            members,
+        })
+    }
+
     /// Number of struct/union members.
     pub fn member_count(&self) -> Result<usize> {
         let mut n: usize = 0;
@@ -477,21 +832,42 @@ impl TypeInfo {
         unsafe {
             let slice = std::slice::from_raw_parts_mut(raw_members, count);
             for member in slice.iter_mut() {
-                let ty = TypeInfo {
-                    handle: member.type_,
-                };
-                member.type_ = std::ptr::null_mut();
-                out.push(Member {
-                    name: c_ptr_to_string(member.name as *const c_char),
-                    r#type: ty,
-                    byte_offset: member.byte_offset,
-                    bit_size: member.bit_size,
-                    comment: c_ptr_to_string(member.comment as *const c_char),
-                });
+                out.push(member_from_raw(member));
             }
             idax_sys::idax_type_members_free(raw_members, count);
         }
         Ok(out)
+    }
+
+    pub fn udt_details(&self) -> Result<UdtDetails> {
+        let mut raw: *mut idax_sys::IdaxTypeUdtDetails = std::ptr::null_mut();
+        let ret = unsafe { idax_sys::idax_type_udt_details(self.handle, &mut raw) };
+        if ret != 0 || raw.is_null() {
+            return Err(error::consume_last_error("udt_details failed"));
+        }
+
+        let details = unsafe {
+            let details = &mut *raw;
+            let mut members = Vec::with_capacity(details.member_count);
+            if !details.members.is_null() && details.member_count != 0 {
+                let slice = std::slice::from_raw_parts_mut(details.members, details.member_count);
+                for member in slice.iter_mut() {
+                    members.push(member_from_raw(member));
+                }
+            }
+
+            UdtDetails {
+                total_size: details.total_size,
+                is_union: details.is_union != 0,
+                is_cpp_object: details.is_cpp_object != 0,
+                is_vftable: details.is_vftable != 0,
+                members,
+            }
+        };
+        unsafe {
+            idax_sys::idax_type_udt_details_free(raw);
+        }
+        Ok(details)
     }
 
     pub fn member_by_name(&self, name: &str) -> Result<Member> {
@@ -502,14 +878,7 @@ impl TypeInfo {
             return Err(error::consume_last_error("member_by_name failed"));
         }
 
-        let member = Member {
-            name: c_ptr_to_string(raw.name as *const c_char),
-            r#type: TypeInfo { handle: raw.type_ },
-            byte_offset: raw.byte_offset,
-            bit_size: raw.bit_size,
-            comment: c_ptr_to_string(raw.comment as *const c_char),
-        };
-        raw.type_ = std::ptr::null_mut();
+        let member = member_from_raw(&mut raw);
         unsafe {
             idax_sys::idax_type_member_free(&mut raw);
         }
@@ -524,18 +893,75 @@ impl TypeInfo {
             return Err(error::consume_last_error("member_by_offset failed"));
         }
 
-        let member = Member {
-            name: c_ptr_to_string(raw.name as *const c_char),
-            r#type: TypeInfo { handle: raw.type_ },
-            byte_offset: raw.byte_offset,
-            bit_size: raw.bit_size,
-            comment: c_ptr_to_string(raw.comment as *const c_char),
-        };
-        raw.type_ = std::ptr::null_mut();
+        let member = member_from_raw(&mut raw);
         unsafe {
             idax_sys::idax_type_member_free(&mut raw);
         }
         Ok(member)
+    }
+
+    /// Source item heads with persistent informational references to the
+    /// unique exact member at `byte_offset`. The member identity stays opaque.
+    pub fn member_references(&self, byte_offset: usize) -> Result<Vec<Address>> {
+        let mut addresses: *mut u64 = std::ptr::null_mut();
+        let mut count = 0usize;
+        let ret = unsafe {
+            idax_sys::idax_type_member_references(
+                self.handle,
+                byte_offset,
+                &mut addresses,
+                &mut count,
+            )
+        };
+        if ret != 0 {
+            return Err(error::consume_last_error("member_references failed"));
+        }
+        if count == 0 {
+            if !addresses.is_null() {
+                unsafe { idax_sys::idax_free_addresses(addresses) };
+                return Err(Error::internal(
+                    "member_references returned storage with zero count",
+                ));
+            }
+            return Ok(Vec::new());
+        }
+        if addresses.is_null() {
+            return Err(Error::internal(
+                "member_references returned null with nonzero count",
+            ));
+        }
+        if count > isize::MAX as usize / std::mem::size_of::<u64>() {
+            unsafe { idax_sys::idax_free_addresses(addresses) };
+            return Err(Error::internal(
+                "member_references returned an unrepresentable address count",
+            ));
+        }
+        let result = unsafe { std::slice::from_raw_parts(addresses, count).to_vec() };
+        unsafe { idax_sys::idax_free_addresses(addresses) };
+        Ok(result)
+    }
+
+    /// Ensure a persistent informational reference from `source_address` to
+    /// the unique exact member. Returns `true` only when newly added.
+    pub fn ensure_member_reference(
+        &self,
+        byte_offset: usize,
+        source_address: Address,
+    ) -> Result<bool> {
+        let mut created = 0i32;
+        let ret = unsafe {
+            idax_sys::idax_type_ensure_member_reference(
+                self.handle,
+                byte_offset,
+                source_address,
+                &mut created,
+            )
+        };
+        if ret != 0 {
+            Err(error::consume_last_error("ensure_member_reference failed"))
+        } else {
+            Ok(created != 0)
+        }
     }
 
     pub fn add_member(&self, name: &str, member_type: &TypeInfo, byte_offset: usize) -> Status {
@@ -544,6 +970,19 @@ impl TypeInfo {
             idax_sys::idax_type_add_member(self.handle, c.as_ptr(), member_type.handle, byte_offset)
         };
         error::int_to_status(ret, "add_member failed")
+    }
+
+    /// Set mutually exclusive C++ object/vftable semantics without changing
+    /// the UDT layout, members, packing, alignment, or unrelated flags.
+    pub fn set_udt_semantics(&self, is_cpp_object: bool, is_vftable: bool) -> Status {
+        let ret = unsafe {
+            idax_sys::idax_type_set_udt_semantics(
+                self.handle,
+                is_cpp_object as i32,
+                is_vftable as i32,
+            )
+        };
+        error::int_to_status(ret, "set_udt_semantics failed")
     }
 
     /// Apply this type at the given address.
@@ -557,6 +996,18 @@ impl TypeInfo {
         let c = CString::new(name).map_err(|_| Error::validation("invalid name"))?;
         let ret = unsafe { idax_sys::idax_type_save_as(self.handle, c.as_ptr()) };
         error::int_to_status(ret, "type::save_as failed")
+    }
+
+    /// Replace an exact local same-name struct/union forward declaration with
+    /// a complete copy of this UDT while preserving the forward ordinal.
+    pub fn replace_forward_declaration(&self, name: &str) -> Result<Self> {
+        let c = CString::new(name)
+            .map_err(|_| Error::validation("invalid forward declaration name"))?;
+        let mut out: *mut c_void = std::ptr::null_mut();
+        let ret = unsafe {
+            idax_sys::idax_type_replace_forward_declaration(self.handle, c.as_ptr(), &mut out)
+        };
+        Self::from_out_handle(ret, out, "replace_forward_declaration failed")
     }
 
     /// Get the raw handle for FFI interop.
@@ -601,6 +1052,39 @@ fn c_ptr_to_string(ptr: *const c_char) -> String {
         String::new()
     } else {
         unsafe { CStr::from_ptr(ptr).to_string_lossy().into_owned() }
+    }
+}
+
+fn member_from_raw(member: &mut idax_sys::IdaxTypeMember) -> Member {
+    let ty = TypeInfo {
+        handle: member.type_,
+    };
+    member.type_ = std::ptr::null_mut();
+    Member {
+        name: c_ptr_to_string(member.name as *const c_char),
+        r#type: ty,
+        byte_offset: member.byte_offset,
+        bit_size: member.bit_size,
+        bit_offset: member.bit_offset,
+        storage_byte_width: member.storage_byte_width,
+        is_baseclass: member.is_baseclass != 0,
+        is_vftable: member.is_vftable != 0,
+        is_gap: member.is_gap != 0,
+        is_bitfield: member.is_bitfield != 0,
+        comment: c_ptr_to_string(member.comment as *const c_char),
+    }
+}
+
+fn function_argument_from_raw(
+    argument: &mut idax_sys::IdaxTypeFunctionArgument,
+) -> FunctionArgument {
+    let ty = TypeInfo {
+        handle: argument.type_,
+    };
+    argument.type_ = std::ptr::null_mut();
+    FunctionArgument {
+        name: c_ptr_to_string(argument.name as *const c_char),
+        r#type: ty,
     }
 }
 

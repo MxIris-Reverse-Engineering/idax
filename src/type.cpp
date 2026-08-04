@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <limits>
 #include <map>
 #include <queue>
 #include <set>
@@ -101,6 +102,16 @@ CallingConvention from_sdk_calling_convention(callcnv_t cc) {
             return CallingConvention::UserDefined;
         default:
             return CallingConvention::Unknown;
+    }
+}
+
+EnumRadix from_sdk_enum_radix(int radix) {
+    switch (radix) {
+        case 2: return EnumRadix::Binary;
+        case 8: return EnumRadix::Octal;
+        case 10: return EnumRadix::Decimal;
+        case 16: return EnumRadix::Hexadecimal;
+        default: return EnumRadix::Unknown;
     }
 }
 
@@ -259,9 +270,12 @@ Result<TypeInfo> TypeInfo::by_name(std::string_view name) {
     TypeInfo result;
     std::string name_str(name);
     if (!TypeInfoAccess::get(result)->ti.get_named_type(
-            get_idati(), name_str.c_str(), BTF_TYPEDEF, true, true))
+            get_idati(), name_str.c_str(), BTF_TYPEDEF, true, true)
+        && !TypeInfoAccess::get(result)->ti.get_named_type(
+            nullptr, name_str.c_str(), BTF_TYPEDEF, true, true)) {
         return std::unexpected(Error::not_found("Type not found in local type library",
                                                 name_str));
+    }
     return result;
 }
 
@@ -277,6 +291,65 @@ bool TypeInfo::is_struct()         const { return impl_ && impl_->ti.is_struct()
 bool TypeInfo::is_union()          const { return impl_ && impl_->ti.is_union(); }
 bool TypeInfo::is_enum()           const { return impl_ && impl_->ti.is_enum(); }
 bool TypeInfo::is_typedef()        const { return impl_ && impl_->ti.is_typedef(); }
+bool TypeInfo::is_bool()           const { return impl_ && impl_->ti.is_bool(); }
+bool TypeInfo::is_char()           const { return impl_ && impl_->ti.is_char(); }
+bool TypeInfo::is_unsigned_char()  const { return impl_ && impl_->ti.is_uchar(); }
+bool TypeInfo::is_signed()         const { return impl_ && impl_->ti.is_signed(); }
+bool TypeInfo::is_forward_declaration() const {
+    return impl_ && impl_->ti.is_forward_decl();
+}
+
+TypeKind TypeInfo::forward_declaration_kind() const {
+    if (!impl_ || !impl_->ti.is_forward_decl())
+        return TypeKind::Unknown;
+    if (impl_->ti.is_forward_struct())
+        return TypeKind::Struct;
+    if (impl_->ti.is_forward_union())
+        return TypeKind::Union;
+    if (impl_->ti.is_forward_enum())
+        return TypeKind::Enum;
+    return TypeKind::Unknown;
+}
+
+TypeKind TypeInfo::kind() const {
+    if (!impl_ || !impl_->ti.present())
+        return TypeKind::Unknown;
+    const tinfo_t& ti = impl_->ti;
+    if (ti.is_void())
+        return TypeKind::Void;
+    if (ti.is_bool())
+        return TypeKind::Bool;
+    if (ti.is_char() || ti.is_uchar())
+        return TypeKind::Character;
+    if (ti.is_floating())
+        return TypeKind::FloatingPoint;
+    if (ti.is_ptr())
+        return TypeKind::Pointer;
+    if (ti.is_array())
+        return TypeKind::Array;
+    if (ti.is_func())
+        return TypeKind::Function;
+    if (ti.is_struct())
+        return TypeKind::Struct;
+    if (ti.is_union())
+        return TypeKind::Union;
+    if (ti.is_enum())
+        return TypeKind::Enum;
+    if (ti.is_integral())
+        return ti.is_signed() ? TypeKind::SignedInteger : TypeKind::UnsignedInteger;
+    if (ti.is_typedef())
+        return TypeKind::Typedef;
+    return TypeKind::Unknown;
+}
+
+Result<std::string> TypeInfo::name() const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    qstring out;
+    if (!impl_->ti.get_type_name(&out) || out.empty())
+        return std::unexpected(Error::not_found("Type has no named type"));
+    return ida::detail::to_string(out);
+}
 
 Result<std::size_t> TypeInfo::size() const {
     if (!impl_)
@@ -296,18 +369,89 @@ Result<std::string> TypeInfo::to_string() const {
     return ida::detail::to_string(buf);
 }
 
+Result<std::string> TypeInfo::declaration(std::string_view declarator_name) const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    qstring out;
+    qstring qname = ida::detail::to_qstring(declarator_name);
+    if (!impl_->ti.print(&out,
+                         qname.empty() ? nullptr : qname.c_str(),
+                         PRTYPE_1LINE | PRTYPE_TYPE | PRTYPE_OFFSETS)) {
+        return std::unexpected(Error::sdk("Failed to print type declaration"));
+    }
+    return ida::detail::to_string(out);
+}
+
 Result<TypeInfo> TypeInfo::pointee_type() const {
     if (!impl_)
         return std::unexpected(Error::internal("TypeInfo has null impl"));
     if (!impl_->ti.is_ptr())
         return std::unexpected(Error::validation("Type is not a pointer"));
 
-    tinfo_t pointee = impl_->ti.get_pointed_object();
-    if (!pointee.present())
+    ptr_type_data_t pointer;
+    if (!impl_->ti.get_ptr_details(&pointer))
         return std::unexpected(Error::sdk("Failed to get pointer target type"));
 
     TypeInfo result;
-    TypeInfoAccess::get(result)->ti = pointee;
+    TypeInfoAccess::get(result)->ti = pointer.obj_type;
+    return result;
+}
+
+Result<PointerDetails> TypeInfo::pointer_details() const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    if (!impl_->ti.is_ptr())
+        return std::unexpected(Error::validation("Type is not a pointer"));
+
+    ptr_type_data_t pointer;
+    if (!impl_->ti.get_ptr_details(&pointer))
+        return std::unexpected(Error::sdk("Failed to get pointer details"));
+
+    PointerDetails result;
+    TypeInfoAccess::get(result.pointee_type)->ti = pointer.obj_type;
+    if (pointer.parent.present()) {
+        TypeInfo parent;
+        TypeInfoAccess::get(parent)->ti = pointer.parent;
+        result.shifted_parent = std::move(parent);
+    }
+    result.shift_delta = pointer.delta;
+    result.is_shifted = impl_->ti.is_shifted_ptr()
+        || (pointer.taptr_bits & TAPTR_SHIFTED) != 0;
+    return result;
+}
+
+Result<TypeInfo> TypeInfo::with_shifted_parent(
+    const TypeInfo& parent,
+    std::int64_t byte_delta) const {
+    if (!impl_ || !parent.impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    if (!impl_->ti.is_ptr())
+        return std::unexpected(Error::validation("Type is not a pointer"));
+    if (!parent.impl_->ti.is_struct()) {
+        return std::unexpected(Error::validation(
+            "Shifted pointer parent must be a struct"));
+    }
+    if (byte_delta == 0
+        || byte_delta < std::numeric_limits<std::int32_t>::min()
+        || byte_delta > std::numeric_limits<std::int32_t>::max()) {
+        return std::unexpected(Error::validation(
+            "Shifted pointer delta must be a nonzero signed 32-bit byte offset"));
+    }
+
+    ptr_type_data_t pointer;
+    if (!impl_->ti.get_ptr_details(&pointer))
+        return std::unexpected(Error::sdk("Failed to get pointer details"));
+    pointer.taptr_bits |= TAPTR_SHIFTED;
+    pointer.parent = parent.impl_->ti;
+    pointer.delta = static_cast<std::int32_t>(byte_delta);
+
+    tinfo_t rebuilt;
+    if (!rebuilt.create_ptr(pointer, impl_->ti.get_realtype())) {
+        return std::unexpected(Error::sdk(
+            "Failed to rebuild shifted pointer type"));
+    }
+    TypeInfo result;
+    TypeInfoAccess::get(result)->ti = std::move(rebuilt);
     return result;
 }
 
@@ -408,6 +552,142 @@ Result<std::vector<TypeInfo>> TypeInfo::function_argument_types() const {
     return arguments;
 }
 
+Result<FunctionDetails> TypeInfo::function_details() const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+
+    auto function_type = as_function_type(impl_->ti);
+    if (!function_type)
+        return std::unexpected(function_type.error());
+
+    func_type_data_t function_data;
+    if (!function_type->get_func_details(&function_data))
+        return std::unexpected(Error::sdk("Failed to get function details"));
+
+    FunctionDetails details;
+    TypeInfoAccess::get(details.return_type)->ti = function_data.rettype;
+    details.calling_convention = from_sdk_calling_convention(function_data.get_cc());
+    details.variadic = function_data.is_vararg_cc();
+    details.arguments.reserve(function_data.size());
+
+    for (const auto& argument : function_data) {
+        FunctionArgument wrapped;
+        wrapped.name = ida::detail::to_string(argument.name);
+        TypeInfoAccess::get(wrapped.type)->ti = argument.type;
+        details.arguments.push_back(std::move(wrapped));
+    }
+
+    return details;
+}
+
+Result<TypeInfo>
+TypeInfo::with_function_argument_type(std::size_t index,
+                                      const TypeInfo& replacement) const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    if (!replacement.impl_)
+        return std::unexpected(Error::internal("Replacement TypeInfo has null impl"));
+    if (!replacement.impl_->ti.present())
+        return std::unexpected(Error::validation("Replacement type is not present"));
+
+    const bool is_pointer = impl_->ti.is_ptr();
+    auto function_type = as_function_type(impl_->ti);
+    if (!function_type)
+        return std::unexpected(function_type.error());
+
+    func_type_data_t function_data;
+    if (!function_type->get_func_details(&function_data))
+        return std::unexpected(Error::sdk("Failed to get function details"));
+    if (index >= function_data.size())
+        return std::unexpected(Error::validation("Function argument index out of range",
+                                                 std::to_string(index)));
+
+    function_data[index].type = replacement.impl_->ti;
+    tinfo_t rebuilt_function;
+    if (!rebuilt_function.create_func(function_data))
+        return std::unexpected(Error::sdk("Failed to rebuild function type",
+                                          std::to_string(index)));
+
+    TypeInfo result;
+    if (is_pointer) {
+        if (!result.impl_->ti.create_ptr(rebuilt_function))
+            return std::unexpected(Error::sdk("Failed to rebuild function pointer type"));
+    } else {
+        result.impl_->ti = rebuilt_function;
+    }
+    return result;
+}
+
+Result<TypeInfo>
+TypeInfo::with_function_argument_name(std::size_t index,
+                                      std::string_view name) const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    if (name.find('\0') != std::string_view::npos)
+        return std::unexpected(Error::validation(
+            "Function argument name contains an embedded NUL"));
+
+    const bool is_pointer = impl_->ti.is_ptr();
+    auto function_type = as_function_type(impl_->ti);
+    if (!function_type)
+        return std::unexpected(function_type.error());
+
+    func_type_data_t function_data;
+    if (!function_type->get_func_details(&function_data))
+        return std::unexpected(Error::sdk("Failed to get function details"));
+    if (index >= function_data.size())
+        return std::unexpected(Error::validation("Function argument index out of range",
+                                                 std::to_string(index)));
+
+    function_data[index].name = ida::detail::to_qstring(name);
+    tinfo_t rebuilt_function;
+    if (!rebuilt_function.create_func(function_data))
+        return std::unexpected(Error::sdk("Failed to rebuild function argument name",
+                                          std::to_string(index)));
+
+    TypeInfo result;
+    if (is_pointer) {
+        if (!result.impl_->ti.create_ptr(rebuilt_function))
+            return std::unexpected(Error::sdk("Failed to rebuild function pointer type"));
+    } else {
+        result.impl_->ti = rebuilt_function;
+    }
+    return result;
+}
+
+Result<TypeInfo>
+TypeInfo::with_function_return_type(const TypeInfo& replacement) const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    if (!replacement.impl_)
+        return std::unexpected(Error::internal("Replacement TypeInfo has null impl"));
+    if (!replacement.impl_->ti.present())
+        return std::unexpected(Error::validation("Replacement type is not present"));
+
+    const bool is_pointer = impl_->ti.is_ptr();
+    auto function_type = as_function_type(impl_->ti);
+    if (!function_type)
+        return std::unexpected(function_type.error());
+
+    func_type_data_t function_data;
+    if (!function_type->get_func_details(&function_data))
+        return std::unexpected(Error::sdk("Failed to get function details"));
+
+    function_data.rettype = replacement.impl_->ti;
+    tinfo_t rebuilt_function;
+    if (!rebuilt_function.create_func(function_data))
+        return std::unexpected(Error::sdk("Failed to rebuild function return type"));
+
+    TypeInfo result;
+    if (is_pointer) {
+        if (!result.impl_->ti.create_ptr(rebuilt_function))
+            return std::unexpected(Error::sdk("Failed to rebuild function pointer type"));
+    } else {
+        result.impl_->ti = rebuilt_function;
+    }
+    return result;
+}
+
 Result<CallingConvention> TypeInfo::calling_convention() const {
     if (!impl_)
         return std::unexpected(Error::internal("TypeInfo has null impl"));
@@ -452,6 +732,35 @@ Result<std::vector<EnumMember>> TypeInfo::enum_members() const {
     return members;
 }
 
+Result<EnumDetails> TypeInfo::enum_details() const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    if (!impl_->ti.is_enum())
+        return std::unexpected(Error::validation("Type is not an enum"));
+
+    enum_type_data_t enum_data;
+    if (!impl_->ti.get_enum_details(&enum_data))
+        return std::unexpected(Error::sdk("Failed to get enum details"));
+
+    EnumDetails details;
+    size_t sz = impl_->ti.get_size();
+    if (sz != BADSIZE)
+        details.byte_width = sz;
+    details.signed_values = enum_data.is_number_signed();
+    details.radix = from_sdk_enum_radix(enum_data.get_enum_radix());
+    details.members.reserve(enum_data.size());
+
+    for (const auto& item : enum_data) {
+        EnumMember member;
+        member.name = ida::detail::to_string(item.name);
+        member.value = item.value;
+        member.comment = ida::detail::to_string(item.cmt);
+        details.members.push_back(std::move(member));
+    }
+
+    return details;
+}
+
 Result<std::size_t> TypeInfo::member_count() const {
     if (!impl_)
         return std::unexpected(Error::internal("TypeInfo has null impl"));
@@ -474,10 +783,71 @@ Member make_member(const udm_t& m) {
     TypeInfo ti;
     TypeInfoAccess::get(ti)->ti = m.type;
     result.type = std::move(ti);
+    result.bit_offset = static_cast<std::size_t>(m.offset);
     result.byte_offset = static_cast<std::size_t>(m.offset / 8);
     result.bit_size = static_cast<std::size_t>(m.size);
+    result.is_baseclass = m.is_baseclass();
+    result.is_vftable = m.is_vftable();
+    result.is_gap = m.is_gap();
+    result.is_bitfield = m.is_bitfield();
+    if (m.is_bitfield()) {
+        bitfield_type_data_t bitfield;
+        if (m.type.get_bitfield_details(&bitfield))
+            result.storage_byte_width = bitfield.nbytes;
+    }
     result.comment = ida::detail::to_string(m.cmt);
     return result;
+}
+
+Result<tid_t> exact_local_member_tid(const tinfo_t& ti,
+                                     std::size_t byte_offset) {
+    if (!ti.is_udt() || ti.is_forward_decl())
+        return std::unexpected(Error::validation(
+            "Member references require a complete struct or union"));
+    if (ti.is_from_subtil() || ti.get_ordinal() == 0)
+        return std::unexpected(Error::conflict(
+            "Member references require a saved local UDT"));
+    if (byte_offset > std::numeric_limits<std::uint64_t>::max() / 8)
+        return std::unexpected(Error::validation(
+            "Member byte offset is too large"));
+
+    udt_type_data_t udt;
+    if (!ti.get_udt_details(&udt))
+        return std::unexpected(Error::sdk("Failed to get UDT details"));
+
+    const std::uint64_t bit_offset =
+        static_cast<std::uint64_t>(byte_offset) * 8;
+    std::optional<std::size_t> member_index;
+    for (std::size_t index = 0; index < udt.size(); ++index) {
+        if (udt[index].offset != bit_offset)
+            continue;
+        if (member_index)
+            return std::unexpected(Error::conflict(
+                "Member byte offset is ambiguous",
+                std::to_string(byte_offset)));
+        member_index = index;
+    }
+    if (!member_index)
+        return std::unexpected(Error::not_found(
+            "No exact UDT member at byte offset",
+            std::to_string(byte_offset)));
+
+    const tid_t member_tid = ti.get_udm_tid(*member_index);
+    if (member_tid == BADADDR)
+        return std::unexpected(Error::conflict(
+            "UDT member has no stable database identity",
+            std::to_string(byte_offset)));
+    return member_tid;
+}
+
+bool is_persistent_member_reference(const xrefblk_t& reference,
+                                    ea_t source,
+                                    tid_t member_tid) {
+    return reference.from == source
+        && reference.to == member_tid
+        && !reference.iscode
+        && reference.type == dr_I
+        && reference.user != 0;
 }
 
 } // anonymous namespace
@@ -499,6 +869,58 @@ Result<std::vector<Member>> TypeInfo::members() const {
     return result;
 }
 
+Result<UdtDetails> TypeInfo::udt_details() const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    if (!impl_->ti.is_udt())
+        return std::unexpected(Error::validation("Type is not a struct or union"));
+
+    udt_type_data_t udt;
+    if (!impl_->ti.get_udt_details(&udt))
+        return std::unexpected(Error::sdk("Failed to get UDT details"));
+
+    UdtDetails details;
+    details.total_size = static_cast<std::size_t>(udt.total_size);
+    details.is_union = impl_->ti.is_union();
+    details.is_cpp_object = udt.is_cppobj();
+    details.is_vftable = udt.is_vftable();
+    details.members.reserve(udt.size());
+    for (std::size_t i = 0; i < udt.size(); ++i)
+        details.members.push_back(make_member(udt[i]));
+    return details;
+}
+
+Status TypeInfo::set_udt_semantics(bool is_cpp_object, bool is_vftable) {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    if (!impl_->ti.is_udt())
+        return std::unexpected(Error::validation("Type is not a struct or union"));
+    if (is_cpp_object && is_vftable) {
+        return std::unexpected(Error::validation(
+            "A UDT cannot be both a C++ object and a vftable"));
+    }
+    if (impl_->ti.is_union() && (is_cpp_object || is_vftable)) {
+        return std::unexpected(Error::validation(
+            "Union types cannot carry C++ object or vftable semantics"));
+    }
+
+    udt_type_data_t udt;
+    if (!impl_->ti.get_udt_details(&udt))
+        return std::unexpected(Error::sdk("Failed to get UDT details"));
+
+    udt.taudt_bits &= ~(TAUDT_CPPOBJ | TAUDT_VFTABLE);
+    if (is_cpp_object)
+        udt.taudt_bits |= TAUDT_CPPOBJ;
+    if (is_vftable)
+        udt.taudt_bits |= TAUDT_VFTABLE;
+
+    tinfo_t rebuilt;
+    if (!rebuilt.create_udt(udt))
+        return std::unexpected(Error::sdk("Failed to rebuild UDT semantics"));
+    impl_->ti = std::move(rebuilt);
+    return ida::ok();
+}
+
 Result<Member> TypeInfo::member_by_name(std::string_view name) const {
     if (!impl_)
         return std::unexpected(Error::internal("TypeInfo has null impl"));
@@ -507,10 +929,9 @@ Result<Member> TypeInfo::member_by_name(std::string_view name) const {
 
     udm_t udm;
     std::string name_str(name);
-    int idx = impl_->ti.find_udm(&udm, STRMEM_NAME);
     // find_udm with STRMEM_NAME needs the name in udm.name.
     udm.name = ida::detail::to_qstring(name);
-    idx = impl_->ti.find_udm(&udm, STRMEM_NAME);
+    int idx = impl_->ti.find_udm(&udm, STRMEM_NAME);
     if (idx < 0)
         return std::unexpected(Error::not_found("Member not found", name_str));
     return make_member(udm);
@@ -529,6 +950,82 @@ Result<Member> TypeInfo::member_by_offset(std::size_t byte_offset) const {
         return std::unexpected(Error::not_found("No member at offset",
                                                 std::to_string(byte_offset)));
     return make_member(udm);
+}
+
+Result<std::vector<Address>>
+TypeInfo::member_references(std::size_t byte_offset) const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    auto member_tid = exact_local_member_tid(impl_->ti, byte_offset);
+    if (!member_tid)
+        return std::unexpected(member_tid.error());
+
+    std::vector<Address> sources;
+    xrefblk_t reference;
+    for (bool found = reference.first_to(*member_tid, XREF_ALL);
+         found; found = reference.next_to()) {
+        if (is_persistent_member_reference(
+                reference, reference.from, *member_tid)) {
+            sources.push_back(static_cast<Address>(reference.from));
+        }
+    }
+    std::sort(sources.begin(), sources.end());
+    sources.erase(std::unique(sources.begin(), sources.end()), sources.end());
+    return sources;
+}
+
+Result<bool>
+TypeInfo::ensure_member_reference(std::size_t byte_offset,
+                                  Address source_address) const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    if (source_address == BadAddress
+        || !::is_mapped(source_address)
+        || !is_head(get_flags(source_address))) {
+        return std::unexpected(Error::validation(
+            "Member reference source must be a mapped item head",
+            std::to_string(source_address)));
+    }
+
+    auto member_tid = exact_local_member_tid(impl_->ti, byte_offset);
+    if (!member_tid)
+        return std::unexpected(member_tid.error());
+
+    xrefblk_t reference;
+    for (bool found = reference.first_from(source_address, XREF_ALL);
+         found; found = reference.next_from()) {
+        if (reference.to != *member_tid)
+            continue;
+        if (is_persistent_member_reference(
+                reference, source_address, *member_tid)) {
+            return false;
+        }
+        return std::unexpected(Error::conflict(
+            "Source already has an incompatible reference to this UDT member",
+            std::to_string(source_address) + " -> member@"
+                + std::to_string(byte_offset)));
+    }
+
+    const auto reference_type =
+        static_cast<dref_t>(static_cast<int>(dr_I) | XREF_USER);
+    if (!::add_dref(source_address, *member_tid, reference_type))
+        return std::unexpected(Error::sdk(
+            "Failed to add persistent UDT member reference",
+            std::to_string(source_address) + " -> member@"
+                + std::to_string(byte_offset)));
+
+    xrefblk_t verification;
+    for (bool found = verification.first_from(source_address, XREF_ALL);
+         found; found = verification.next_from()) {
+        if (is_persistent_member_reference(
+                verification, source_address, *member_tid)) {
+            return true;
+        }
+    }
+    return std::unexpected(Error::sdk(
+        "Persistent UDT member reference was not observable after creation",
+        std::to_string(source_address) + " -> member@"
+            + std::to_string(byte_offset)));
 }
 
 Status TypeInfo::add_member(std::string_view name, const TypeInfo& member_type,
@@ -568,6 +1065,74 @@ Status TypeInfo::save_as(std::string_view name) const {
         return std::unexpected(Error::sdk("Failed to save named type",
                                           name_str + ": " + std::string(tinfo_errstr(rc))));
     return ida::ok();
+}
+
+Result<TypeInfo>
+TypeInfo::replace_forward_declaration(std::string_view name) const {
+    if (!impl_)
+        return std::unexpected(Error::internal("TypeInfo has null impl"));
+    if (name.empty())
+        return std::unexpected(Error::validation(
+            "Forward declaration name cannot be empty"));
+    if (name.find('\0') != std::string_view::npos)
+        return std::unexpected(Error::validation(
+            "Forward declaration name cannot contain embedded NUL bytes"));
+    if (impl_->ti.is_forward_decl())
+        return std::unexpected(Error::validation(
+            "Replacement type must be a complete struct or union"));
+
+    const bool replacement_is_struct = impl_->ti.is_struct();
+    const bool replacement_is_union = impl_->ti.is_union();
+    if (!replacement_is_struct && !replacement_is_union)
+        return std::unexpected(Error::validation(
+            "Replacement type must be a complete struct or union"));
+
+    const std::string name_string(name);
+    tinfo_t forward;
+    if (!forward.get_named_type(get_idati(), name_string.c_str(),
+                                BTF_TYPEDEF, true, true)
+        || forward.is_from_subtil()) {
+        return std::unexpected(Error::not_found(
+            "Local forward declaration not found", name_string));
+    }
+    if (!forward.is_forward_decl())
+        return std::unexpected(Error::conflict(
+            "Named local type is not a forward declaration", name_string));
+
+    const bool forward_is_struct = forward.is_forward_struct();
+    const bool forward_is_union = forward.is_forward_union();
+    if (!forward_is_struct && !forward_is_union)
+        return std::unexpected(Error::conflict(
+            "Only struct or union forward declarations can be replaced",
+            name_string));
+    if (forward_is_struct != replacement_is_struct
+        || forward_is_union != replacement_is_union) {
+        return std::unexpected(Error::conflict(
+            "Forward declaration kind does not match replacement UDT",
+            name_string));
+    }
+
+    const ::uint32 ordinal = forward.get_ordinal();
+    if (ordinal == 0)
+        return std::unexpected(Error::conflict(
+            "Forward declaration has no local type ordinal", name_string));
+
+    tinfo_t replacement = impl_->ti;
+    const tinfo_code_t rc = replacement.set_numbered_type(
+        get_idati(), ordinal, NTF_REPLACE | NTF_COPY);
+    if (rc != TERR_OK)
+        return std::unexpected(Error::sdk(
+            "Failed to replace forward declaration",
+            name_string + ": " + std::string(tinfo_errstr(rc))));
+
+    auto result = TypeInfo::by_name(name);
+    if (!result)
+        return std::unexpected(result.error());
+    if (result->is_forward_declaration())
+        return std::unexpected(Error::sdk(
+            "Forward declaration remained unresolved after replacement",
+            name_string));
+    return result;
 }
 
 // ── Free functions ──────────────────────────────────────────────────────

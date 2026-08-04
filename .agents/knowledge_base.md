@@ -224,7 +224,7 @@ Note:
   - 4.18.2.1. `database.cpp` pulls idalib-only symbols (`init_library`, `open_database`)
   - 4.18.2.2. Plugin link units referencing `processor_id()` would fail if in `database.cpp`
   - 4.18.2.3. Declared in `database.hpp`, implemented in `address.cpp` (no idalib deps)
-- 4.18.3. Typed processor-id surface should mirror the full current SDK enum set: `ProcessorId` now tracks `PLFM_*` coverage through `PLFM_MCORE` so `processor()` avoids subset-staleness for non-mainstream modules [F259]
+- 4.18.3. **Superseded by 35.52/F394:** The former claim that the current public set extended through `PLFM_MCORE = 77` came from an unverified user-supplied list. Current normalization ends at verified `PLFM_NDS32 = 76`, preserves all raw IDs, and represents unrecognized IDs without invalid enum casts.
 
 ---
 
@@ -748,26 +748,26 @@ Note:
 - 22.5. CMake `GLOB_RECURSE` auto-discovers new `.cpp` files in `src/`, so TU splits need no CMakeLists.txt changes
 
 ### 23. DrawIDA Port Findings (Phase 12)
-- 23.1. DrawIDA (`<userhome>/Downloads/plo/DrawIDA-main`) ports cleanly to existing idax plugin/UI surfaces (`ida::plugin::Plugin`, `ida::ui::create_widget`, `ida::ui::show_widget`, `ida::ui::activate_widget`) with no open parity gaps for draw/text/erase/select + undo/redo/style/clear workflows
+- 23.1. DrawIDA (`<upstream-source>/plo/DrawIDA-main`) ports cleanly to existing idax plugin/UI surfaces (`ida::plugin::Plugin`, `ida::ui::create_widget`, `ida::ui::show_widget`, `ida::ui::activate_widget`) with no open parity gaps for draw/text/erase/select + undo/redo/style/clear workflows
 - 23.2. Prior plugin-flag ergonomics gap [F242] is closed via `ida::plugin::ExportFlags` + `IDAX_PLUGIN_WITH_FLAGS(...)`; idax keeps `PLUGIN_MULTI` mandatory and layers optional SDK bits through structured flags + `extra_raw_flags` [F245]
 - 23.3. Prior host-cast ergonomics gap [F243] is closed via typed host helpers `ida::ui::widget_host_as<T>()` and `ida::ui::with_widget_host_as<T>()`, eliminating repetitive `void*` casts in Qt ports [F246]
 - 23.4. Dedicated DrawIDA addon target is wired using `ida_add_plugin(TYPE QT QT_COMPONENTS Core Gui Widgets ...)`, yielding skip-on-missing-Qt behavior with explicit `build_qt` guidance and normal addon build when Qt is available [F247]
 - 23.5. Qt6/Homebrew include nuance: use `qevent.h` for `QKeyEvent`/`QMouseEvent` portability (`qkeyevent.h` is not present in that header layout) [F248]
 
 ### 24. DriverBuddy Port Findings (Phase 13)
-- 24.1. DriverBuddy (`<userhome>/Downloads/plo/DriverBuddy-master`) ports through idax plugin/analysis/search/xref/instruction/type surfaces with no raw SDK usage for core Windows-driver triage workflows (driver classification, dispatch discovery, IOCTL decode) [F250]
+- 24.1. DriverBuddy (`<upstream-source>/plo/DriverBuddy-master`) ports through idax plugin/analysis/search/xref/instruction/type surfaces with no raw SDK usage for core Windows-driver triage workflows (driver classification, dispatch discovery, IOCTL decode) [F250]
 - 24.2. Struct-offset operand representation closure: `ida::instruction` now exposes `set_operand_struct_offset(...)` and `set_operand_based_struct_offset(...)` wrappers over SDK `op_stroff`/`op_based_stroff`; on SDK 9.3, named-type TIDs must be resolved via `get_named_type_tid()` (not legacy `get_struc_id`) [F249]
 - 24.3. WDF table annotation is achievable in idax by constructing a `TypeInfo` struct schema (`TypeInfo::create_struct` + `add_member` + `save_as`) and applying it at resolved table addresses (`type::apply_named_type` + `name::force_set`) after locating the `KmdfLibrary` marker and dereferencing metadata pointers [F251]
 - 24.4. Remaining DriverBuddy migration deltas are non-blocking ergonomics: no one-call standard-type bootstrap equivalent to `Til2Idb(-1, name)`, no stroff-path introspection wrapper (`get_stroff_path`), and no minimal hotkey-only callback helper outside the action system [F252]
 
 ### 25. idapcode Port Findings (Phase 14)
-- 25.1. idapcode (`<userhome>/Downloads/plo/idapcode-main`) ports cleanly to idax plugin/UI/function/data flows when paired with external Sleigh C++ translation (`examples/plugin/idapcode_port_plugin.cpp`) [F253]
+- 25.1. idapcode (`<upstream-source>/plo/idapcode-main`) ports cleanly to idax plugin/UI/function/data flows when paired with external Sleigh C++ translation (`examples/plugin/idapcode_port_plugin.cpp`) [F253]
 - 25.2. Added database metadata wrappers (`address_bitness`, `is_big_endian`, `abi_name`) plus typed `ProcessorId`/`processor()` to support deterministic architecture-to-Sleigh routing without raw SDK fallback in plugin code [F253]
 - 25.3. Sleigh spec lookup helper expects spec-root paths and appends `Ghidra/Processors/.../data/languages/<file>` internally; this affects runtime path configuration semantics (`IDAX_IDAPCODE_SPEC_ROOT`) [F254]
 - 25.4. Sleigh source integration is intentionally opt-in in examples due heavy configure-time fetch/patch behavior against Ghidra; default idax build path remains lightweight [F255]
-- 25.5. Residual parity gap: processor-profile granularity is still partial for exact language-profile selection (e.g., ARM profile/revision nuances), so mapping remains best-effort in the current wrapper model [F256]
-- 25.6. Runtime startup diagnostics: `init_library` failures are reproducible when `IDADIR` is pointed at an SDK source tree (for example `<userhome>/dev/ida-sdk/src`) instead of a full IDA runtime root; this is an environment-root mismatch, not an API-surface failure [F258]
-- 25.7. On this host, `idax_smoke_test` passes with no env overrides because the binary carries `LC_RPATH` to `/Applications/IDA Professional 9.3.app/Contents/MacOS`; explicit `IDADIR`/`DYLD_LIBRARY_PATH` to that same runtime root also passes [F258]
+- 25.5. Processor identity/context normalization is closed by the raw-plus-optional-typed `ProcessorProfile`. Exact external Sleigh language-profile selection (for example ARM revision variants) remains port-local because the generic SDK processor metadata does not define Sleigh semantics; this is an external integration boundary rather than a native wrapper gap [F256, F394]
+- 25.6. Runtime startup diagnostics: `init_library` failures are reproducible when `IDADIR` is pointed at an SDK source tree (for example `<ida-sdk-source>`) instead of a full IDA runtime root; this is an environment-root mismatch, not an API-surface failure [F258]
+- 25.7. On this host, `idax_smoke_test` passes with no env overrides because the binary carries `LC_RPATH` to `<ida-runtime>`; explicit `IDADIR`/`DYLD_LIBRARY_PATH` to that same runtime root also passes [F258]
 - 25.8. Runtime plugin-load policy paths are host-validated: `idax_idalib_dump_port` succeeds with both `--no-plugins` and allowlist mode (`--plugin "*.dylib"`) on the fixture binary, confirming `RuntimeOptions::plugin_policy` behavior is non-blocking in this profile [F260]
 - 25.9. idapcode custom-viewer navigation can be synchronized bidirectionally with linear disassembly using existing ui wrappers only (`on_cursor_changed`, `on_screen_ea_changed`, `on_view_activated`/`on_view_deactivated`, `custom_viewer_jump_to_line`) when guarded against reentrant event loops [F261]
 - 25.10. Prefixing every p-code display line with a canonical instruction address token enables reliable cursor-line address parsing for click/keyboard sync even on non-header p-code lines [F262]
@@ -863,7 +863,7 @@ Note:
 - **Rust/C++ Shim Warnings:** `memcpy`-ing opaque pointer types (like `ida::loader::InputFile`) across the FFI boundary triggers GCC `-Wclass-memaccess` warnings. This must be locally ignored via `#pragma GCC diagnostic ignored "-Wclass-memaccess"` in the C++ shim compilation to maintain a clean build. [F319]
 - **Dynamic Linker Stripping in CI Environments:** On macOS, SIP strips `DYLD_LIBRARY_PATH` and related variables when crossing process boundaries via `bash`. To dynamically link the `idax_native.node` or compiled Rust binaries to the headless CI IDA installation at runtime, environment variables (`LD_LIBRARY_PATH`, `DYLD_LIBRARY_PATH`) must be exported *inside* the execution step directly rather than relying on `$GITHUB_ENV`. Furthermore, on macOS, the dylibs are explicitly in `IDADIR/Contents/MacOS`, not the root of the `.app` bundle. [F320]
 - **Database Creation Permission in CI:** By default, `idalib` APIs like `open_database` attempt to create the database file (e.g., `.i64`) in the same directory as the target binary. Running headless adaptations against read-only system binaries (like `/bin/ls`) will crash with `open_database failed` because the process lacks permissions to write `/bin/ls.i64`. **Solution:** Always copy the target system binary to a writable temporary location (like the CI workspace) before passing it to the `idalib` headless scripts. [F321]
-- **macOS IDA install path normalization:** `ida-config.json` may return the `.app` bundle root, but most build/runtime linkage logic needs the dylib directory itself. Normalize `IDADIR` from `/Applications/IDA Professional 9.3.app` to `/Applications/IDA Professional 9.3.app/Contents/MacOS` before CMake and runtime steps to avoid missing-library failures. [F322]
+- **macOS IDA install path normalization:** `ida-config.json` may return the `.app` bundle root, but most build/runtime linkage logic needs the dylib directory itself. Normalize `IDADIR` from `<ida-app-bundle>` to `<ida-runtime>` before CMake and runtime steps to avoid missing-library failures. [F322]
 - **Node example CLI invocation shape in CI:** Node examples under `bindings/node/examples` resolve the addon internally and expect argv[0] to be the test binary/IDB path. Passing `build/Release/idax_native.node` as a leading argument in workflow commands misroutes parsing; invoke with only the target binary path + flags. [F323]
 - **Windows Rust CI CRT mismatch mitigation:** Rust example runs on `windows-latest` are more stable in `--release`; debug-mode executions can hit unresolved debug CRT symbols (`_CrtDbgReport` family) in mixed-link setups. Build/run examples in release mode for CI reliability. [F324]
 - **MSVC library resolution fallback:** Node CMake logic must resolve missing `ida.lib`/`idalib.lib`/`pro.lib` from `IDASDK` even when `IDADIR` is set; fallback cannot be `elseif`-gated behind install-dir detection. Use conditional fill-in of missing libraries after install-dir probing. [F325]
@@ -977,3 +977,1945 @@ IDA 9.4 `dscu.h` 已公开 `get_dscu_svc()`、typed image query、`region_info_t
 
 ### 35.39. Cache-wide data 是 IDA 9.4 独立 region 类型 [F381]
 `rt_cache_data` 表示 cache 全局命名数据，例如 linkedit subcache mapping；它拥有独立 request vector 与 loaded-state query，不等同于 `rt_unknown`。C++ `load_cache_data`、Swift `DyldCache.loadCacheData` 与 CLI `--load-cache-data` 应保持该语义。IDA SDK 9.3 没有 supported equivalent，调用应返回 Unsupported。macOS 26.5.2 real-cache validation 加载 6 个 regions 并保存成功。
+### 35.23. Node TypeInfo Structural Test Initialization Boundary [F365]
+Node unit tests that are intended to be pure structural binding checks should avoid constructing `TypeInfo` factory objects before an IDA runtime/database has been initialized. A direct `idax.type.int32()` call in the structural suite segfaulted before returning the wrapper object. Keep those tests focused on TypeScript/API-shape documentation or move runtime TypeInfo assertions into initialized integration tests; C++ integration remains the primary proof path for primitive factory/type layout semantics.
+
+### 35.24. Arbitrary-Symbol Demangling Form Mapping [F366]
+The SDK models short and long demangler output as inhibition masks. Map idax
+`DemangleForm::Short` to `MNG_SHORT_FORM`, `Long` to `MNG_LONG_FORM`, and
+`Full` to zero before calling `demangle_name(..., DQT_FULL)`. Reject empty or
+embedded-NUL inputs locally and return `NotFound` for negative/no-output SDK
+results.
+
+### 35.25. Exact Pseudocode Function-Switch Notification [F367]
+`hxe_switch_pseudocode` fires after an existing `vdui_t` has received its new
+`cfunc` and `mba`, but before text refresh. It should be exposed directly as a
+typed `PseudocodeEvent`; screen-address and generic refresh callbacks are not
+equivalent signals.
+
+### 35.26. Stable Opaque Widget Identity [F368]
+All wrappers around the same live `TWidget*` must share one opaque numeric ID.
+Intern pointer-to-ID mappings under a mutex and retire them on
+`ui_widget_closing` as well as wrapper-owned close paths. This prevents both
+identity churn during polling and stale identity reuse across widget lifetimes.
+
+### 35.27. Node SDK Header-Root Normalization [F369]
+Accept both SDK include-root (`<IDASDK>/include/pro.h`) and checkout-root
+(`<IDASDK>/src/include/pro.h`) layouts during Node CMake configuration. Header
+root probing is independent from the already-separate SDK/runtime library-root
+normalization described in F363.
+
+### 35.28. Menu Detach Requires Wrapper-Owned Attachment State [F370]
+IDA 9.3 can return true from `detach_action_from_menu` even when the requested
+action was never attached. If idax promises `NotFound` for missing attachment,
+SDK return values alone are insufficient; record successful wrapper attachment
+keys and consume them on detach.
+
+### 35.29. Rust macOS Integration Lifecycle Stall [F371]
+On the current macOS IDA 9.3 host, the Rust serial integration harness can
+remain inside its one-time init/open/analysis sequence while equivalent Node
+and C++ fixture tests finish. Until stage tracing isolates the exact call, use
+Rust compile/unit coverage as structural proof and do not report the stalled
+runtime harness as passing evidence.
+
+### 35.30. Wrapper-Managed Action Attachment Accounting [F372]
+Maintain synchronized counts keyed by exact `(menu_or_toolbar, action_id)` for
+successful idax attachment calls. A detach consumes one tracked count before
+SDK dispatch and returns `NotFound` without dispatch when no count exists.
+Successful or failed action unregistration clears all counts for that action
+ID, preventing stale state when an ID is later reused. This accounting defines
+deterministic semantics for wrapper-managed attachments while leaving popup
+attachment behavior on the SDK's explicit permanent-widget contract.
+
+### 35.31. Rust Real-IDA Tests Must Run on Process Main [F373]
+Idalib requires all calls to occur on the same thread that initialized the
+library. Rust's standard test harness runs test bodies on worker threads even
+when invoked with `--test-threads=1`; the process main thread remains a result
+coordinator. On macOS IDA 9.3, IDAPython initialization can synchronously
+dispatch a warning to IDA's main-thread executor, so worker-thread init blocks
+while libtest's main thread waits for that worker. Configure the real-IDA
+integration target with `harness = false` and run initialization, every test
+case, and shutdown sequentially from its explicit `main` function. Keep normal
+libtest behavior for pure Rust unit tests.
+
+### 35.32. Comment Append Needs Wrapper-Level Composition [F374]
+On IDA 9.3, `append_cmt` may return success at a function start while the
+subsequent `get_cmt` result contains only the pre-existing text. Function-start
+comments can involve function-record storage distinct from ordinary per-item
+comment storage. If idax promises observable append semantics, read the current
+comment, compose `existing + "\n" + appended`, and write the result through
+`set_cmt`; use the appended text directly when no prior comment exists.
+
+### 35.33. Microcode Filters Do Not Replay for Cached Decompilation [F375]
+Installing a microcode filter does not imply that a later `decompile` call will
+regenerate microcode for an already cached function. A callback-validation test
+must call `decompiler::mark_dirty(function_address, false)` after registration
+and before decompilation. This invalidates the cached cfunc and makes filter
+match/apply observations independent of test order.
+
+### 35.34. Deterministic Comment Append Contract [F376]
+Implement `comment::append(address, text, repeatable)` as a wrapper-level
+read/compose/write operation. If no non-empty comment exists, write `text`
+directly. Otherwise write `existing + "\n" + text`. This matches the SDK's
+documented newline model while avoiding `append_cmt`'s function-start storage
+asymmetry. Reject a composed size above `std::string::max_size()` before
+allocation. C++, Node, and Rust bindings inherit the same observable contract.
+
+### 35.35. CI License Provisioning Failure Boundary [F377]
+When every platform fails in `Install IDA Pro` after HCLI successfully downloads
+the requested installer, inspect license retrieval before changing source or
+workflow build logic. The diagnostic pair `No licenses found matching criteria`
+and `License file matching *<license-id>.hexlic not found` means the configured
+HCLI identity cannot supply that license. Repository setup, compilation, and
+tests have not run. Remediation is external: renew/correct the HCLI account,
+license assignment, or GitHub Actions secrets, then rerun the workflows.
+
+### 35.36. Data Definition Counts Require Width-to-Byte Conversion [F378]
+The SDK `create_word`/`create_dword`/`create_qword`/`create_oword`, floating-
+point, and ten-byte helpers accept a total size in bytes, not an element count.
+If the wrapper exposes `count`, validate multiplication overflow and dispatch
+`count * element_width` bytes. A default count of one must create exactly one
+item of the selected type. Tests must assert success, resulting item size, and
+multi-element total size; a survivability-only assertion cannot establish the
+public unit contract.
+
+### 35.37. `destroyed_items` Delivery Is Host-Path Dependent [F379]
+The IDA 9.3 SDK declares `idb_event::destroyed_items(ea1, ea2,
+will_disable_range)`, but the current macOS idalib host does not emit it for
+successful `del_items` calls against either temporary or fixture items. Expose
+the documented notification and validate its ABI/surface statically. Runtime
+tests may assert exact payloads when delivered, but must distinguish absence of
+host delivery from dispatcher failure by simultaneously proving other events
+through the same listener.
+
+### 35.38. Event Dispatch Must Isolate Callback-Side Mutation [F380]
+Never iterate an owning callback registry directly across user callback
+invocation. Capture an event-entry token ceiling, re-check each eligible token,
+and retain the selected subscription object through invocation. The ceiling
+must cover typed and generic phases of the same event; otherwise a route added
+by a typed callback can join the generic phase. Removed subscriptions are
+skipped. If the final unsubscribe occurs during SDK listener dispatch, defer
+unhook until dispatch exit. Across a raw-context FFI, also defer context
+destruction while any trampoline frame is active. Move a pending drop queue out
+of interior-mutable storage before invoking destructors so destructor-side
+re-entry cannot conflict with an outstanding mutable borrow. Likewise, remove
+the context from its registry in a bounded lock scope and release the mutex
+before reclamation; captured-object destructors may re-enter unsubscription.
+
+### 35.39. Separate Fixed-Width and Processor/Registry-Defined Data Items [F381]
+The SDK fixed-width creation family includes yword (32 bytes / 256 bits) and
+zword (64 bytes / 512 bits). They use the same total-byte-length input as
+word/dword/qword/oword/float/double and therefore belong under the same public
+element-count conversion. F384 subsequently establishes that both tbyte and
+packed-real widths are processor-defined; custom data additionally requires
+registered data-type and format identifiers. Do not assign either advanced
+family a compile-time width. Keep string, structure, and undefine parameters
+explicitly byte-based.
+
+### 35.40. Rust FFI Error Categories Include a Zero-Valued None Sentinel [F382]
+The C shim category values are not the same numeric discriminants as the public
+Rust `ErrorCategory`: the shim reserves zero for `IDAX_ERROR_NONE` and numbers
+the six real categories from one through six. Decode the generated
+`IDAX_ERROR_*` constants rather than relying on enum ordinals. A zero category
+means that no error is pending; an unrecognized nonzero category is an internal
+ABI error. Runtime tests that assert only `is_err()` cannot detect this drift,
+so boundary tests must also assert the structured category.
+
+### 35.41. Integration Idle Assertions Must Establish the Wait Precondition [F383]
+Creating or removing a temporary IDA segment can enqueue auto-analysis after
+the initial database-open wait has completed. An integration case that asserts
+`analysis::is_idle()` (or its binding equivalent) must call the corresponding
+wait API in that case rather than depending on earlier suite order. This
+preserves isolation when preceding tests add legitimate mutation coverage.
+
+### 35.42. Tbyte and Packed-Real Widths Belong to Processor Metadata [F384]
+Do not hard-code the ten-byte storage width implied by the name `tbyte`.
+IDA's `dt_tbyte` is explicitly variable-sized through the active processor's
+`tbyte_size`; multiple SDK processor modules use zero or non-ten-byte values.
+Resolve the current dtype width at the semantic boundary, reject a zero width
+as unsupported, and then apply the same checked element-count multiplication
+used by fixed-width definitions. Audit packed-real through the corresponding
+processor dtype metadata rather than assuming a universal layout.
+
+### 35.43. Extended-Real Size and Availability Are Separate Checks [F385]
+IDA stores both tbyte and packed-decimal-real items using the active
+processor's `tbyte_size`, but the active assembler advertises them separately
+through `a_tbyte` and `a_packreal`. A nonzero width does not establish that
+both representations can be emitted. Query the representation-specific
+directive as well as the shared width and map absence to `Unsupported`; only
+then apply checked element-count multiplication and SDK creation.
+
+### 35.44. Normalize Null and Empty Optional Assembler Directives [F386]
+Although `idp.hpp` documents null pointers for unavailable data directives,
+the SDK processor-module template uses an empty string for optional packed-real
+output. Representation availability therefore requires a non-null, non-empty
+`a_tbyte` or `a_packreal` value in addition to a nonzero processor width.
+
+### 35.45. Custom Data Descriptors Are Borrowed Registrations [F387]
+The kernel retains raw pointers from `data_type_t` and `data_format_t`, including
+names, callback user data, and callback entrypoints. Keep owned descriptor and
+callback state at stable addresses until explicit unregister, catch exceptions
+inside every C ABI trampoline, and return copied public snapshots. IDB-close
+auto-unregister is not a plugin-unload lifetime guarantee.
+
+### 35.46. Custom Type and Format Size Semantics Differ [F388]
+A fixed custom type uses `value_size` as its exact value width. A variable type
+uses it as the minimum width and requires `calc_item_size(address, maximum)` to
+return an exact positive width no larger than the supplied maximum. A format
+with zero `value_size` accepts any width; a nonzero value constrains the format.
+Print/scan callbacks must also tolerate SDK probe invocations where their output
+buffer is null.
+
+### 35.47. Custom Data IDs and Attachments Need Typed Boundaries [F389]
+Custom type and format IDs are positive kernel integers but custom item metadata
+packs each into 16 bits. Type ID zero has the separate meaning “all standard
+types” for format attachment, while format ID zero is unused. Expose nonzero
+opaque custom IDs, reject out-of-range registration results, and provide a
+separate standard-type attachment operation. Unregister detaches relationships
+but each registered descriptor still requires its own teardown.
+
+### 35.48. Exclude the Packed Missing-ID Sentinel [F390]
+`custom_data_type_ids_t` uses signed 16-bit fields and the value `-1` for an
+absent format. Consequently `0xFFFF` cannot be a usable opaque custom ID even
+though it fits in the packed 16-bit field. Registration and user-supplied ID
+validation must accept only the closed interval `1..0xFFFE`.
+
+### 35.49. Variable-Size Creation Can Revalidate Size [F391]
+Inferring a custom item size and then calling `create_custdata` does not imply a
+single callback invocation. The kernel can call `calc_item_size` again during
+creation. Treat custom type callbacks as deterministic and reentrant, retain
+their state through the complete SDK call, and validate callback participation
+plus final item size rather than an exact cross-version invocation count.
+
+### 35.50. Registered Actions Need Owned Handlers and Exception Barriers [F392]
+The native action API retains the supplied `action_handler_t*` beyond
+`register_action`. A heap handler is destroyed by the kernel on unregister only
+when the action descriptor includes `ADF_OWN_HANDLER`; the PLUGMOD literal does
+not set that bit by itself. Wrapper callbacks must also catch all exceptions in
+`activate` and `update` because those methods are invoked through the host ABI.
+Model one-call hotkeys as scoped registrations over the action system rather
+than as a separate SDK primitive: IDAPython's `add_hotkey`/`del_hotkey` are
+convenience adapters, while the C++ SDK exposes registered actions.
+
+### 35.51. Headless Action Hosts Have Weaker Lifecycle Observability [F393]
+Successful action registration in idalib does not imply that
+`process_ui_action` can dispatch the action: IDA 9.3 headless execution returns
+false without entering the handler. The same host did not immediately destroy
+an `ADF_OWN_HANDLER` adapter after successful unregister. Keep named action
+adapters in wrapper-owned storage, erase them only after successful SDK
+unregister, and reserve activation/exception runtime evidence for an
+interactive IDA UI host. Headless evidence remains valid for registration,
+unregistration, scoped move/release state, and callback-state reclamation.
+
+### 35.52. Processor Identity Must Preserve Unknown Raw IDs [F394]
+The verified public `PLFM_*` range in current `idp.hpp` ends at
+`PLFM_NDS32 = 76`; no searched SDK ref defines the previously claimed
+`PLFM_MCORE = 77`. The SDK also reserves IDs above `0x8000` for third-party
+processor modules. Keep the raw signed processor ID authoritative, normalize
+only verified public values to `ProcessorId`, and represent an unrecognized ID
+as an absent typed value rather than an invalid enum cast or metadata failure.
+Retain `ProcessorId::Mcore = 77` only as a documented source-compatibility
+artifact until a breaking API revision; never produce it from current SDK
+normalization.
+
+### 35.53. Operand Access Modes Must Survive Binding Transfer [F395]
+C++ decoded operands retain the active processor module's canonical read/write
+classification (`idp.hpp` `CF_USE1..8` / `CF_CHG1..8`). The Rust flat transfer and both Node instruction-object
+converters previously omitted both booleans, so a consumer could identify a
+memory-shaped operand but not whether the instruction writes it. Preserve
+`is_read`/`is_written` in `IdaxOperand` and safe Rust, and expose
+`isRead`/`isWritten` in every Node snapshot. Do not infer write direction from
+the existence of a data reference, because reference kind and operand access
+mode are distinct properties.
+
+### 35.54. String Discovery Is a Configured Global Cache [F396, F397]
+`data::read_string` materializes text only when an address is already known;
+it is not a substitute for IDA's `strlist.hpp` inventory. The native inventory
+stores address, octet length, and string type in a process-global cache whose
+shared options are also used by the Strings window. Consumers must rebuild it
+explicitly after configuration. Expose copied `StringListOptions` and
+`StringLiteral` values, validate type codes in `0..255` and represent the
+minimum length as a checked signed value. Callers that need temporary settings
+must snapshot and restore both options and the rebuilt list.
+
+On IDA 9.3, `build_strlist` prepends one zero bookkeeping byte to the shared
+`strtypes` vector: a requested `{0,1}` becomes raw `{0,0,1}`, `{1}` becomes
+raw `{0,1}`, and the initial one-byte-only configuration is raw `{0,0}`
+[F398]. Remove exactly that leading element in copied public options. Do not
+deduplicate later zero values because zero is the actual one-byte C-string type.
+
+### 35.55. Source-File Metadata Is a Half-Open Address Mapping [F396]
+`lines.hpp` represents one source file occurrence as a filename associated with
+`[start, end)`. One filename may own multiple ranges, but one address can map to
+only one file. Return an owned filename plus `address::Range`; treat a missing
+mapping as `NotFound`; validate non-empty, non-overflowing ranges before add;
+and remove by an address inside the mapped range. Never retain the borrowed
+`const char*` returned by `get_sourcefile`.
+
+### 35.56. Binding Inventories Must Preserve Origin Filters [F399]
+The C++ `name::all(ListOptions)` inventory can include user-defined names,
+auto-generated names, or both over a half-open address range. A binding that
+exposes only `all_user_defined` loses class/scope evidence used by real ports.
+Mirror the filter object and copied `Entry` origin booleans through the C ABI;
+keep `all_user_defined` as a convenience specialization rather than the only
+safe inventory.
+
+### 35.57. Idalib Integration Inputs Must Be Disposable [F400]
+Opening the repository's adjacent input/IDB pair directly allows a successful
+test to rewrite serialized analysis or cache state even after logical test
+mutations are reversed. CTest must create a unique temporary directory per
+target, copy both the raw fixture and its `.i64` when present, pass only the
+copy to the executable, and remove the directory after execution. Validate
+isolation by comparing the tracked fixture hash before and after the complete
+suite, not by relying on a clean logical close.
+
+### 35.58. IDAMagicStrings Counts Observations, Not Display Rows [F401]
+The original no-NLTK candidate pass consumes both copied name inventory and
+string-list evidence. Its source-language denominator counts a source string
+once when it has at least one data reference, even if that string produces
+multiple chooser rows, and counts each mapped debug address separately. The
+ordered language map resolves common C-family extensions to `C/C++`; only the
+distinct `.c++` extension reaches `C++`. Keep report rows, observation counts,
+and candidate evidence as separate data flows.
+
+### 35.59. Function-Argument Type Replacement Is a Metadata-Preserving Copy [F402, F403]
+A function prototype is richer than its public return/argument-type summary:
+SDK records also carry names, comments, locations, flags, return location,
+spoiled registers, and calling-convention details. Replace one argument type by
+copying `func_type_data_t`, changing only the indexed `funcarg_t::type`, and
+rebuilding the function type. Re-wrap it as a pointer when the input was a
+function pointer. Return a new opaque `TypeInfo`; do not expose native type or
+location structures. Validate the argument index and replacement type first.
+
+### 35.60. Named Operand Enums Need Opaque TID Resolution and Readback [F402, F403]
+SDK `op_enum(ea, n, tid, serial)` applies a local enum to one operand or
+`OPND_ALL`; `get_enum_id` returns the associated TID and serial. Resolve the
+public enum name to a local named type internally, verify that it is an enum,
+and keep the TID private. Return a copied enum name and serial for readback.
+Treat absence as `NotFound` and reject invalid addresses, operand indexes,
+names, and serial values before dispatch.
+
+### 35.61. Normalize the All-Operands Sentinel at the Wrapper Boundary [F404]
+Public APIs use `-1` for all operands, matching the IDAPython workflow audited
+for Auto Enum. Native `bytes.hpp` instead defines `OPND_ALL` as `0x0F`. Accept
+only `-1` or an ordinary `0..UA_MAXOP-1` index, translate `-1` immediately
+before `op_enum`/`get_enum_id`, and never expose the native mask constant.
+
+### 35.62. Separate Headless Prototype Enrichment from Cursor-Selected Ctree Mutation [F405]
+Auto Enum's import pass depends only on copied import/type inventories and is
+deterministic under idalib, so a headless adaptation can report first and apply
+only on request. Its local specialization pass begins at the selected
+decompiler call and needs callback-scoped child-expression navigation. Keep
+that operation in an interactive C++ action instead of reconstructing cursor
+state or call operands from Rust's flat expression snapshots. A disposable
+host-native fixture supplies reproducible report/apply/reopen evidence for the
+headless global path; C++ link and primitive runtime tests cover the local path.
+
+### 35.63. Function-Level Microcode Analysis Requires an Owned Graph Snapshot [F406, F407]
+Formatted `cfunc_t::mba` output is not a semantic graph, and lifting-filter
+instruction values are callback-scoped. Generate a dedicated MBA at an explicit
+microcode maturity, call `build_graph()` exactly once when the requested stage
+precedes `MMAT_LOCOPT`, and copy entry/maturity, function argument locations,
+block ranges and adjacency, addressed instructions, recursive operands, call
+arguments, and display text before native destruction. Keep known semantic
+opcodes/kinds typed; preserve unmodeled valid values as `Other` plus copied text
+so one unrelated instruction cannot make the complete function unavailable.
+
+### 35.64. State the Symless Port Boundary in Capability Terms [F408]
+The bounded Phase 37 adaptation starts from one function argument and preserves
+intraprocedural register/stack propagation, move/add/sub/extension semantics,
+nested evaluation, load/store access recovery, and Symless's minimum-width
+field-conflict policy. It may generate a named UDT and explicitly replace the
+selected scalar or scalar-pointer prototype argument with a pointer to that UDT.
+Do not infer that this covers allocator/wrapper discovery, interprocedural
+call/return flow, vtables/constructors, shifted pointers, forward-reference or
+UDT-flag mutation, member-TID xref repair, multi-element stroff paths, or the
+microcode-widget operand picker; those are distinct audited surface gaps.
+
+### 35.65. Treat Recursive Graph Transfer as a Single Ownership Tree [F409]
+The C transfer root owns every argument name, scattered-location array, block
+edge array, instruction array, instruction/operand text string, nested
+instruction, referenced operand, and call-argument array below it. Set counts
+only for allocated arrays, recursively clear partial values on construction
+failure, and make the root free operation idempotent for already-cleared
+children. Before `slice::from_raw_parts`, safe Rust must reject a null pointer
+with nonzero count and any count whose byte extent exceeds `isize::MAX`; copy
+all values before freeing the C tree. Consecutive real-host generations are the
+minimum ownership probe because they detect retained pointers into the first
+destroyed MBA.
+
+### 35.66. Preserve Symless State-Transfer Asymmetries [F410]
+The store destination is an address operand, not a variable assignment target:
+record the write but retain the pointer in state. Unsupported ordinary
+instructions drop a real variable destination, while loads replace their
+destination with an unknown dereference. For a block with multiple available
+predecessors, choose the first state having the maximal count of tracked
+structure values; do not let a later equal-score predecessor replace it. Build
+fields in access order, allow a new untyped overlap only when its width is no
+larger than every conflicting field, and reject negative offsets before UDT
+materialization. This yields expected `O(B^2 + I*D + F^2)` worst-case time for
+`B` blocks, `I` instructions, maximum nested depth `D`, and recovered field
+candidates `F`, with `O(B*S + F)` storage for saved block states of size `S`.
+
+### 35.67. Bound Interprocedural Structure Flow by Context and ABI Evidence [F411]
+For each resolved direct call, evaluate copied call operands in caller state,
+inject tracked structure pointers into the corresponding copied callee argument
+locations, and inspect terminal callee states through the copied return location.
+Use an explicit maximum call depth, an active-context set for recursion cycles,
+and a completed-context set for repeated `(function, injected argument values)`
+work. A returned structure value is usable only when all observed terminal
+values agree. Report shifted propagation sites but mutate only zero-shift
+arguments/returns until shifted-pointer metadata has its own opaque API. When
+changing a return type, copy the complete native `func_type_data_t`, replace
+only `rettype`, and rebuild the direct function or function-pointer type; public
+function summaries do not contain enough ABI metadata for reconstruction.
+
+For `C` distinct analyzed contexts, context `c` having `B_c` blocks, `I_c`
+instructions, maximum recursive operand depth `D`, `F` raw field candidates,
+and `P` propagated prototype sites, the current stable-predecessor traversal,
+linear site deduplication, and overlap resolution require
+`O(sum_c(B_c^2 + I_c*D) + F^2 + P^2)` time. Graph/state retention requires
+`O(G + sum_c(B_c*S_c) + F + P)` space, where `G` is the cached owned-graph
+size and `S_c` is the maximum saved state size in context `c`. The explicit
+call-depth bound limits path length, while context deduplication bounds repeated
+work for identical function/structure-offset injections.
+
+### 35.68. Request Call Information Explicitly for Preoptimized Interprocedural Graphs [F412]
+At `MMAT_PREOPTIMIZED`, a direct call can remain an unknown instruction whose
+address operand is copied but whose `mop_f` call-argument payload is absent.
+When a consumer requires call arguments, build the graph, pre-decompile exact
+direct callees to populate their prototypes, then call
+`mba_t::analyze_calls(ACFL_GUESS)` before copying the owned graph. Expose this
+as an explicit graph-generation option and leave it false by default: resolving
+call information is a semantic enrichment beyond a raw maturity snapshot.
+
+### 35.69. Use Three-Way Terminal Return Consensus [F413]
+Classify terminal return evidence as absent, agreed structure, or conflicting.
+All scalar/unknown terminals mean absent and do not increment the conflict
+count. Identical structure-pointer shifts at every terminal mean agreed and may
+flow back to the caller. Differing structure shifts, or any mixture of
+structure and non-structure values, mean conflicting and must not propagate.
+This avoids both false conflicts on ordinary helpers and unsound propagation
+from path-dependent returns.
+
+### 35.70. Separate Allocator Classification from Prototype Enrichment [F414]
+Resolve allocator seeds from copied import modules/symbols or exact function
+addresses, then inspect references only when the containing owned graph has an
+exact direct call at that site. Track caller arguments, bounded integers, and
+call-origin tokens. A malloc-like integer size in `1..0x3fff` is a static
+allocation; a forwarded argument is a wrapper candidate. Callee arguments for
+calloc must both be integers or both caller arguments. Confirm a wrapper only
+when every usable terminal return agrees on the candidate call origin, and key
+recursive heir traversal by allocator target/kind/index mapping.
+
+Analysis needs no new native surface: imports, xrefs, function containment,
+owned call arguments, and return locations are already copied. Prototype
+enrichment is distinct. To rename an existing size/count argument safely, copy
+the complete `func_type_data_t`, modify only `funcarg_t::name`, and rebuild the
+direct or pointer function type. Do not reconstruct from `FunctionDetails` or
+invent absent ABI arguments; report a missing configured index as ineligible.
+
+### 35.71. Separate Wrapper Call Tokens from Allocation-Object Roots [F415]
+Classify each referenced site against one exact direct allocator call. A static
+bounded integer size creates an allocation root even when the result is not
+returned. Forwarded caller arguments create only a wrapper candidate; confirm
+that candidate when every terminal ABI return location contains the token from
+that exact call address. A scalar, different call token, mixed terminal, or
+missing return location rejects the wrapper.
+
+For a static root, inject `StructurePointer(0)` at the allocation call result
+and reuse depth/cycle/context-bounded direct-call structure propagation. Treat
+the recovered allocation size as a field upper bound and exclude accesses whose
+nonnegative `offset + width` exceeds it. Materialize a call-site-specific UDT,
+but keep allocator and wrapper returns generic `void*`; assigning one root UDT
+to a reusable allocator return conflates distinct allocation objects.
+
+### 35.72. Require Constructor Stores Before Treating Function-Pointer Arrays as Vtables [F416]
+Scan loaded item heads in code/data segments and interpret pointer-width runs as
+candidate vtables only while every slot targets an exact function entry or a
+mapped external symbol. Stop before a non-first slot with an incoming code or
+data reference, exclude all-import runs, and bound the member count. A candidate
+becomes a class root only when owned preoptimized microcode proves that its
+exact address is stored at pointer width into injected function argument zero at
+offset zero. Report nonzero offsets as secondary subobject evidence. If one
+function stores multiple distinct tables at offset zero, retain ambiguity;
+member count and xref frequency are not inheritance proof. Materialization must
+preserve the native UDT record while setting only C++ object/vftable semantics,
+then use named types for the class vftable pointer and virtual-method `this`
+arguments.
+
+Let `H` be scanned item heads, `P <= 4096H` inspected pointer slots, `R` the
+aggregate reference-query result size, `C` candidate-referencing functions,
+and `G` the total copied constructor-graph instructions plus edges. Candidate
+discovery is `O(H + P + R + G)` time before field reconstruction and
+`O(P + C + G)` retained space. Field reconstruction reuses the bounded
+interprocedural cost from KB 35.67. Set-based ambiguous-root grouping adds
+`O(S log S)` time and `O(S)` space for `S` proven stores.
+
+### 35.73. Do Not Synthesize Prototype Arguments from Constructor Graph Inference [F417]
+Owned microcode argument locations and applied `func_type_data_t` records are
+different evidence classes. A graph-inferred argument zero authorizes abstract
+state injection and can prove an exact vtable store. It does not supply the
+argument comments, locations, flags, spoiled registers, calling convention, or
+other prototype metadata required for a lossless type edit. Apply class-pointer
+typing only when argument zero already exists and is a generic pointer or
+pointer-width scalar; otherwise count the function as ineligible. This keeps
+discovery useful on stripped code while preventing ABI synthesis. A fixture
+with generic `void*` debug prototypes is the positive probe; a stripped fixture
+whose methods have no applied arguments is the falsification probe.
+
+### 35.74. Normalize Both Bindgen Shapes for Recursive C Records [F418]
+Libclang can expose a recursive C record completely or leave it opaque at the
+point bindgen emits Rust. With `derive_default` enabled, the complete form also
+adds layout assertions and a zeroing `Default`; the opaque form does not. A
+deterministic checked binding cannot branch on only the opaque byte pattern.
+Find the named record's preceding `repr(C)` marker and replace everything up to
+the first following FFI declaration with one canonical owned layout. Regenerate
+and compare exact bytes; current canonical SHA-256 is
+`5a91e0e932583a98f7079e32cfacc9493d1dee27e4d80c938a1b3da5b44ef949`.
+
+### 35.75. Preflight Existing Semantic UDT Layouts Before Prototype Mutation [F419]
+Generated type names reduce collision probability but do not prove structural
+compatibility. For an existing vftable UDT, require each member offset to be
+pointer-width aligned, map it to an in-range discovered method index, and
+compare its complete rendered pointer type with the current method pointer.
+Reject the candidate before class/prototype mutation on any mismatch or extra
+member. For an existing class UDT, require the offset-zero member to be the
+exact named vftable pointer. Preserve nonzero fields: exact-offset/equal-type is
+reuse, exact-offset/different-type or partial overlap is a reported skip.
+
+### 35.76. Compare Shifted Pointer Parent and Delta Explicitly [F420]
+Do not use native pointer equality to recognize `__shifted` types:
+`ptr_type_data_t::operator==` omits `parent`, `delta`, and `taptr_bits`. Copy
+pointer details into owned values and require all of: shifted property present,
+nonempty struct parent, exact named parent identity, and exact signed 32-bit
+byte delta. To construct a shifted pointer, copy the complete existing pointer
+record, set only `TAPTR_SHIFTED`, `parent`, and `delta`, and rebuild an opaque
+value. This preserves pointee, closure, based-pointer width, qualifiers, and
+unrelated pointer attribute bits.
+
+For Symless application, use the already-proven propagated argument shift as
+the delta. Type an existing generic argument only; recognize an exact prior
+shift as idempotent and preserve any incompatible complex pointer. Continue to
+exclude shifted returns because upstream explicitly treats them as error-prone
+and the current evidence does not establish a return-parent contract.
+
+### 35.77. Apply Only Evidence-Backed Shifted Argument Types [F421]
+For every propagated argument site, use the abstract-state shift already
+derived from analyzed call arguments. A zero shift selects the ordinary named
+structure pointer. A nonzero shift is eligible only when representable as a
+signed 32-bit byte delta; construct it by copying that pointer record and
+setting the named parent/delta. Existing shifted types are idempotent only when
+pointee name, shifted state, parent name, and delta all match. Any shifted
+pointer with a different parent/delta and any other complex pointer is
+ineligible and remains unchanged. Shifted returns remain excluded.
+
+Let `S` be propagation sites and `L` the aggregate length of resolved type-name
+chains. Eligibility and pointer construction require `O(S + L)` time and
+`O(1)` auxiliary space per site, excluding opaque type-copy storage. The
+interprocedural reconstruction bound remains KB 35.67; this phase adds no graph
+traversal. The falsification probes are a mismatched parent, mismatched signed
+delta, delta outside `[-2^31, 2^31-1] B`, and fresh-process reopen after exact
+application.
+
+### 35.78. Replace Only Exact Local Forward Ordinals [F422]
+Treat a forward declaration as a distinct local-type state, not as an empty
+complete UDT. Classification copies the native forward property and maps its
+declared base to `Struct`, `Union`, `Enum`, or `Unknown`. Replacement is bounded
+to structure/union targets: require a nonempty NUL-free exact name, a local
+non-sub-TIL target with a nonzero ordinal, explicit forward state, and a complete
+non-forward candidate of the same struct/union kind. Copy the candidate and save
+that copy into the target ordinal with `NTF_REPLACE | NTF_COPY`; return a fresh
+named lookup and leave the source candidate unchanged.
+
+This preserves the identity referenced by existing ordinal-based type links and
+prevents the generic `save_as` overwrite contract from being used as a forward
+classifier. Preconditions are evaluated before the one SDK save operation.
+Classification is `O(1)` time/space excluding opaque type storage; replacement
+is `O(M)` time and space for `M` copied UDT members. Falsification probes are an
+absent name, base-TIL type, complete target, enum forward, forward candidate,
+non-UDT candidate, struct/union mismatch, embedded NUL, and named candidate whose
+definition must be copied rather than stored as a typeref.
+
+### 35.79. Extract Forward Pointees from Pointer Details [F423]
+For any value classified as a pointer, call `get_ptr_details()` and copy
+`ptr_type_data_t::obj_type`; do not rely on `get_pointed_object()`. IDA 9.4 can
+return an absent pointed object for a valid pointer to a named local forward
+while the complete pointer record retains that forward pointee. This makes
+forward state and declared kind observable before replacement, and an existing
+pointer link to the ordinal resolves to the complete UDT after replacement.
+
+The operation remains `O(1)` excluding opaque type-copy storage. Falsification
+probes are ordinary primitive pointers, complete named UDT pointers, local
+structure/union forward pointers before replacement, and the same retained
+pointer after ordinal-preserving replacement.
+
+### 35.80. Existing Ordinal Links Resolve After Forward Replacement [F424]
+A same-ordinal complete-definition save updates consumers that already refer to
+the local forward. Do not rewrite those consumers merely because the target was
+previously incomplete: after replacement, re-read each prototype and apply the
+ordinary exact type-eligibility rule. In the measured DWARF case, the original
+pointer argument becomes an exact pointer to the recovered structure and is
+therefore already typed.
+
+Report creation, forward replacement, and prototype mutation separately. First
+apply should show one forward replacement, member additions, and zero redundant
+prototype changes; fresh-process reopen should show zero replacement/addition,
+all members reused, and the prototype still already typed. A changed ordinal or
+delete-plus-recreate implementation falsifies this behavior.
+
+### 35.81. Resolve Persistent Member References Inside the Type Boundary [F425]
+An exact UDT member cross-reference target is an SDK member identity, not a
+linear program address. Keep it opaque: accept a complete saved local UDT plus
+an exact byte offset, resolve exactly one member index, obtain its stable TID
+internally, and expose only referencing item-head addresses on readback. Ensure
+one `dr_I | XREF_USER` data reference so reanalysis retains it; return whether
+the operation created a reference and treat an exact existing persistent
+reference as idempotent success.
+
+Reject an absent/forward/non-UDT value, sub-TIL or unsaved UDT, byte-to-bit
+overflow, no exact member, multiple exact-offset members, an unmapped/non-head
+source, and an existing incompatible reference for the same source/member pair
+before mutation. This prevents a member `tid_t` from leaking through the public
+`Address` vocabulary and prevents silent replacement of a semantically
+different xref.
+
+For `M` UDT members and `R` references at the queried source or target, exact
+resolution plus read/ensure costs `O(M + R)` time and `O(R)` returned storage
+(`O(1)` auxiliary storage for ensure). A Symless reconstruction with `S` unique
+field-access sites adds at most `S` persistent xrefs. Falsification probes are
+an ephemeral UDT, a complete local UDT with one exact member, a union with
+multiple offset-zero members, a byte offset above `UINT64_MAX / 8`, a tail-byte
+source, repeated ensure, reanalysis, and fresh-process reopen.
+
+### 35.82. Member-TID Informational References Survive Database Reopen [F426]
+IDA Professional 9.4 retains `dr_I | XREF_USER` references whose destinations
+are stable local UDT member identities. In the measured Symless fixture, three
+exact access item heads at `0x100000424`, `0x100000430`, and `0x10000043c`
+target members at `+4 B`, `+8 B`, and `+24 B`. First apply added all three;
+fresh-process reopen enumerated and reused all three with zero additions or
+skips.
+
+Keep report mode read-only by exposing only the number of recovered access-site
+candidates. During explicit apply, resolve each exact compatible member inside
+`TypeInfo`, ensure the persistent reference, and classify added/reused/skipped
+counts. An apply-reopen sequence other than `3 added, 0 reused` followed by
+`0 added, 3 reused` on this fixture falsifies persistence or idempotence.
+
+### 35.83. Compare Node Address Arrays Without JSON Serialization [F427]
+The local Node test harness implements `toEqual` with `JSON.stringify`, and
+ECMAScript `BigInt` is not JSON-serializable. Because Node `Address` values are
+`BigInt`, do not use that matcher for nonempty `Address[]` values. Assert the
+length and compare each element with strict equality. A serialization exception
+in this context is a harness failure, not evidence that the native address
+transfer or wrapper result is invalid.
+
+### 35.84. Keep Multi-Component Struct-Offset Identities Inside the Instruction Boundary [F428]
+
+- SDK struct-offset paths are semantic sequences: the first component identifies the root UDT and subsequent components identify selected UDT members; their native numeric values are database implementation identities, not portable public addresses.
+- Resolve readback to copied `structure_name` plus ordered `member_names` with `get_tid_name` and `get_udm_by_tid`. Treat any unresolved component as an error; never synthesize a `tid_<number>` public fallback.
+- Apply an exact member path by public structure name and member byte offset. Internally require a complete saved local UDT, exactly one member at `byte_offset * 8`, a stable member identity, and an existing-path preflight. Return added/reused state and reject incompatible paths before mutation.
+- Preserve Symless operand selection by copying `mreg2reg(mreg, byte_width)` into each owned register microcode operand. At a recorded access, match that processor register against a phrase/displacement base or the register immediately preceding an immediate; compute the delta using the upstream operand-width signed modular conversion.
+- Group by `(instruction address, processor register)` and retain first-observation order. Apply one stroff for the first recovered field; represent other fields at that instruction through exact member references.
+- Falsification probes: root-only, exact two-component, unresolved member, ambiguous exact-offset member, unsaved/forward/sub-TIL UDT, incompatible pre-existing path, repeated apply, fresh-process reopen, signed negative delta, phrase/displacement/immediate selection, same-instruction multiple fields, and processor-register conversion failure.
+
+### 35.85. Separate Pointer-Arithmetic Operand Evidence from Recovered Fields [F429]
+
+- Symless emits a size-zero access observation when a tracked structure pointer is shifted by an integer in microcode `add`/`sub`. Its location is the source register operand and its target offset is the shifted structure value.
+- This observation is semantic evidence for selecting a matching machine operand, not a UDT field. Do not insert it into width-conflict resolution or create a zero-width member.
+- Capture `(target byte offset, instruction address, processor-register ID)` only when the source microcode operand is a register whose `mreg2reg` conversion succeeded. After ordinary nonzero accesses are resolved, attach each observation to an exact recovered field offset.
+- Keep direct register-backed `ldx`/`stx` evidence as an additional valid source; nested address expressions require the pointer-arithmetic path.
+- Falsification probes: nested load address with register-plus-immediate precursor, subtract shift, unavailable processor-register mapping, unmatched shifted offset, duplicate observation, absence of an extra field, exact candidate count, and live operand-path readback.
+
+### 35.86. Treat Reopen Reuse as the Persistence Contract for Opaque Operand Paths [F430]
+
+- A successful mutation is insufficient evidence: rerun apply in a distinct initialized process and require every candidate to classify as an exact reuse through copied `structure_name`, ordered `member_names`, and `delta` readback.
+- On the arm64 forward-structure fixture, three recovered fields produce three candidates and three two-component paths. First apply adds all three; reopen adds zero and reuses all three, with no zero-width member.
+- The same reopen must retain Phase 43 member references and field layout, because the operand path is supplemental semantic metadata rather than a replacement for exact member references.
+- Falsification probes: missing member-name resolution, numeric fallback, delta drift, root-only readback, additional field creation, changed executable hash, reopen additions, or any reuse count below the candidate count.
+
+### 35.87. Preflight Operand Representation Flags Independently of Strooff Path Readback [F431]
+
+- `get_stroff_path()` answers only whether a struct-offset path can be read. It does not prove that the operand has no user-defined representation.
+- After an absent path, inspect `get_flags(address)` with arbitrary-operand `is_defarg(flags, n)`. If true, return `Conflict` without calling `op_stroff`; this preserves enum, offset, numeric, character, stack-variable, forced, floating, segment, and custom representations.
+- If `is_stroff(flags, n)` is true but `get_stroff_path()` returns no components, surface an SDK/readback failure rather than treating the operand as unformatted.
+- Falsification probes: pristine operand apply, exact stroff reuse, incompatible stroff conflict, enum/ordinary-offset preservation, corrupt stroff-flag/path disagreement, and no mutation on every preflight failure.
+
+### 35.88. Make Opaque Struct-Offset Readback Name-Total and Exact Apply Failure-Atomic [F432]
+
+- A successfully resolved native member identity with an empty member name is not a valid copied-name path component. Return `NotFound` rather than publishing an empty placeholder or numeric fallback.
+- Validate address and operand index before `get_stroff_path()`, `get_flags()`, or other native queries.
+- Exact ensure reaches `op_stroff` only from a pristine operand. On a false SDK return or mismatched readback, clear the attempted operand representation and return an error; this restores the known pre-state.
+- Falsification probes: bad address, negative/out-of-range index, anonymous member component, SDK false return, readback mismatch, pristine state after failure, exact reuse, and no numeric identity in any error/result value.
+
+### 35.89. Validate Exact Operand Paths at Four Independent Boundaries [F433]
+
+- Core boundary: exact root/member/delta readback, repeated false, incompatible stroff conflict, defined non-stroff preservation, bad-input rejection, and post-apply verification.
+- Binding boundary: C++/Node/Rust signatures contain copied names and checked offsets only; generated C ABI contains no raw-ID setter or numeric path transfer and remains byte-identical to checked bindings.
+- Analysis boundary: pointer add/sub size-zero observations yield candidates without creating fields; grouping selects one source-ordered field per `(instruction, processor register)`.
+- Persistence boundary: report is non-mutating, first apply adds every eligible path, and a distinct process reuses every path with zero additions while retaining fields and member references.
+- Phase 44 evidence: C++ 26/26; Node 238/238 structural and 82/82 live; Rust 139/139 library, 14/14 Symless, and 99/99 live; final fresh fixture 3 candidates -> 3 additions -> 3 reuses.
+
+### 35.90. Preserve Database-Derived Provenance for Bounded Indirect Calls [F434]
+
+- Treat a database-derived scalar as a distinct abstract kind from a plain integer even when their bit patterns are equal. Only the former may resolve an indirect-call offset.
+- Sources matching upstream `mem_t`: move from global memory reads the destination width at the global address; address-of an exact global carries that address; load through a database-derived address reads the destination width. Preserve the kind through move, zero/sign extension, and add/sub with an integer.
+- For `IndirectCall`, evaluate the right/offset operand, ignore the selector, require database-derived provenance, normalize to the recorded byte width, and require the target loader/function lookup to return an exact entry. Do not trust an analyzed call-info callee to bypass provenance.
+- Reuse existing call-argument injection, depth/context-cycle guards, graph cache, terminal-return consensus, and allocator-root logic after target resolution.
+- Complexity: state lookup/update remains `O(log V)` in C++ and expected `O(1)` in Rust for `V` tracked variables; each database-derived load performs one bounded 1/2/4/8 B read; context traversal remains bounded by the existing depth and visited-context sets.
+- Assumption A45.1: loaded database bytes contain the statically resolved pointer after loader/fixup processing. Falsify with an unresolved relocation or a value not equal to a function entry; dependent result: indirect target acceptance.
+- Assumption A45.2: relevant scalar widths are 1, 2, 4, or 8 B as in upstream `get_nb_bytes`; other widths use one-byte fallback only for source parity. Falsify with an architecture producing a wider indirect offset; dependent result: target recovery, not direct-call behavior.
+- Falsification probes: plain-immediate target rejection, address-of-global acceptance, global-slot load acceptance, second-level load, add/sub preservation, unloaded address, non-entry interior address, absent call arguments, depth/cycle reuse, exact callee field recovery, allocator-root propagation, and fresh-process apply idempotence.
+
+### 35.91. Reach Fixed Allocator Slots Through One Exact Reference Hop [F435]
+
+- Direct allocator discovery begins with references to the configured seed. A global fixed-pointer slot is represented as `slot -> allocator` data evidence plus `code -> slot` read evidence, not necessarily as a call xref to the allocator.
+- For each target-referencing data item, enumerate only its code references, resolve the containing function, cache one owned analyzed graph, collect copied `IndirectCall` addresses including nested instructions, and run the same database-provenance classifier at each site.
+- Count a database-resolved allocator call only after its evaluated target equals the configured seed and its size/wrapper arguments classify. Do not treat a code read, final decompiler call annotation, or call-info target as sufficient.
+- For `R_t` target references, `R_s` code users per referenced slot, `G` copied graph instructions, and `C` candidate indirect calls, reachability costs `O(R_t + sum(R_s) + G + C * G)` time in the current bounded classifier and `O(G + C)` cached/candidate storage per distinct containing function.
+- Assumption A45.3: IDA emits an exact data reference from a statically initialized slot to the configured target and a code reference from the load to that slot. Falsify by removing either reference and verifying the site remains unclassified; dependent result: allocator-site reachability only, not ordinary analysis of an explicitly selected root.
+
+### 35.92. Phase 45 Live Persistence Boundary [F436]
+
+- The arm64 fixture stores relocation-derived `target - 0x135` values and reconstructs them using database load plus integer add. This prevents a plain immediate from satisfying provenance while retaining a deterministic exact target.
+- Ordinary report evidence is one database-resolved indirect call, two processed functions, zero unresolved calls, and exact fields at `+4/4 B`, `+8/8 B`, and `+24/1 B`. Apply/reopen transitions are `3 added -> 3 reused` for members, references, and operand paths, with `2 changed -> 2 already typed` arguments.
+- Allocator report evidence is one database-resolved indirect wrapper, one 32 B fixed root, zero unclassified calls, and the same three fields. Apply/reopen transitions are `3 -> 3` members and `6 -> 6` references/operand paths.
+- Falsification probes are an ordinary indirect counter other than one, any missing field, a nonzero ordinary unresolved count, allocator wrapper/root counts other than one, any unclassified allocator call, reopen additions, or reuse below the first-apply addition count.
+
+### 35.93. Phase 45 Cross-Language Regression Boundary [F437]
+
+- No public wrapper/binding delta is required; generated C ABI identity is therefore a negative control, not an omitted validation layer.
+- Required final evidence is C++ 26/26, Node 238 structural plus 82 live, Rust 139 library plus 15 Symless plus 99 live, strict declarations/all-target formatting checks, unchanged tracked fixtures, and byte-identical generated bindings.
+- A changed binding hash, decreased test count, ignored live test, fixture mutation, or any failure in an unchanged language surface falsifies the bounded no-public-API conclusion.
+
+### 35.94. Separate Static Vtable Root Expansion from Dynamic Dispatch [F438]
+
+For a candidate whose first function pointer is at address `T`, upstream load discovery searches confirmed references to `T`; only if that produces no load does it search the RTTI label `T - 2P`, where `P` is the database pointer width, while recursively crossing data locations that contain the exact referenced address. Every code candidate still requires microcode confirmation that the value eventually stored is exactly `T`. Once the table is accepted, each non-import member function with an argument-zero location is an independent `this`-pointer root and its recovered fields join the class layout.
+
+- Assumption A46.1: the ABI uses the audited two-pointer Itanium prefix when the constructor references a label before the function array. Falsify with an ABI-specific prefix of another width; dependent result: RTTI fallback reachability only.
+- Assumption A46.2: relevant data aliases are pointer-width database items whose loaded value exactly equals the preceding reference address. Falsify with encoded, runtime-initialized, or non-pointer aliases; dependent result: alias reachability only.
+- Stress probes: a direct-only fixture must keep RTTI counters at zero; a constructor that computes `label + 2P` must be missed when fallback is disabled and accepted when enabled; a data alias containing the wrong pointer must be rejected; a field touched only by a virtual method must disappear when method seeding is disabled and appear when enabled. Runtime object-dependent targets remain unknown and outside this static model.
+
+### 35.95. Phase 46 Live RTTI and Virtual-Method Persistence Boundary [F439]
+
+- A source-level aggregate may cause DWARF to itemize the entire RTTI blob as one database item, making `next_head` skip the interior method array. The fixture therefore emits the prefix and method array as adjacent assembly labels while retaining C/DWARF function prototypes; this tests the analyzer rather than debug-item coalescing.
+- Required report invariants are one candidate and accepted class, `direct_load_tables = 0`, `rtti_fallback_tables = rtti_load_tables = 1`, `data_aliases_followed = 1`, `virtual_methods_analyzed = 3`, zero graph/arity failures, and four fields including method-only `+24/1 B` and `+32/8 B`.
+- Required persistence transitions are class/vtable creation then reuse; five class and three method members added then reused; eleven member references and operand paths added then reused; and four prototypes changed then already typed. Any reopen addition/change, lost field, direct-load acceptance, missing alias, or reduced method count falsifies the bounded result.
+- Complexity: recursive evidence collection is `O(V + E)` time and `O(V)` visited storage over exact pointer-alias addresses/references; candidate graph evaluation remains bounded by owned graph size, and method propagation is `O(M * G)` before existing interprocedural depth/context bounds for `M` unique non-import methods and representative graph cost `G`.
+
+### 35.96. Phase 46 Cross-Language and Direct-Path Regression Boundary [F440]
+
+- No wrapper header, compiled wrapper source, Node surface, Rust library, C shim, or generated binding changes are required; the two adaptations consume existing opaque values.
+- The original direct-table fixture is the fallback negative control: it must report one direct load, zero RTTI fallback/load, zero aliases followed, three methods, and unchanged `+8/4 B`, `+16/8 B`, `+24/1 B` fields.
+- Complete evidence is C++ 26/26, Node 238 structural plus 82 live, Rust 139 library plus 0 sys plus 17 Symless plus 99 live, strict/all-target checks, generated-binding identity at `3a143a13309725ed66c5ebce1dd5199fafcc30ea8a0d92b33404c9fef66d7a13`, and unchanged tracked fixture hashes/blob. Any reduced count, binding delta, direct-path fallback, or tracked fixture mutation falsifies the no-public-API conclusion.
+
+### 35.97. Exact Microcode Operand Root Model [F441]
+
+For each top-level owned microinstruction, visit nested left, right, and destination instructions recursively before the parent, then assign monotonically increasing sub-indices in execution order. At each instruction, expose register and stack operands from left, right, and destination; the destination is an after-instruction root only when copied `modifies_destination` is true, otherwise it is a before-instruction source root. Inject the selected structure-pointer value only in the selected graph entry context, before or after the exact address/sub-index, and reuse the existing depth-bounded interprocedural propagation thereafter.
+
+- Assumption A47.1: owned nested operand recursion preserves the SDK left/right/destination tree used by upstream flattening. Falsify with a nested graph whose candidate sequence differs from SDK depth-first execution order; dependent results: candidate identity and exact injection only.
+- Assumption A47.2: stack offsets and microregister IDs uniquely identify state locations within one generated preoptimized graph. Falsify with two distinct SDK locations copied to the same owned identity; dependent result: selected root state only.
+- Stress probes: a store destination must remain a source root, a move destination must be an after root, a nested source must receive a lower sub-index than its parent, the same `(EA, sub-index)` in a followed callee must not trigger root injection, and disabling follow-calls must retain root-function fields while excluding callee-only fields.
+- Complexity: enumeration is `O(I + O)` time and `O(D + C)` auxiliary space for `I` recursive instructions, `O` visited operands, nesting depth `D`, and emitted candidates `C`; injection adds `O(1)` matching work per processed instruction before existing graph/depth/context bounds.
+
+### 35.98. Picker Display Index and Execution Index Must Share One Traversal [F442]
+
+Do not compute candidate indices while rendering operands independently from analysis. Flatten nested left/right/destination instructions depth-first, assign the parent index only after all nested descendants, and use that same private instruction path for before/after injection. Display `(EA, sub-index)` for upstream familiarity, but do not use it as the sole internal identity because consecutive same-EA instructions and malformed/upstream-mismatched display indices can collide.
+
+- Assumption A47.3: SDK microcode execution order for nested `mop_d` operands is the audited `flatten_minsn()` left/right/destination depth-first order. Falsify by comparing a host trace or SDK contract showing a different order; dependent results: nested candidate numbering and injection timing only.
+- Stress probe: construct a parent with a register left operand and nested right operand. The nested candidates and instruction must precede the parent-left candidate's injection point, and selecting either must affect only its private path even if both render with the same address.
+
+### 35.99. Phase 47 Live Selection and Persistence Boundary [F443]
+
+- Picker-facing operand and instruction strings must remove IDA color tags from a copy; raw owned text remains available unchanged to other consumers.
+- Required report invariants for the arm64 `inspect_fields` fixture are 18 candidates, candidate zero at `0x100000460.0` as `x0.8{2}` source/before, exactly one root injection, four recovered fields at `+4/4 B`, `+8/8 B`, `+18/2 B`, and `+24/1 B`, and zero propagation sites for the local selected root.
+- Required persistence transitions are one structure/four members/four references/four operand paths added on first apply, then zero creation/addition and four reuses in a distinct process. Root argument change counters remain zero because an arbitrary selected microregister is not evidence that a function prototype argument has that type.
+- Falsification probes are tagged/control-byte candidate output, destination/after classification for the store address, injection count other than one, any lost/extra field, any root argument mutation, reopen additions, or reuse below four.
+
+### 35.100. Dynamic Object Dispatch Is Not an Upstream Parity Requirement [F444]
+
+Upstream has one indirect-call resolution rule: the `m_icall` right operand must carry database-memory provenance and equal an exact function entry. Structure-derived values do not satisfy that class. Vtables contribute statically enumerated argument-zero method roots, not runtime dispatch edges. With Phases 45 and 46 complete, no source-defined runtime object-dispatch behavior remains to port.
+
+- Assumption A47.4: the audited Symless checkout at the recorded file hashes is the target upstream source of truth. Falsify with another target revision containing an object-derived indirect-target resolver; dependent result: only the parity-closure classification.
+- Risk boundary: a novel virtual-dispatch analysis would need explicit object-state, table-offset, table-member, ambiguity, and call-graph policies plus independent soundness evidence. Its absence does not reduce fidelity to the audited upstream implementation.
+
+### 35.101. Phase 47 Cross-Language Regression and ABI Boundary [F445]
+
+- Complete evidence is C++ 26/26 in 22.58 s; Node 238 structural plus 82 live; Rust 139 library plus 0 sys plus 20 Symless plus 99 live; strict TypeScript, Rust format/all-target, and generated-binding identity checks also pass.
+- `IdaxMicrocodeInstruction` has the same ordered `modifies_destination` field in the C header, normalized bindgen output, and safe transfer. Two independent clean outputs and the checked file have SHA-256 `865f53507d8dd44ef7b2033eccb901f3bf26bf21e0653c8528c493e3692c7b3f`.
+- The tracked fixture executable remains SHA-256 `af23d4fde7d2b5ebe20385f5aa8c23221988fd1bdbab777c18daf8c9d9543f80`; its adjacent IDB remains SHA-256 `ce6d678f484d681a5bc147dab49c272e3a7f9883b3c15c41974ec52cb95a431b` and Git blob `84ff142e9cd6c39dbd22d94c7d164b2db48c64dd`.
+- Falsification probes are any reduced test count, generated-binding byte delta, ABI field-order mismatch, tracked fixture mutation, candidate count other than 18, root injection count other than one, first-apply count other than four, or reopen addition/reuse other than zero/four.
+
+### 35.102. Diaphora Exact-Fingerprint Adaptation Boundary [F446]
+
+The first Diaphora 3.4.0 adaptation is a versioned, deterministic function manifest: function entry/RVA, canonical CFG counts and edges, instruction/mnemonic sequence, full item-byte MD5, relocation-light instruction-prefix MD5, name, declaration, and repeatable comment. Comparison may accept only a unique exact candidate, ordered by same-RVA plus both hashes, both hashes, full hash, then relocation-light hash with instruction-count agreement. Mutation is explicit and limited to matched function name, nontrivial declaration, and nonempty repeatable comment; report/export remain non-mutating.
+
+- Assumption A48.1: identical code under relocation preserves the audited prefix selected from encoded operand positions. Falsify with two relocated builds whose nonrelocation opcode bytes differ or whose relocation bytes remain in the prefix; dependent result: relocation-light matching only.
+- Assumption A48.2: exact full-function item-byte MD5 plus instruction count identifies one source function within the compared manifests. Falsify with duplicate implementations; dependent result: full-hash matching only, and the unique-candidate rule must reject the collision.
+- Complexity: feature extraction is `O(F + I + B + E)` time and `O(F + I + E)` manifest/working space for functions `F`, decoded instructions `I`, hashed bytes `B`, and CFG edges `E`; indexed comparison is expected `O(F)` time/space, with collision buckets explicitly retained.
+
+### 35.103. Operand Encoded-Value Positions Are Optional Byte Units [F447]
+
+Copy SDK `op_t::offb` and `op_t::offo` as optional byte offsets from instruction start. SDK zero maps to absence; nonzero values map to `std::size_t`, JavaScript `number | null`, C ABI signed integers with `-1` as absence, and Rust `Option<usize>`. Consumers must require `offset < instruction.size()` before using the position. These are encoding positions, not operand widths, database addresses, or struct-member offsets.
+
+- Stress probes: an immediate/near operand must expose a present in-bounds primary offset; a register-only operand must expose absence; decoded C++/Node/Rust values must agree; malformed or future processor positions outside the instruction must be rejected by the fingerprint consumer.
+
+### 35.104. Canonical Metrics Must Be Distinguished from Native Diaphora SQLite Metrics [F448]
+
+The IDAX manifest counts each directed basic-block successor edge once and computes cyclomatic complexity as `E - N + 2P`, with `P = 1` for one function flow graph. Segment-relative offset is `function_entry - segment_start`. Native Diaphora 3.4.0 SQLite rows double-count successor/predecessor edges and derive `segment_rva` from the final visited instruction; direct database interchange therefore remains outside this manifest version.
+
+- Falsification probes: a single-block function has `N=1`, `E=0`, complexity `1`; a two-block linear function has `N=2`, `E=1`, complexity `1`; no manifest record may report a segment offset based on its last instruction.
+
+### 35.105. Function Declaration Readback Is Required for Conservative Import [F449]
+
+The C++ wrapper's printable applied declaration is the authoritative read-side precondition for prototype import. Mirror it through Node as `function.declaration(address, optionalNameOverride)`, through the C shim as an owned UTF-8 string, and through safe Rust as `function::declaration(address, optional_name_override)`. A target with any successfully printed nonempty declaration is preserved; apply is eligible only when readback reports absence. Function-name heuristics are not an equivalent prototype-presence test.
+
+- Assumption A48.3: a successful nonempty `function::declaration` result denotes target prototype state that must be preserved even if IDA synthesized part of it. Falsify only with an SDK contract that distinguishes auto-generated from user-applied declarations through an opaque flag; dependent result: conservative prototype eligibility only.
+- Stress probes: compare C++/Node/Rust output for one applied declaration; verify absence propagates as `NotFound`; verify comparison/export paths do not mutate the target; verify apply skips a nonempty target declaration.
+
+### 35.106. Diaphora Exact Manifest Live Invariants [F450]
+
+- An unchanged analyzed database must produce byte-identical `IDAX_DIAPHORA_EXACT\t1\tcanonical-cfg` output across distinct processes. The reference fixture produces 22 records and manifest SHA-256 `4263b3eafdb75fcb009e3c565f341a72cf6abe222c34554d9908fc65caa0d08a` before metadata mutation.
+- Self-comparison must classify all 22 records in the strongest same-RVA/both-hash tier, with zero ambiguity and zero unmatched records.
+- Explicit apply of one non-auto source name and one nonempty repeatable comment to absent/auto target state must change exactly one of each, save, and report zero failures. Fresh reopen must change zero and preserve the values exactly.
+- Duplicate implementations are ambiguous unless a stronger unique tier separates them. Matching is computed globally per tier against unmatched baseline and current buckets, never greedily by record order.
+- Falsification probes are nondeterministic bytes, a non-22 self-match count, any ambiguous/unmatched self record, report-mode mutation, first-apply counts other than one name/one comment, reopen mutation, or lost metadata.
+
+### 35.107. Phase 48 Complete Validation Envelope [F451]
+
+- C++ must build the plugin and pass 27/27 CTest targets; Node must pass strict example declaration checking, 239/239 structural checks, and 84/84 IDA 9.4 checks; Rust must pass formatting/all-target checks, 139/139 library tests, 0 sys tests, 7/7 Diaphora tests, 20/20 Symless regressions, and 101/101 live IDA 9.4 checks.
+- Generated C ABI bindings must be byte-identical to an independent clean bindgen output at SHA-256 `8d2dd609c7abcf64f14744bd725355e8e2ffb0a6af6fa39abe96d31f4b424d1b`.
+- Both manifest readers reject odd-length/non-hex text and invalid decoded UTF-8. The C++ reader additionally validates overlong sequences, surrogate encodings, truncation, and code points above U+10FFFF before metadata can reach IDA.
+- The tracked fixture remains SHA-256 `af23d4fde7d2b5ebe20385f5aa8c23221988fd1bdbab777c18daf8c9d9543f80`; its adjacent IDB remains SHA-256 `ce6d678f484d681a5bc147dab49c272e3a7f9883b3c15c41974ec52cb95a431b` and Git blob `84ff142e9cd6c39dbd22d94c7d164b2db48c64dd`.
+- Falsification probes are any reduced test count, generated-binding byte delta, malformed-input acceptance/panic, ABI field-order mismatch, declaration readback failure, out-of-bounds present encoded position, or tracked fixture mutation.
+
+### 35.108. Diaphora SQLite/Heuristic Coupling Boundary [F452]
+
+The native database is not merely a serialization alternative for the Phase 48 manifest. Function, instruction, basic-block, callgraph, constant, program-data, and compilation-unit relations feed 50 ordered SQL heuristics plus a stateful ratio/tie-break/multimatch engine. A predicate-only subset that omits normalized assembly/pseudocode/microcode, MD-index, deep bonuses, category thresholds, and prior-match state is a new matcher, not Diaphora heuristic parity.
+
+- Assumption A49.1: native Diaphora ratio/category parity requires the ordered SQL candidates and `check_ratio`/`deep_ratio`/multimatch state together. Falsify with an upstream contract or test corpus proving a named heuristic's final category is independent of all omitted ratio and prior-match inputs; dependent result: heuristic work remains outside the selected Phase 49 slice.
+- Stress probes: enumerate all 50 rule types/categories/flags and predicate dependencies from the pinned module; require any future heuristic artifact to reproduce candidate SQL, default threshold `0.5`, ratio rounding, deep bonuses, one-to-one replacement, and multimatch handling before claiming parity.
+
+### 35.109. Exact Instruction-Metadata Manifest Boundary [F453]
+
+Phase 49 selects only ordinary/repeatable instruction comments and forced operand text from native `instructions` import. Each metadata-bearing source instruction is keyed by its uniquely matched function plus function-relative byte offset and guarded by equal decoded size, mnemonic, and relocation-light MD5. Existing target comments/forced operands are never replaced.
+
+- Assumption A49.2: within a globally unique Phase 48 function match, equal relative byte offset, decoded size, mnemonic, and relocation-light MD5 identify the same instruction-level metadata site. Falsify with a transformed function where all guards agree but semantic instruction identity differs; dependent result: instruction metadata transfer only.
+- Assumption A49.3: `NotFound` or an empty forced-operand/comment readback denotes an absent target slot, while a nonempty readback denotes state to preserve. Falsify with an SDK case where a present user value reads as absent; dependent result: conservative apply eligibility only.
+- Complexity: extraction is `O(I * O)` time and `O(M * O)` serialized space for instructions `I`, decoded operands `O`, and metadata-bearing instructions `M`; indexed validation/apply is expected `O(I + M * O)` time and `O(I + M)` working space.
+- Exclusions: referent names/types, pseudocode comments/tree positions, raw function flags, SQLite files, heuristic ratios, basic-block/instruction graph interchange, and nonexact assembly-diff alignment remain separate surfaces.
+
+### 35.110. Exact Instruction-Metadata Live Invariants [F454]
+
+- The companion header is `IDAX_DIAPHORA_INSTRUCTION_METADATA\t1\texact-relative-offset`; every `I` record has 11 tab-separated fields, and forced operands use ordered `<index>:<UTF-8-byte-length>:<text>` payloads before whole-field hexadecimal encoding. C++ and Rust must emit identical bytes for the same database.
+- Full MD5 is preserved as source provenance. Target eligibility is deliberately guarded by unique Phase 48 function alignment plus instruction ordinal, signed relative byte offset, decoded size, mnemonic, and relocation-light MD5; it does not require equal full MD5 because relocation-bearing bytes may differ.
+- Comparison/export never persist a target mutation. Explicit apply writes only absent ordinary/repeatable comments and absent forced operand slots; every nonempty readback is preserved. A fresh process must report zero further writes.
+- Assumption A49.4: function code-address enumeration is deterministic and its sorted ordinal remains stable whenever the offset/size/mnemonic/relocation-hash identity remains stable. Falsify with two equivalent IDA analyses whose sorted instruction membership differs while all other guards identify the intended site; dependent result: instruction metadata eligibility only.
+- Stress probes: byte-identical repeated export; malformed UTF-8/NUL/hash/range/duplicate/reference rejection; signed positive/negative offset and overflow/underflow tests; exact first-apply counts; zero-write reopen; byte-identical reopened export; one valid altered relocation hash producing exactly one guard failure.
+- Live reference envelope: 22 function records, 9 instruction records, manifest SHA-256 `d7dbebeb499f1f14cbe378b2af9e77f06f5f65fd7f2d853b2806755382d996d6`, first apply `1/1/1` comment/repeatable/forced writes with eight preserved values, reopen `0/0/0` writes with eleven preserved values, and negative control `8` eligible plus `1` guard failure.
+
+### 35.111. Phase 49 Complete Validation Envelope [F455]
+
+- C++ must build the plugin and pass 27/27 CTest targets; Node must pass native build, strict example declaration compilation, 239/239 structural checks, and 84/84 initialized-host checks; Rust must pass formatting/all-target checks, 139/139 library tests, 0 sys tests, 10/10 Diaphora tests, 20/20 Symless regressions, and 101/101 initialized-host checks.
+- An independent clean bindgen output must be byte-identical to the checked file at SHA-256 `8d2dd609c7abcf64f14744bd725355e8e2ffb0a6af6fa39abe96d31f4b424d1b`; Phase 49 has no public wrapper, C ABI, Node, or safe-Rust surface delta.
+- Parser/arithmetic containment includes positive and negative signed offsets, `INT64_MIN`, address overflow/underflow, malformed length prefixes, zero-length forced text, invalid UTF-8/NUL, invalid hashes, metadata-free records, duplicate/unsorted operands, duplicate records, and unknown function ordinals.
+- The tracked fixture remains SHA-256 `af23d4fde7d2b5ebe20385f5aa8c23221988fd1bdbab777c18daf8c9d9543f80`; its adjacent IDB remains SHA-256 `ce6d678f484d681a5bc147dab49c272e3a7f9883b3c15c41974ec52cb95a431b` and Git blob `84ff142e9cd6c39dbd22d94c7d164b2db48c64dd`.
+- Falsification probes are any reduced suite count, generated-binding delta, malformed-record acceptance/panic, offset wraparound, report-mode target IDB creation, incorrect first/reopen mutation counts, guard-negative acceptance, or tracked fixture mutation.
+
+### 35.112. Semantic Pseudocode Comment Locations [F456]
+
+Persisted Hex-Rays comments are identified by an address and `item_preciser_t`, not by address alone. The public wrapper must model: default; zero-based argument separator `0..63`; opening parenthesis; assembly, else, do, semicolon; opening/closing curly brace; closing parenthesis; label colon; block-before/block-after; try; and bounded signed switch-case value. Conversion to SDK `ITP_*` values belongs only in `src/decompiler.cpp`.
+
+- Assumption A50.1: the pinned local SDK enum and case-bit comments define the ABI used to compile IDAX. Falsify by compiling against a supported SDK whose named `ITP_*` constants or switch-case encoding differ; dependent result: internal conversion and live comment placement only, while the semantic public model remains stable.
+- Switch-case magnitude must not consume `ITP_SIGN` or `ITP_CASE`; require absolute value `<= 0x1fffffff`. Argument index must be `0..63`. Reject all invalid semantic combinations before calling Hex-Rays.
+- Stress probes: compile-time/internal equality against every named SDK constant; all 64 argument endpoints; positive/negative/zero/max switch cases; out-of-range rejection; semicolon enumeration/readback at SDK value `69`; no public raw integer input in C++, Node, or safe Rust.
+
+### 35.113. Multi-Location Pseudocode Comment Persistence [F457]
+
+Copied enumeration must return every nonempty persisted `(address, semantic location, UTF-8 text)` entry in deterministic address/location order and free the restored SDK map with `user_cmts_free`. A Diaphora adaptation may correct the upstream same-address overwrite only if its format is explicitly marked as an IDAX companion rather than SQLite interchange.
+
+- Assumption A50.2: `restore_user_cmts(function_entry)` is the authoritative persisted source for export and fresh-process readback. Falsify if a saved comment visible through `cfunc_t::get_user_cmt` is absent from the restored map after `save_user_cmts`; dependent result: enumeration/export persistence only.
+- Complexity: enumeration is `O(C)` time and `O(C)` copied space for persisted comments `C`; indexed manifest validation/apply is expected `O(I + C)` time and space after instruction indexing.
+- Stress probes: two distinct locations at one address survive enumeration/export/apply/reopen; report mode does not save; existing target location is preserved; unknown/malformed locations are rejected; orphan removal is never implicit.
+
+### 35.114. Semantic Position Cross-Binding Invariants [F458]
+
+- Public C++, Node, and safe Rust APIs accept only semantic locations. The C ABI carries a closed kind plus signed detail and validates every combination; native `item_preciser_t` integers and `treeloc_t` remain implementation-private.
+- Persisted enumeration restores the SDK map, copies every nonempty `(address, location, text)` record, rejects unknown/corrupt native locations, sorts deterministically by address/kind/detail/text, and releases the SDK allocation with `user_cmts_free()`.
+- Valid parameter domains are argument index `0..63` and switch-case value `[-0x1fffffff, 0x1fffffff]`. Simple positions require zero detail; comment text rejects embedded NUL. C output pointers/counts and orphan-query outputs are null-validated.
+- Initialized-host evidence proves SDK semicolon value `69`: a default and semicolon comment at one address both persist, read back exactly, and enumerate independently through C++, Node, and Rust. Every test restores the prior database values after the probe.
+- Complexity: semantic conversion is `O(1)` time/space; copied enumeration is `O(C log C)` time due to deterministic sort and `O(C)` output space for `C` persisted comments.
+- Falsification probes: any raw public integer escape, accepted out-of-range/detail mismatch, lost same-address entry, unsorted repeated enumeration, save-free report mutation, orphan auto-deletion, allocation leak, binding mismatch, or generated-binding byte delta.
+
+### 35.115. Exact Pseudocode-Comment Companion Invariants [F459]
+
+- Header: `IDAX_DIAPHORA_PSEUDOCODE_COMMENTS\t1\texact-tree-location`. Every `P` record has 11 tab-separated fields: function ordinal, instruction ordinal, signed function-relative offset, decoded size, full MD5 provenance, relocation-light MD5 guard, hex mnemonic, canonical semantic position name, signed position detail, and hex UTF-8 comment text.
+- Canonical position names are `default`, `argument`, `parenthesis-open`, `assembly`, `else-line`, `do-line`, `semicolon`, `open-brace`, `close-brace`, `parenthesis-close`, `label-colon`, `block-before`, `block-after`, `try-line`, and `switch-case`. Simple detail is zero; argument detail is `0..63`; switch-case detail is `[-0x1fffffff, 0x1fffffff]`.
+- Export includes only persisted nonempty comments whose address is an exact sorted function code head. Per-function decompilation failures and non-instruction/orphan locations are omitted; malformed persisted locations/text fail extraction. The artifact does not claim SQLite interchange or pseudocode similarity.
+- Comparison is read-only and requires a globally unique Phase 48 function match plus exact Phase 49 instruction ordinal/offset/size/mnemonic/relocation-hash agreement. Apply decompiles each eligible target function once, preserves every nonempty target location, writes only absent locations, and calls `save_comments()` once per modified function. It never removes or relocates orphans.
+- Complexity: extraction is `O(F + I + C log C)` time and `O(F + I + C)` working/output space for functions `F`, code heads `I`, and persisted comments `C`; indexed comparison/apply is expected `O(F + I + C)` time and space.
+- Live envelope: 22/22 unique functions, two same-instruction semantic records, `2` first writes/one saved function, `0` reopen writes/`2` preserves, byte-identical SHA-256 `5e8a42dc99e28d57f6b7843d29292ce39c9ed8b387fa6d517ddfa93cb030ba23`; one altered guard gives `1` eligible/`1` failure; one target-owned conflict gives `1` write/`1` preserve.
+- Falsification probes: address-key collapse, record-order nondeterminism, report-created IDB, overwrite of any nonempty target, missing per-function save, reopen write, guard-negative acceptance, malformed position acceptance, implicit orphan deletion, cross-language byte mismatch, or tracked-fixture mutation.
+
+### 35.116. Phase 50 Complete Validation and ABI Boundary [F460]
+
+- Release envelope: C++ full build plus 27/27 CTest; Node build, strict TypeScript examples, 240/240 structural checks, and 85/85 checks against the SDK-matched IDA 9.3 runtime; focused Node semantic-comment persistence/enumeration against IDA 9.4; Rust format/all-target, 140/140 library, 0 sys, 12/12 Diaphora, 20/20 Symless, and 102/102 process-main-thread IDA 9.4 checks.
+- Generated C bindings have independent byte identity at SHA-256 `1c22d8ded3ccd9d08b22f2cce200fb4df4fedc744b89518cc1d0b1ceb370d279`. Tracked fixture executable/IDB SHA-256 values and IDB blob remain `af23d4fde7d2b5ebe20385f5aa8c23221988fd1bdbab777c18daf8c9d9543f80`, `ce6d678f484d681a5bc147dab49c272e3a7f9883b3c15c41974ec52cb95a431b`, and `84ff142e9cd6c39dbd22d94c7d164b2db48c64dd`.
+- Red-team containment requires explicit C++-kind-to-C-kind mapping, C argument range checks before `size_t` conversion, null-save rejection, strict parameter-object shapes in Node, and construction/readback probes for all 64 argument positions.
+- Assumption A50.3: the reproducible full-Node failure in `data::string_literals()` when a binary compiled with pinned SDK 9.3 headers is forced onto IDA 9.4 is a cross-minor ABI/layout mismatch outside Phase 50. Falsify by rebuilding the identical Node suite with matching IDA 9.4 SDK headers and reproducing the same `get_strlist_item()`-adjacent vector corruption; dependent result: only claims of full cross-minor Node runtime compatibility. Exact cause is otherwise unknown.
+- Falsification probes are any reduced suite count, semantic position/raw-integer leak, generated-binding delta, same-address location loss, non-idempotent reopen, malformed-input acceptance, guard-negative acceptance, target overwrite, report mutation, tracked-fixture mutation, or claim that the 9.3-header/9.4-runtime full Node probe passed.
+
+### 35.117. Active-Work Queue Invariant [F461]
+
+- `.agents/active_work.md` is a projection of current active, queued, and blocked state only. It must not duplicate completed or retired phase history from `.agents/progress_ledger.md`.
+- A work item ceases to be active when its completion evidence and roadmap transition are recorded. The same closure update must remove its active-work entry; a later cleanup is a protocol violation.
+- The 2026-07-15 audit removed completed Phases 39, 40, 43, 44, 48, 49, and 50 after confirming every corresponding roadmap item was checked. Six ongoing/blocked groups remain. The temporary Phase 51 maintenance entry was removed immediately after its reviewed correction commit was pushed.
+- Assumption A51.1: roadmap checkboxes and terminal ledger entries are authoritative for classifying the seven removed phases. Falsification probe: any unchecked P39, P40, P43, P44, P48, P49, or P50 item, or any active mitigation/action absent from the six retained groups. Dependent result: only the stale-entry classification and removal set.
+- Structural probe: reject any active-work heading or status containing `Complete`, `Completed`, or `retired`; compare each closure transition against a same-commit deletion from `.agents/active_work.md`.
+
+### 35.118. P22.R3 Documentation and Provenance Invariant [F462]
+
+- `ida::decompiler::collect_referenced_types(Address)` is locally present in the public header and implementation, and `api_surface_parity_test` names its exact function type. This proves the IDAX facade exists; it does not independently prove the state of an unavailable downstream repository.
+- The migration checklist must classify P22.R3 as implemented for the audited flow and must not retain a residual IDAX implementation task that contradicts its terminal task table.
+- Assumption A52.1: the terminal P22.R3 record accurately states that the audited ida-cdump `ctree_analyzer.cpp` and `type_collector.cpp` stopped consuming raw `cfunc_t`, `cexpr_t`, and `ctree_visitor_t`. Falsify by inspecting the same pinned downstream revision and finding any such call site. Dependent result: only downstream migration-completion wording; the locally compiled IDAX API result is independent.
+- Structural probes: every P22.R3 status in `codedump_migration_checklist.md` must be terminal or explicitly conditional only on downstream-source access; no table cell may prescribe implementing a facade that already exists.
+
+### 35.119. Exact Instruction Referent Metadata Boundary [F463]
+
+- Upstream Diaphora 3.4.0 has one instruction `name/type` slot but may enumerate multiple outgoing references. Export retains the last named reference; import chooses the first data reference, otherwise the first code reference, and may follow one data offset. This is not a stable cross-binary identity relation.
+- The IDAX companion defines two reference classes only: non-flow code and data. For each exact instruction, export emits a class record only when exactly one distinct target exists and that target has a non-auto name or applied type. Comparison requires the matched target instruction to have exactly one distinct referent of the same class.
+- Function alignment reuses Phase 48 globally unique matching. Instruction alignment reuses Phase 49 ordinal, checked signed offset, decoded size, mnemonic, and relocation-light MD5 guards. Full MD5 remains provenance.
+- Apply sets a source name only when the target name is absent or auto-generated and applies a parsed source type only when no target type exists. It does not overwrite target-owned metadata, follow secondary offset chains, create xrefs, or guess among multiple referents.
+- Assumption A53.1: one unique non-flow referent of the same class at two exactly aligned instructions denotes the corresponding semantic referent. Falsify with a corpus where exact instruction/function guards and unique same-class cardinality hold but the references serve different roles; dependent result: referent eligibility only. Existing target preservation and parser containment remain independent.
+- Complexity: with functions `F`, instructions `I`, and outgoing references `R`, extraction is `O(F + I + R)` plus existing function fingerprint costs and `O(F + I + R)` working/output space; indexed comparison is expected `O(F + I + R)` time/space.
+
+### 35.120. Offline Xref Classification Test Boundary [F464]
+
+- `ida::xref::Reference` and `ReferenceType` are copied value types and are safe in runtime-free unit tests. The convenience predicates in `src/xref.cpp` are not header-inline and share a translation unit with SDK-backed reference enumeration and mutation.
+- A pure test helper that calls `xref::is_flow()` can cause static-link extraction of the whole xref object and unresolved IDA runtime symbols even though the helper never enumerates the database. Compare `ReferenceType::Flow` directly in that boundary.
+- Falsification probe: the offline `idax_diaphora_exact_core_test` must link without IDA dylibs while exercising code/data/flow/multi-target selection; the plugin target must still link against its normal host environment.
+
+### 35.121. Identity-Bearing Host-Path Hygiene [F465]
+
+- Tracked prose, source annotations, command evidence, and binary artifacts must not contain identity-bearing absolute host paths. Use semantic tokens (`<repo-root>`, `<ida-cdump-root>`, `<ida-sdk-root>`, `<ida-runtime>`, `<upstream-source>`) while retaining enough relative suffix to reproduce the evidence.
+- Audit text with Git-aware searches and audit every tracked blob with `strings`; text-only search is insufficient because IDA databases may embed the canonical input path.
+- An IDA database byte replacement is admissible only when the source and replacement strings have identical byte length and an isolated copy reopens successfully. A length-changing substitution can invalidate serialized record boundaries and is prohibited.
+- Assumption A54.1: roots matching Unix user/checkouts (`/Users`, `/home`, `/models`, `/Volumes`, `/root`, `/mnt`, private per-user temporary roots) and Windows user profiles cover identity-bearing absolute paths in the current tracked tree. Falsify with a tracked text/blob string containing another machine-specific absolute root or user identifier. Dependent result: the zero-exposure claim only; individual recorded substitutions and IDA-open evidence are independent.
+- Generic platform semantics such as `/dev/null`, `/tmp` test values, `/usr/bin`, `/opt`, and conventional application discovery do not encode a person or checkout and are outside the privacy classification. Stress probe: classify every remaining absolute literal and reject any containing a user, host, private checkout, SDK, runtime-install version tied to evidence, or upstream-source location.
+- Reachable history and remote refs require an independent scan after current-tree cleanup. A clean working tree does not imply historical removal.
+
+### 35.122. GitHub Server and Fork Purge Boundary [F466]
+
+- The rewritten `master` contains 285 commits, advertises one branch/no tags, and retains the exact pre-rewrite sanitized tip tree `454dbad642abc3a728d6179c2b6ae158681b6c61`. Commit-message and reachable-blob scans are zero in both the rewrite clone and a fresh remote clone.
+- Raw fetch of the former tip still succeeds after the leased force push. GitHub's cached object store therefore remains an exposure independently of advertised refs. The required server/fork procedure is documented in [GitHub's primary sensitive-data removal guidance](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/removing-sensitive-data-from-a-repository).
+- Two PR head refs remain affected (549 matching historical blobs each). Four fork default branches remain affected (549, 575, 375, and 564 matching blobs). PR refs require GitHub Support; forks require their owners. Neither is writable through the source repository's ordinary branch permission.
+- Assumption A54.2: GitHub Support will classify identity-bearing absolute paths as sensitive personal data eligible for cached-view and object purge. Falsify if Support declines the request under its non-sensitive-data limitation. Dependent result: server-side purge availability only; the sanitized source ref and fresh-clone evidence are independent.
+- Closure probes: former object fetch must fail; PR refs must no longer reach contaminated commits; affected fork default branches must scan zero or cease to exist; fresh `master` clone must remain at zero; no collaborator may merge an old-history branch back into rewritten history.
+
+### 35.123. HCLI Installable-License Selection [F467]
+
+- `hcli license list` is documented as rich table output. An ID-shaped token alone carries no edition, type, or status semantics; server and inactive rows can precede installable IDA rows.
+- Accept only rows whose ID has the canonical grouped hexadecimal form, type is exactly `named`, status is exactly `Active`, and edition is a positively enumerated supported IDA product family (`Ultimate`, `Professional`/`Pro`, or `Essential`). Explicitly exclude Free, Home, and server products unless installer-compatibility evidence later expands the positive set.
+- Prefer editions deterministically in descending capability order: Ultimate, Professional/Pro, Essential. Preserve table order within a tier. Do not print the selected full license ID into CI logs.
+- Assumption A55.1: current HCLI rich output retains a vertical-delimited table with ID, Edition, Type, and Status in the documented order. Falsify with a supported HCLI release that changes those columns or adds a machine-readable format; dependent result: parser compatibility only. The semantic selection predicate remains required.
+- Complexity: for output length `N` bytes and `L` license rows, parsing is `O(N + L log L)` time from deterministic priority sorting and `O(L)` space; `L` is bounded by account entitlements. Six stress probes cover server-first ordering, inactive product rows, Free/Home exclusion, ANSI decoration, ASCII/Unicode delimiters, priority, malformed IDs, and a fail-closed no-eligible-row CLI result that does not echo rejected IDs.
+- Primary provenance: [Hex-Rays HCLI license management](https://hcli.docs.hex-rays.com/user-guide/licenses/) and [HCLI quick-start license table/install example](https://hcli.docs.hex-rays.com/getting-started/quick-start/).
+
+### 35.124. Derived License-Identifier Log Masking [F468]
+
+- HCLI installation diagnostics include the chosen license identifier, so suppressing a workflow-authored `echo` does not make the job log identifier-free.
+- Every one of the five independent install jobs registers the selected value with `::add-mask::` immediately after selection and before any later HCLI invocation. GitHub Runner then redacts subsequent exact occurrences while retaining non-sensitive diagnostics.
+- Assumption A55.2: the selected identifier contains no whitespace and the hosted runner implements the documented `add-mask` command before HCLI emits it. Falsify if a live post-change Actions log exposes the unredacted selected identifier; dependent result: log redaction only, not semantic license selection.
+- Complexity: one constant-size mask registration per job, `O(1)` time and space relative to the license table.
+- Primary provenance: [GitHub Actions workflow command for masking values](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands?tool=bash#masking-a-value-in-a-log).
+
+### 35.125. HCLI Rich-Table Continuation Rows [F469]
+
+- HCLI 0.18.5 builds its license output with Rich `Table` columns `ID`, `Edition`, `Type`, `Status`, `Expiration`, and `Addons`. The ID is non-wrapping, but the other cells may wrap when stdout is captured and Rich uses its default 80-column non-terminal width.
+- Parse an ID-bearing physical line as the start of a logical row. Append nonempty fragments from subsequent blank-ID `│`/`|` lines to the corresponding column, separated by one space, and finalize at the next ID-bearing line or non-row boundary. Apply eligibility only after finalization.
+- Assumption A55.3: eligible `named` and `Active` values fit without Rich's ellipsis at the supported renderer width, and edition wrapping occurs at word boundaries. Falsify with captured HCLI output that ellipsizes one of those eligibility fields; dependent result: text-parser compatibility only. A future structured HCLI output mode should supersede table parsing.
+- Complexity remains `O(N + L log L)` time and `O(L)` space; continuation folding visits each rendered fragment once.
+- Primary implementation provenance: `ida-hcli` 0.18.5 `hcli.commands.license.list._display_licenses_table` and `hcli.lib.console`, inspected from the package executed by the workflows.
+
+### 35.126. CI SDK/Runtime Release Alignment [F470]
+
+- IDA installation assets are fixed at 9.3, but the SDK checkout previously followed `HexRaysSA/ida-sdk` default `main`. Upstream commit `772a43ba70118b4ec5325a69c8a3d85d50c96cd8` replaced the former `ida-cmake` submodule with an in-tree package in June 2026, so current `main` no longer satisfies IDAX's bootstrap discovery.
+- All five workflow SDK checkouts must use exact official `v9.3` commit `d5db59ab4e9d2ae92038e9520082affd0da6fe20`, including recursive submodules. This matches the installed runtime and removes default-branch drift.
+- Assumption A55.4: GitHub continues serving the immutable commit and its public `src/cmake` submodule dependency. Falsify if checkout at that object fails or `src/cmake/bootstrap.cmake` is absent after recursive checkout; dependent result: CI acquisition only. The local version-alignment requirement is independent.
+- Complexity: one constant `ref` input at each of five checkout sites, `O(1)` workflow overhead.
+- Primary provenance: [official v9.3 SDK commit](https://github.com/HexRaysSA/ida-sdk/commit/d5db59ab4e9d2ae92038e9520082affd0da6fe20) and [official in-tree CMake migration](https://github.com/HexRaysSA/ida-sdk/commit/772a43ba70118b4ec5325a69c8a3d85d50c96cd8).
+
+### 35.127. Live HCLI Selector and Mask Evidence [F471]
+
+- Workflow commit `9317dd4b3fe1b7b3f4fddfa7da8f0f90d621fe9f` executes 15 install jobs: six Bindings, six Validation, and three Integrations jobs distributed across Linux, macOS, and Windows.
+- All 15 `Install IDA Pro` steps succeed and advance to SDK resolution. The installed edition detail is IDA Professional 9.3, both applicable license files download, and later HCLI output renders the selected identifier as `***`.
+- All 15 complete logs were scanned for the canonical grouped license-ID expression; observed unmasked matches: `0`.
+- Assumption A55.5: GitHub's recorded step conclusions and retrieved complete job logs are faithful to the executed runner streams. Falsify with a raw log archive containing an unmasked canonical identifier or an install step whose conclusion differs from the API result; dependent result: live CI evidence only.
+
+### 35.128. Structured-Binding Lambda Portability [F472]
+
+- Avoid referencing an enclosing structured-binding name from a nested lambda in code compiled by the release matrix's AppleClang 15. In the observed wrapper-deduplication case, the compiler rejects the reference even under C++23.
+- Prefer an equivalent ordinary object already in scope. `ResolvedAllocator heir.address` is initialized from `caller` immediately before the predicate, so it preserves equality semantics without structured-binding capture.
+- Assumption A55.6: `heir.address` remains initialized from the loop's `caller` before the predicate. Falsify by changing that initializer; dependent result: semantic equivalence of this substitution only.
+- Complexity remains `O(W)` time for `W` discovered wrappers and `O(1)` predicate space; no control-flow or collection change occurs.
+
+### 35.129. Node V8 Type and Windows Macro Portability [F473]
+
+- Optional V8 arguments must present one exact `v8::Local<v8::Value>` type to helper functions. Use `Nan::Undefined().As<v8::Value>()` for the missing arm rather than relying on conditional-operator conversion between `Local<Value>` and `Local<Primitive>`.
+- The Node native target includes Windows headers outside IDAX's core compile envelope. Define `NOMINMAX` privately for that target so `std::numeric_limits<T>::max()` remains a C++ member call on MSVC.
+- Assumption A55.7: NAN/Node retains `Local<Primitive>::As<Value>()` and the Windows `min`/`max` suppression contract. Falsify with a supported Node/NAN version that removes the conversion or ignores `NOMINMAX`; dependent result: binding compile portability only.
+- Complexity and runtime behavior are unchanged: two compile-time conversions and one preprocessor definition add `O(1)` build state.
+
+### 35.130. Bindgen Line-Ending Normalization [F474]
+
+- Treat generated Rust bindings as textual interchange with platform-dependent line endings. Normalize `\r\n` to `\n` before locating/replacing the recursive microcode instruction region.
+- The canonical checked output already uses LF, so normalization removes a host distinction without changing declarations. A synthetic Windows-form fixture verifies marker discovery, canonical replacement, retained FFI declaration, and zero carriage returns.
+- Assumption A55.8: bindgen emits either LF or CRLF and does not use bare carriage returns. Falsify with generated output containing another line separator; dependent result: post-processor portability only.
+- For generated length `N` bytes, normalization and rewrite remain `O(N)` time and `O(N)` space.
+
+### 35.131. Binding Integration Fixtures Must Match Test Contracts [F475]
+
+- A real-IDA integration invocation must use a binary containing every fixture-specific symbol or literal asserted by the test. Host utilities such as `/bin/ls` are suitable only for generic analysis contracts.
+- The Node integration test searches for `ref4: entered with %d`; that literal is compiled into `tests/fixtures/simple_appcall_linux64`. The test harness itself copies the supplied binary to a temporary directory, so a workflow-side copy is redundant.
+- Assumption A55.9: the checked-in Linux ELF remains analyzable as input data by IDA 9.3 on Linux and macOS runners. Falsify with either runner failing database import before the string-list assertion; dependent result: Unix Node integration fixture portability only.
+- Replacing the input path changes neither algorithmic complexity nor persistent repository state: the harness copy and IDA import remain `O(B)` time and space for fixture size `B` bytes.
+
+### 35.132. Windows Rust Preanalyzed-IDB Smoke Isolation [F476]
+
+- Decision 19.18's `IDAX_RUST_DISABLE_ANALYSIS=1` is required in the Windows Rust example step, not merely implemented in the shared helper. Without the environment assignment, `DatabaseSession::open(input, true)` retains auto-analysis and the live runner exits inside `database::open` before Rust error formatting.
+- The smoke input is an existing analyzed `.i64` database. Disabling auto-analysis for this CI-only invocation isolates wrapper read/list behavior from the separately known Windows headless analysis/open instability while retaining library initialization, database open, enumeration, output, and close coverage.
+- Assumption A55.10: IDA 9.3 can open the checked preanalyzed fixture when `open_database` receives `auto_analysis=false`. Falsify if the next Windows run still exits before `database::open ok`; dependent result: Windows Rust runtime-smoke recovery only.
+- The toggle changes one Boolean argument and skips an analysis wait: `O(1)` control overhead and no additional space.
+
+### 35.133. Windows Rust Headless Runtime Gate Boundary [F477]
+
+- Live Windows evidence falsifies A55.10: the process exits inside `open_database` for the checked preanalyzed IDB with both auto-analysis settings, after successful IDA initialization and before wrapper error propagation.
+- The Windows binding job still provides three independent compile/test gates: release construction of `idax`/`idax-sys`, release construction of every example, and 140 safe-Rust unit tests; it additionally compiles the integration target without executing it. Linux/macOS continue to execute Rust examples, and Linux/macOS/Windows execute native IDAX integration packaging.
+- Decision 19.59 removes only the non-diagnostic Windows headless example execution. Reopen that gate when a supported runner/runtime combination reaches `database::open ok` and closes the database with a zero exit status.
+- Assumption A55.11: compile/unit coverage is sufficient for the Windows-specific HCLI/compiler scope, while runtime semantics remain exercised on Unix. Falsify with a Windows-only ABI defect that passes release linking and 140 unit tests but fails on a supported headless runtime; dependent result: Phase 55 Windows binding coverage boundary.
+- Removing two redundant example launches reduces CI runtime by the duration of those processes; build/test complexity is otherwise unchanged.
+
+### 35.134. License-Identifier Log Audit Boundaries [F478]
+
+- Scan logs with `(?<![0-9A-Fa-f])[0-9A-F]{2}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{2}(?![0-9A-Fa-f])`, not the unbounded grouped expression. The right boundary prevents a matching prefix within a longer hexadecimal UUID token.
+- Audit tooling must report per-job counts and redact context before display; it must not print a candidate identifier while determining whether masking failed.
+- Assumption A55.12: HCLI's canonical identifier is a standalone token rather than a substring of a longer hexadecimal identifier. Falsify with official HCLI output embedding the license ID in an adjacent hexadecimal token; dependent result: leakage-audit sensitivity only.
+- For total log size `N` bytes, the boundary-aware scan remains `O(N)` time and `O(1)` auxiliary regex state apart from input buffering.
+
+### 35.135. IDA 9.4 SDK Package and Acquisition Model [F479-F480]
+
+- Release-align all five HCLI install blocks to IDA 9.4 assets and all four workflow SDK refs to exact official commit `6929db6868a524496eb66e76e4ec6c9d720a0594`. The same commit must govern the no-environment CMake fallback.
+- The 9.4 checkout uses `src/cmake/idasdkConfig.cmake`; it does not contain the 9.3-era `bootstrap.cmake`. Resolve the checkout root to `src`, place its `cmake` directory in `CMAKE_PREFIX_PATH`, set `idasdk_DIR`, and retain `find_package(idasdk REQUIRED)` as the target-definition boundary.
+- A generic clone-then-checkout is not sufficient once the release branch moves away from the requested object. Use exact-object checkout in Actions and the official commit archive for FetchContent. Verify the archive with SHA-256 `6ba645ef8fb5663d45d28c7a48da274e22a5929ddbfbc69cd4be34a4d7ee9895` before extraction.
+- Assumption A56.1: HCLI 9.4 asset keys retain the established `release/9.4/ida-pro/ida-pro_94_<platform>` convention. Falsify when any live `hcli download` call reports the key absent; dependent result: CI installer acquisition only.
+- Assumption A56.2: `actions/checkout@v4` performs an explicit fetch for the supplied immutable SHA, matching the locally successful `git fetch --depth=1 origin <SHA>`. Falsify if a live checkout cannot materialize that SHA; dependent result: workflow SDK acquisition only. The archive fallback remains independently verified.
+- Primary provenance: [official SDK commit](https://github.com/HexRaysSA/ida-sdk/commit/6929db6868a524496eb66e76e4ec6c9d720a0594), its `src/cmake/idasdkConfig.cmake`, and the HCLI direct-download key syntax documented by Hex-Rays.
+- Acquisition and resolution add `O(S)` download/extraction time and space for SDK archive size `S`; version selection and entry-point probing remain `O(1)`.
+
+### 35.136. IDA 9.4 MSVC Runtime Preservation [F481]
+
+- The 9.4 `idasdkConfig.cmake` assigns `CMAKE_MSVC_RUNTIME_LIBRARY` during package loading. This can silently replace a parent/toolchain choice made before `find_package`.
+- Capture a defined consumer value before package loading and restore it afterward. If no value is defined, IDAX uses `MultiThreaded$<$<CONFIG:Debug>:Debug>` to remain compatible with its static-CRT Node and Rust consumers.
+- Do not enable `IDA_USE_STATIC_RUNTIME` merely to preserve `/MT`: the published 9.4 Windows archive splits `ida.lib`/`idalib.lib` into `x64_win_64` and `pro.lib` into `x64_win_64_s`, while the package's `_s` suffix selection expects all import libraries under one directory.
+- Assumption A56.3: the Node addon and Rust `cc` shim continue compiling with static CRT on supported Windows runners. Falsify with verbose compile metadata showing `/MD` for either consumer; dependent result: the default static-runtime selection only. An explicit parent value remains authoritative.
+- Runtime selection adds `O(1)` configure state and no runtime cost.
+
+### 35.137. IDA 9.4 Cross-Platform Release Evidence [F482]
+
+- Final commit `54a6334901c5bd33a08c8dd39dff447750d7aa8c` passes Bindings 6/6, Validation 6/6, and Integrations 3/3: 15/15 configured Linux, macOS arm64, and Windows jobs.
+- Every complete log contains evidence for the exact SDK commit, IDA Professional 9.4 installation, and active named IDA product selection. Boundary-aware canonical-ID scans report zero unmasked license identifiers in all 15 logs.
+- Assumption A56.4: the three triggered workflows cover every release-significant job configured for this push. Falsify by enumerating another non-skipped job in the workflow definitions or Actions run set for the same commit; dependent result: the 15/15 matrix-completeness claim only.
+- Log auditing is `O(N)` time for total log size `N` and `O(1)` auxiliary matching state apart from input buffering.
+
+### 35.138. Full Python Binding Boundary and Completion Model [F483]
+
+- The authoritative scope is all 27 public IDAX domains plus shared `Error`, address aliases/sentinel, and core option values. Node/Rust implementations are semantic comparators, not sources that may narrow the C++ surface.
+- Use a direct pybind11 extension so `std::expected`, move-only RAII classes, iterators, `std::function` callbacks, subclassable plugin/loader/processor interfaces, and copied C++ values cross one ownership boundary. The Rust C shim remains an implementation reference but its malloc/free and opaque-handle ABI is not the Python public contract.
+- Public Python is a typed package of snake-case domain modules backed by private `idax._native`. Copied snapshots behave as Python value objects; resources expose deterministic close/context management; callbacks acquire the GIL and remain rooted for their registration lifetime.
+- A domain-complete claim requires six independent artifacts: native registrations, public exports, type stubs, documentation, structural parity evidence, and applicable initialized-host evidence. A full-complete claim additionally requires every manifest symbol to be terminal and cross-platform build/package evidence.
+- Assumption A57.1: a CPython-specific pybind11 extension can be imported by the ABI-matched IDAPython or external idalib interpreter while resolving the installed IDA runtime libraries. Falsify with an ABI-matched local build that links but fails import before module initialization; dependent result: extension/distribution architecture only.
+- Assumption A57.2: the current 27-domain public header set is the complete intended Python scope. Falsify by finding a public declaration reachable from `ida/idax.hpp` that is absent from the coverage inventory; dependent result: parity manifest completeness. The inventory gate must fail closed on such drift.
+- With `S` authoritative public symbols, manifest verification is `O(S)` time and space; generated typing/documentation work is also linear in emitted symbol count apart from compiler template costs.
+
+### 35.139. Python Package License Metadata [F484]
+
+- Modern core metadata represents the license through the SPDX `project.license` expression and `project.license-files` glob. Do not duplicate it with a deprecated `License ::` classifier: current scikit-build-core metadata validation rejects that combination.
+- Falsification probe: isolated wheel metadata preparation must pass without a license configuration warning or error and the built wheel must contain the declared MIT license file.
+- Metadata validation is `O(M)` in project metadata size `M` and has no runtime cost.
+
+### 35.140. Native Wheel Artifact and Minimum-Version Typing Gates [F485-F486]
+
+- `install(TARGETS)` component assignment is artifact-specific. A module library on Unix/macOS follows the `LIBRARY` group, a Windows DLL follows `RUNTIME`, and an import/static library follows `ARCHIVE`; assign `COMPONENT python` to each relevant group.
+- A wheel build log proves compilation and linking only. Package validation must enumerate the wheel and require the ABI-tagged `idax/_native` artifact, Python modules, stubs, `py.typed`, metadata, and license while rejecting bundled IDA runtime libraries.
+- For the declared Python 3.10 floor, declare stub enum members in value form (`MEMBER = ...`). Annotation-only `Self` entries are rejected as zero-member enums by current mypy and create a needless Python 3.11/backport coupling.
+- Falsification probes: build an isolated wheel, assert exactly one native extension under `idax/`, import it from a clean matching interpreter, and run the configured Python 3.10 type-check contract. Dependent results: packaged native availability and Python 3.10 typing compatibility.
+- Archive enumeration is `O(E)` time for `E` wheel entries and `O(E)` name storage; enum declaration validation is `O(M)` for `M` members.
+
+### 35.141. Non-Bundled IDA Runtime Resolution for Python [F487]
+
+- macOS IDA runtime libraries identify themselves through `@rpath`, but a Python extension linked to them does not inherit the IDA executable's runtime search paths when loaded by an external interpreter.
+- Before importing `_native`, the private package bootstrap may load `libida` and `libidalib` with global symbol visibility from `IDADIR`; the standard IDA Professional 9.4 application library directory is a non-identifying macOS fallback. On Windows, retain the `os.add_dll_directory()` handle for process lifetime. Linux uses the explicit `IDADIR` path.
+- Do not copy or package IDA libraries or licenses. The bootstrap changes loader visibility only and retains handles for the interpreter lifetime.
+- Falsification probe: install the wheel into a clean ABI-matching environment with no loader-path environment variable and import `idax`; independently enumerate the wheel to ensure no IDA runtime file is present. Dependent result: A57.1 external-interpreter import architecture.
+- Candidate resolution is `O(D)` time and space for `D` configured platform directories; the current default bound is constant.
+
+### 35.142. Python Enum and Initial Host-Runtime Contracts [F488-F489]
+
+- Public native enumerations use pybind11 3 `native_enum` with stdlib `enum.Enum`, explicit member registration, and mandatory `finalize()`. This makes converted return values identical to their class singleton and matches the `.pyi` inheritance contract.
+- The initialized-host baseline covers CPython 3.12 plus installed IDA Professional 9.4: initialize once, open a copied Linux x86-64 fixture without analysis, query database/address/analysis state, reject a worker-thread call as `ConflictError`, and close without saving.
+- `PluginLoadPolicy.disable_user_plugins` suppresses user-plugin discovery only. Bundled IDAPython can initialize during external idalib startup; do not claim that the option disables every plugin.
+- Falsification probes: require `issubclass(PublicEnum, enum.Enum)`, member singleton identity after a C++ return conversion, one same-thread runtime pass, and one cross-thread structured failure. Dependent results: enum idiomaticity, stub truthfulness, and host-thread enforcement.
+- Enum conversion is `O(1)`; host probe query costs are SDK-defined, with the binding adding `O(1)` thread checks and value conversions per call.
+
+### 35.143. Macro-Aware Python Symbol Verification [F490]
+
+- Native registrations may be literal `domain.def()` calls or invocations of local `IDAX_PY_*` macros. The verifier extracts literal lower-snake-case names plus lower-snake-case macro arguments terminated as invocations.
+- CamelCase class/option macro arguments are deliberately excluded. The extracted native function set must exactly equal the sorted manifest function set; public `__all__` and stub declarations must contain that same set.
+- Falsification probes: remove one macro invocation, add one undeclared literal registration, or add one manifest-only function; each mutation must fail the gate. Dependent result: structural function-parity evidence for macro-heavy domains.
+- Extraction is `O(N)` time in native source length and `O(S)` storage for `S` function names.
+
+### 35.144. Introspectable Python Property Bindings [F491]
+
+- pybind11 derives property argument metadata from the callable's concrete signature. Generic `auto` lambdas do not provide the required callable traits and fail during template instantiation.
+- Use explicit binding-adapter reference types for getters/setters and explicit converted value types for setters. This applies even when the lambda body itself would be valid C++.
+- Falsification probe: rebuild the wheel after replacing an explicit property lambda with an otherwise equivalent generic lambda; compilation must fail in pybind11 callable-trait resolution. Dependent result: native custom-definition class registration.
+- Trait extraction and property dispatch add `O(1)` work per registered property and access.
+
+### 35.145. Python-Owned Custom Data Callback Contract [F492]
+
+- Python-facing custom type/format definitions are binding-owned adapters, not direct copies of C++ structs containing `std::function`. They retain Python callables for the native registration lifetime and materialize GIL-acquiring C++ closures at registration.
+- Render callbacks receive immutable `bytes`; scan callbacks accept text and return any supported contiguous byte buffer. Their exceptions translate to structured internal errors after unraisable reporting. Creation filters, size calculations, and analysis callbacks cannot propagate through their SDK signatures, so failures are unraisable and return false, zero, or no result respectively.
+- Explicit unregister is required before the owning Python extension/plugin unloads. The IDA 9.4 runtime probe registers, invokes, and unregisters both a custom type and format.
+- Assumption A57.3: callers unregister custom definitions before interpreter teardown. Falsify by destroying the interpreter while IDA still owns a registered callback; dependent result: teardown safety only. Registration and callback dispatch are `O(1)` apart from user callable work and byte-buffer conversion `O(B)` for `B` bytes.
+
+### 35.146. Database-Model Python Parity Evidence [F493]
+
+- P57.3 covers all fifteen database-model domains through native registrations, public static exports, strict stubs, exact manifest inventories, and initialized-host evidence where lifecycle or mutation behavior matters.
+- The current manifest gate checks 405 functions/types over all 27 authoritative domains. Strict mypy uses the declared Python 3.10 floor; CPython 3.12 builds and runs the arm64 macOS wheel against installed IDA Professional 9.4.
+- The disposable runtime probe covers function/instruction/data/type/storage/event cross-domain behavior, including scoped unsubscribe, patch/revert, byte-return contracts, callback delivery, and custom-data callback ownership. Pure tests cover package behavior without initialization.
+- Falsification probes: remove a native/public/stub/manifest symbol; run the strict structural gate; run 12 pure tests plus the opt-in copied-fixture IDA 9.4 test. Dependent result: P57.3 closure only. Structural verification is `O(S)` in symbol count; test runtime is SDK/fixture dependent.
+
+### 35.147. Python Trampoline Registration Roots [F494]
+
+- Native shared ownership of a pybind11 trampoline base does not independently guarantee that the originating Python object's override identity remains alive. Registries that later call a Python virtual method retain a binding-owned `py::object` root for exactly the successful native-registration interval.
+- Root keys mirror the native uniqueness contract: debugger executor name, graph title, or returned microcode-filter token. Failed registration creates no root; successful unregister/close erases it.
+- Falsification probe: register a temporary Python subclass without another Python reference, force collection, then invoke it through the native registry. Dependent result: Python virtual dispatch and deterministic teardown. Lookup, insert, and erase are average `O(1)` time with `O(R)` retained objects for `R` active registrations.
+
+### 35.148. Callback-Scoped Decompiler Adapters [F495]
+
+- Pseudocode/cursor/hint/popup events, ctree expression/statement views, and microcode contexts are Python adapters over callback-scoped host state. They expose copied values and checked operations only; raw pointers remain private.
+- All adapters created for one callback share a validity state. Normal return, Python exception, and non-Python exception paths invalidate the state before control returns to IDA. Subsequent access raises `ConflictError` with operation context.
+- Falsification probe: retain one adapter beyond its callback and invoke an accessor; it must fail structurally without dereferencing host state. Dependent result: delayed-use safety. Validation adds `O(1)` time per access and `O(1)` shared state per callback, excluding copied descendants.
+
+### 35.149. Decompiler Resource Closure Ordering [F496]
+
+- `DecompiledFunction` is an explicitly closable Python resource because its native destructor depends on live Hex-Rays/database state. It provides `valid`, idempotent `close()`, and context-manager exit; all other methods obtain the native value through the same closed-state gate.
+- Release decompiled functions before `database.close()`. A direct wrapper allowed Python interpreter teardown to run the destructor after database shutdown and produced a native fault; deterministic close removes that ordering ambiguity.
+- Assumption A57.4: IDA requires every live decompiler function object to be destroyed before database close. Falsify with an SDK-supported guarantee or a sanitizer-clean cross-platform probe retaining the object beyond close; dependent result: the mandatory ordering contract. Close and state checks are `O(1)` time/space.
+
+### 35.150. Advanced Python Parity Evidence [F497]
+
+- P57.4 covers `debugger`, `graph`, and `decompiler` through native registrations, public modules, strict Python 3.10 stubs, exact manifest inventories, and initialized-host lifecycle/callback evidence.
+- The manifest verifies 590 symbols over all 27 domains; strict mypy passes 27 modules. The rebuilt CPython 3.12 extension runs against installed IDA Professional 9.4 and a newly analyzed disposable database.
+- Runtime evidence covers in-memory graph operations, Python-derived external appcall execution, pseudocode and local-variable queries, functional ctree traversal with expired-view rejection, Python-derived microcode-filter registration and expired-context rejection, explicit decompiler close, post-close rejection, database close, and normal process exit.
+- Falsification probes: remove a symbol from any native/public/stub/manifest layer; drop the last Python reference to a registered trampoline; retain a callback-scoped adapter; call a closed decompiler result; or close the database with one live. Dependent result: P57.4 closure only. Structural checking is `O(S)` in symbol count; lifecycle checks add `O(1)` per access/registration apart from SDK work.
+
+### 35.151. Hex-Rays ABI Compatibility Is an Independent Runtime Capability [F498]
+
+- The exact SDK pin identifies the IDA 9.4 wrapper ABI, but Hex-Rays plugin compatibility is additionally guarded by `HEXRAYS_API_MAGIC`. The requested SDK uses suffix `5`; the available local decompiler plugins use suffix `4` even though their application bundles identify as IDA 9.4.
+- `decompiler::available()` returning false is the safe and required result for this mismatch. Substituting an older magic or bypassing `init_hexrays_plugin()` would permit calls against incompatible decompiler layouts and is not an admissible compatibility technique.
+- Assumption A57.5: an HCLI installation that contains a suffix-5 decompiler plugin will make the exact-SDK decompiler runtime tranche pass unchanged. Falsify on a clean host by inspecting the installed plugin ABI and running the existing decompile/ctree/microcode lifecycle test. Dependent result: exact-SDK decompiler host evidence only; native compilation, manifest parity, pure tests, and other idalib runtime domains are independent.
+- The compatibility query is `O(1)` time and space. Runtime validation must report optional capability absence separately so it does not suppress execution of unrelated domains.
+
+### 35.152. Python Authoring Callback Capability Adapters [F499]
+
+- Borrowed plugin, loader, processor, and UI state is represented by binding-owned adapters with a shared validity token. Stable metadata is copied; permitted operations resolve the native object only while the callback is active.
+- A retained adapter raises structured `ConflictError` after normal return or any exception path. Public APIs contain no native capsules, SDK pointers, or pointer-valued integer escape hatches.
+- Python trampoline instances and callbacks remain rooted for exactly the successful native registration interval. Explicit unregister, scoped close, or owning-object teardown removes the root deterministically.
+- Falsification probes: retain each callback adapter and invoke it later; drop every other Python reference to a registered trampoline; raise from an override; close each RAII guard twice. Dependent result: P57.5 lifetime and teardown safety. State checks and registry operations are `O(1)` average time; roots use `O(R)` space for `R` active registrations.
+
+### 35.153. Authoring and Host Python Parity Evidence [F500]
+
+- P57.5 covers `plugin`, `loader`, `processor`, and `ui` through native registrations, public modules, strict Python 3.10 stubs, exact manifest inventories, and initialized-host evidence where headless IDA supports the operation.
+- The exact-SDK extension verifies 740 symbols across all 27 domains; 15 pure tests and strict mypy over 31 modules pass. Runtime evidence covers plugin action/hotkey ownership, loader bit flags, processor output construction, UI queries/events, explicit teardown, and cross-domain callback/mutation cleanup.
+- Python form bindings own mutable values and dynamically supply IDA form arguments for 64-bit supported targets. Assumption A57.6: the SDK's pointer-valued varargs form contract is ABI-compatible with the binding's 64-bit pointer dispatch on Linux, macOS, and Windows. Falsify with cross-platform compile plus accepted/cancelled interactive form runs; dependent result: modal-form execution only.
+- Interactive GUI action activation, modal dialogs, chooser/custom-viewer presentation, popup attachment, and visual rendering require a GUI host and are not inferred from headless results. Structural and pure callback/lifecycle tests remain applicable. Manifest verification is `O(S)` for `S` symbols; callback overhead is `O(1)` apart from user code and copied payload size.
+
+### 35.154. Complete Python Declaration Inventory [F501]
+
+- The executable inventory covers 27 domain headers plus shared `core` and `error`: 826 top-level functions/types with exact native registration, public export, and strict-stub agreement. Python-only convenience resources may extend a module but cannot substitute for an omitted IDAX declaration.
+- Header SHA-256 snapshots cover the authoritative umbrella and all 29 public headers. Any change blocks the checker and requires a new declaration diff; hashes are evidence selectors, not a replacement for the review recorded in `bindings/python/DECLARATION_AUDIT.md`.
+- Iterator implementation types adapt to Python iteration, aliases adapt to Python primitives, compile-time binary-entry macros remain compile-time, and callback host pointers become checked capabilities. These categories account for the intentional non-isomorphic declarations without raw escape hatches.
+- Falsification probes: add/remove a native type, public export, stub declaration, manifest item, or public-header byte; the structural gate must fail. Dependent result: P57.1 inventory currency. Verification is `O(H + S)` time and space for header bytes `H` and symbols `S`.
+
+### 35.155. Python Distribution Payload Privacy [F502]
+
+- Python `.pyc` payloads may contain source/build filenames even when source text and archive member names are clean. Source-tree compilation before an sdist build can therefore reintroduce an identity-bearing path.
+- Do not force-include a recursive Python subtree: explicit source/document/example/test patterns prevent ignored cache artifacts from being reintroduced even when caches exist. Retain cache exclusions as defense in depth. Inspect every wheel/sdist member name and payload, require all modules/stubs/licensing/native artifacts, and reject IDA runtime libraries, executables, and license files.
+- Falsification probe: place a cache containing a user-home source filename under any included subtree and rebuild; byte-level archive audit must fail. Dependent result: distributable privacy and package completeness. Inspection is `O(B)` time for total uncompressed bytes `B`, with bounded per-member buffering.
+
+### 35.156. Python Documentation, Package, and CI Contract [F503]
+
+- Stable documentation consists of the package README, 27-domain API reference, tutorial, declaration audit/adaptation matrix, architecture specification, module docstrings, strict stubs, and representative examples. Compile-time C++ entry macros and optional runtime capabilities are explicit boundaries.
+- Release archives are CPython/platform-specific and contain one private extension plus typed public modules. IDA SDK/runtime/decompiler/license artifacts remain external.
+- CI builds Linux, Windows, and macOS from the exact SDK/IDA 9.4 release set and executes pure tests, mypy, declaration audit, example compilation, and distribution audit on all targets. Initialized idalib/decompiler execution runs on Unix; Windows retains its already established nondiagnostic headless compile-only rule.
+- Falsification probes: remove a module docstring, stub, archive artifact, license, native extension, SDK pin, or CI matrix row; the respective local/CI gate must fail. Dependent result: P57.6 closure. Documentation/module checks are `O(D)` for `D` domains; archive and build complexity are payload/compiler dependent.
+
+### 35.157. Graph Callback Exception Containment [F504]
+
+- A pybind trampoline invoked from an IDA-owned callback must not use generic override propagation. It acquires the GIL, resolves the Python override, converts the result, and catches both Python and native exceptions before returning to the host.
+- Conservative fallbacks match the C++ base contract: false for event/refresh acceptance, empty text/hints, `0xFFFFFFFF` for default color, and no action for destruction.
+- Falsification probe: raise or return a non-convertible value from each graph override in an interactive host; the exception must be reported as unraisable, IDA must remain live, and the documented fallback must be observed. Dependent result: graph authoring callback safety. Dispatch is `O(1)` apart from Python callback work and converted payload size.
+
+### 35.158. Source-Archive Acquisition Boundary [F505]
+
+- A workflow may materialize the IDA SDK and installer beneath the repository root and recursively initialize external submodules. scikit-build-core can include nested repositories and populated gitlinks in the sdist independently of the project-owned `sdist.include` patterns.
+- Explicitly exclude `ida-sdk/**`, `ida-installer/**`, and `third-party/**`. The archive auditor must continue scanning all member names and bytes so an upstream identity path, proprietary acquisition artifact, or unrelated external source fails closed rather than entering a release.
+- Falsification probe: populate all three external trees with identity-bearing payloads before `uv build`; no external member or payload may occur in the resulting sdist, and the complete distribution audit must pass. Dependent result: CI-builder-independent archive privacy and external-source ownership. Exclusion matching is `O(P)` over candidate paths; byte inspection remains `O(B)` for uncompressed archive bytes `B`.
+
+### 35.159. Canonical Source-Digest Boundary [F506]
+
+- Git checkout configuration may represent a text header with CRLF on Windows and LF on Unix without changing its declarations. A raw-byte digest therefore conflates transport representation with authoritative source content.
+- The declaration audit canonicalizes only `CRLF -> LF` before SHA-256. It does not normalize whitespace, lone carriage returns, encoding, tokens, ordering, or any other byte, so declaration and formatting changes continue to fail closed.
+- Assumption A57.7: public C++ headers are UTF-8-compatible text whose repository-canonical line ending is LF. Falsify with a tracked binary/public header or an intentional lone-CR source convention; dependent result: digest portability only. The regression probe requires equal LF/CRLF digests and unequal digests after a type-token change. Hashing remains `O(B)` time and space for `B` source bytes.
+
+### 35.160. Single-Build Python CI Installation [F507]
+
+- `uv sync` installs the current project by default. A following editable reinstall therefore repeats configuration, compilation, linking, and installation of the native extension.
+- `--no-install-project` preserves dependency synchronization while deferring the project itself to the existing explicit editable-install command. The workflow retains one deterministic package-build boundary and all subsequent pure/type/manifest/package/runtime gates.
+- Assumption A57.8: the CI-provided `uv` supports `--no-install-project`; the local installed version's help lists the option. Run 29449799754 falsifies incompatibility on Linux, Windows, and macOS. Dependency synchronization complexity is unchanged; the editable-install stage removes one redundant native compilation while the separate release-distribution build remains intentional.
+
+### 35.161. Complete Python Binding Validation Envelope [F508]
+
+- All 27 public IDAX domains plus shared error/core values are represented by native registrations, public modules, strict Python 3.10 stubs, reference documentation, and an exact 826-symbol manifest. All 29 inventory entries transition from `implemented` to `validated` only after the complete release matrix passes.
+- Exact run 29449799754 is green 9/9 on Linux, Windows, and macOS using SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594` and IDA Professional 9.4. Every Python platform passes 18 pure tests, strict mypy over 31 modules, declaration parity, wheel/sdist construction, and byte-level archive privacy. Linux and macOS additionally pass initialized decompiler/ctree/microcode lifecycle and callback execution; Windows retains the documented nondiagnostic headless-runtime boundary while proving native/package correctness.
+- Assumption A57.9: the configured cross-platform matrix represents the supported CPython/platform build envelope, while interactive GUI rendering, modal forms, and debugger-backed Appcall execution remain separately host-gated. Falsify by adding a supported platform/interpreter row or executing the documented interactive probes. Dependent result: those host-specific operations only, not declaration or package completeness. **Bounded risk [medium]:** interactive-only behavior is structurally bound and documented but is not inferred from headless CI. Validation is `O(H + S + B)` for header bytes `H`, symbols `S`, and uncompressed archive bytes `B`, excluding compiler and IDA runtime costs.
+
+### 35.162. Processor Modules Require an Exported Descriptor and Event Bridge [F509]
+
+- The pinned IDA 9.4 contract requires each processor-module binary to export one `processor_t LPH`. Its callback must handle `ev_get_procmod` by returning a kernel-owned `procmod_t`; analysis, emulation, output, and optional processor events then reach that object's `on_event` method. Constructing only an application-level `ida::processor::Processor` object is not registration.
+- A usable analysis callback must populate the instruction code and normalized operands as well as byte length. Returning only a length leaves `insn_t::itype` and operand records at their kernel defaults. Public IDAX constants documented as `PR_*`/`CF_*` equivalents must have exact pinned-SDK values; descriptive similarity is insufficient at the binary boundary.
+- Assumption A58.1: the pinned SDK's documented `LPH` plus `ev_get_procmod` model is the processor-module entry contract for every configured platform. Falsify by building each example with the exact SDK, inspecting the exported symbol, loading it through IDA 9.4, and observing descriptor plus analyze/emulate/output callbacks on a controlled fixture. Dependent result: processor-module runtime usability. **Bounded risk [high]:** compile-only addon targets currently mask the absent runtime entry path. Descriptor construction is `O(N + R + I + A)` time/space for names `N`, registers `R`, instructions `I`, and assemblers `A`; callback dispatch is `O(1)` excluding user callback and operand/case payload work.
+
+### 35.163. Static Procmod Bridge Extraction [F510]
+
+- IDAX is a static archive. A bridge object that defines `LPH` is not extracted solely because the eventual IDA loader expects that export; the native linker extracts archive members to resolve references known at link time.
+- `IDAX_PROCESSOR` therefore creates a dynamic-initialization reference to a no-op C-linkage anchor in the bridge object. Once extracted, the bridge's `LPH` descriptor references the macro's strong instance initializer; platform weak/fallback resolution retains ordinary non-procmod IDAX linkage.
+- Assumption A58.2: configured toolchains preserve the dynamic-initialization relocation and export the SDK-declared `LPH`. Falsify with exact-SDK macOS/Linux/Windows builds plus `nm`/`dumpbin` symbol inspection and real IDA discovery. Dependent result: bridge inclusion and module discovery. **Bounded risk [medium]:** macOS evidence alone does not establish PE/ELF export behavior; the release matrix is required. Archive extraction is `O(1)` with respect to runtime inputs.
+
+### 35.164. SDK/Runtime Version Discovery Must Be Coherent [F511]
+
+- Exact SDK compilation does not guarantee runtime ABI coherence. Every implicit installed-runtime search list must prefer the matching product version; an explicit valid `IDADIR` remains authoritative.
+- Assumption A58.3: the standard macOS 9.4 application bundle contains the same runtime ABI as the pinned 9.4 SDK. Falsify by linking and running the integration suite against that bundle or by observing an IDA-reported API mismatch. Dependent result: local runtime evidence only. **Bounded risk [high]:** a stale fallback can make an exact-SDK build appear broken through an older runtime. Discovery is `O(V)` for the bounded version list.
+
+### 35.165. Processor Alias and Artifact Naming [F512]
+
+- Keep build-system target identity separate from the installed procmod basename. The installed artifact should use the first short processor alias so command-line `-p`, loader `set_processor`, and `procs` discovery converge on one name.
+- Assumption A58.4: IDA 9.4 resolves third-party procmods by installed basename/declared alias under its processor search path. Falsify by installing each example under the alias name and selecting it through a licensed host. Dependent result: ordinary module discovery. **Bounded risk [medium]:** an exported but differently named binary can pass symbol inspection and remain undiscoverable. Renaming is `O(1)`.
+
+### 35.166. Processor Runtime Smoke Envelope [F513]
+
+- Export validation and runtime dispatch are independent gates. Cross-platform symbol tools require dynamic/exported `LPH`; the runtime gate uses a disposable user directory, controlled raw fixture, forced processor, and batch assembly output containing the wrapper-rendered mnemonic.
+- Assumption A58.5: an authenticated active named license installed by CI permits noninteractive third-party processor loading on the configured host. Falsify with the matrix runtime smoke; dependent result: host dispatch evidence only. **Bounded risk [medium]:** the local HCLI session is expired, so local launch cannot distinguish a post-license module failure. The CI gate provides the reopening probe. Export search is `O(F + S)` for artifact count `F` and symbol output `S`; runtime cost is host-analysis dependent and bounded by a 120 s timeout.
+
+### 35.167. Shared Private Procmod Validation Predicates [F514]
+
+- Keep ABI-shape validation SDK-free but private: production materializers and offline tests share predicates over `ProcessorInfo`, `AnalyzeDetails`, operands, and switches. SDK records remain confined to the compiled bridge.
+- Assumption A58.6: the shared predicates run immediately before every current SDK instruction/switch copy, and later materializer changes retain that call. Falsify by deleting or bypassing either call and requiring source review plus the dedicated target to fail policy review. Dependent result: malformed copied models are rejected before SDK assignment. **Bounded risk [low]:** allocation failure and host-owned output-context behavior still require ABI/runtime evidence. Validation is `O(O)` for operands and `O(1)` for switches, with `O(1)` bounded operand state because IDA permits eight operands.
+
+### 35.168. Current/Compatibility Processor Events and Output Fallback [F515]
+
+- IDA 9.4 retains deprecated `func_t*` frame/bounds events but defines current replacements using `fchunk_info_t*` or function entry addresses. A wrapper-level address callback maps losslessly to both, so the private dispatcher should consume both IDs while keeping SDK types private.
+- `ev_out_mnem` handles only the mnemonic; `ev_out_insn` owns the complete line. A mnemonic callback cannot signal that all operands were rendered. When the complete context formatter is unimplemented, the bridge must use the SDK output context's canonical mnemonic and operand dispatch before flushing the line.
+- Assumption A58.7: the pinned SDK event parameter documentation and inline `notify()` helpers describe the runtime vararg ABI for all configured hosts. Falsify with exact-SDK compilation of every case plus licensed IDA 9.4 execution of analysis/output and a processor exercising current frame callbacks. Dependent result: frame/bounds routing and generic operand output. **Bounded risk [medium]:** the minimal runtime fixture directly proves output fallback but does not naturally induce every function-analysis callback. Dispatch remains `O(1)`; generic output is `O(8)` because the SDK operand array is fixed at eight entries.
+
+### 35.169. Authoritative Processor Bitness Normalization [F516]
+
+- `ProcessorInfo::default_bitness` is the normalized wrapper field. Before materializing `processor_t::flag`, remove `PR_USE32`, `PR_USE64`, `PR_DEFSEG32`, and `PR_DEFSEG64`, then add only the pair corresponding to 32 or 64 bits; 16-bit mode adds none.
+- Assumption A58.8: these four pinned-SDK bits are the complete descriptor bitness state controlled by `default_bitness`. Falsify with exact static assertions and descriptor tests for intentionally contradictory inputs. Dependent result: coherent processor address/default-segment mode. **Bounded risk [low]:** `PR2_CODE16_BIT` describes low-address-bit ISA selection and remains independently caller-controlled. Normalization is `O(1)` time/space.
+
+### 35.170. License-Independent Exported Descriptor Inspection [F517]
+
+- Symbol presence and descriptor contents are separable checks. Load the built module after making the matching installed `libida` visible, resolve `LPH` as data, and verify the pinned 64-bit `processor_t` prefix through its instruction table. Do not invoke IDA database APIs during this gate.
+- Assumption A58.9: all supported build targets use the pinned SDK's 64-bit `processor_t` field order and native pointer alignment. Falsify by compiling/running the probe on Linux x86-64, Windows x64, and macOS arm64 and comparing expected aliases/counts/bitness. Dependent result: descriptor-materialization evidence only; callback execution remains the batch-host gate. **Bounded risk [medium]:** a future SDK layout change must update both the exact SDK pin and probe. Validation is `O(R + I)` for register and instruction counts, bounded by the bridge's 65,536-entry limits.
+
+### 35.171. Fail-Fast SDK Release Coherence [F518]
+
+- Commit pinning governs repository-owned acquisition, while `IDASDK` is a caller-owned override. Resolve the override as before, then parse the authoritative `pro.h` numeric `IDA_SDK_VERSION` and reject anything other than 940 before compiling wrapper sources.
+- Assumption A58.10: the requested commit and every supported IDA 9.4 SDK checkout define `IDA_SDK_VERSION 940`. Falsify with the exact archive/workflow checkout and a deliberately older SDK configure probe. Dependent result: SDK-release coherence, not exact-commit identity for caller-owned overrides. **Bounded risk [low]:** a locally modified 9.4 tree can still report 940; exact provenance remains enforced by the hash-verified fallback and CI checkout SHA. Parsing is `O(H)` over bounded `pro.h` text.
+
+### 35.172. Binary IDB Privacy Boundary [F519]
+
+- IDA databases may persist host/license metadata unrelated to the analysis fixture's intended semantic content. Repository privacy validation must scan raw bytes of every tracked/candidate regular file, not only decoded source or archive members.
+- For an already useful deterministic IDB fixture, same-length substitution preserves container offsets: canonical entitlement identifiers become reserved synthetic zero identifiers, emails become same-length invalid-domain placeholders, and identity-bearing home roots become same-length redacted roots. Re-open the sanitized IDB through the initialized wrapper before accepting it.
+- Assumption A58.11: the sensitive fields are plaintext fixed-length metadata and are not required to validate or interpret the database. The post-substitution raw-byte scan and 102/102 initialized-host Rust integration tests falsify residual plaintext and fixture-corruption failure modes for the current candidate. Dependent result: retained fixture usability and present-tree privacy. **Bounded risk [high]:** Git object history and external GitHub caches are separate retention domains and require their own audit/coordination. Scanning and substitution are `O(B)` time and memory for total candidate bytes `B`.
+
+### 35.173. Complete Processor Descriptor Probe [F520]
+
+- The pinned 64-bit IDA 9.4 `processor_t` layout is 144 bytes. Structural validation that claims return-instruction coverage must model the fields after `instruc`: `tbyte_size`, four `real_width` bytes, `icode_return`, and the reserved pointer. Compare the loaded field itself to the expected wrapper descriptor; range-checking the expectation alone is circular.
+- Assumption A58.12: the configured Linux x86-64, Windows x64, and macOS arm64 jobs use the pinned non-x86 144-byte ABI. Falsify by asserting native pointer width and `ctypes.sizeof(ProcessorDescriptor)` before loading a module, then executing the probe on every matrix host. Dependent result: license-independent full exported-descriptor evidence. **Bounded risk [low]:** a future SDK layout requires a coordinated pin/probe update. Validation is `O(R + I)` for declared registers and instructions.
+
+### 35.174. Reachable-History Privacy Is a Separate Gate [F521]
+
+- A clean worktree proves only the candidate tree. Scan unique blobs reachable from the ref with one persistent `git cat-file --batch` process, classify raw bytes without printing matches, and report only categories/counts/paths. Rewrite project-owned reachable history with same-width replacements in an isolated mirror; require an unchanged candidate tip tree, `git fsck`, and a zero-hit rescan before push.
+- Assumption A58.13: the six affected historical paths and 249 affected blobs reachable from the audited `origin/master` are the complete project-owned retention set represented by that ref. Falsify by scanning the rewritten ref and a fresh remote clone, and separately enumerating advertised/non-advertised GitHub refs. Dependent result: reachable rewritten-branch/master privacy only. **Bounded risk [high]:** GitHub cached objects, pull-request refs, and independent forks are not removed by rewriting `master`; F466/KB 35.122 remains the external retention boundary. Streaming scan time is `O(B + O)` for reachable blob bytes `B` and object count `O`, with `O(P)` path-map memory.
+
+### 35.175. Custom Switch Case Output Validation [F522]
+
+- `ev_calc_switch_cases` returns a grouped value vector plus one target per group. A positive wrapper callback is valid only when at least one group exists, every group has at least one value, every target is mapped away from `BadAddress`, values are globally unique, and the total value count equals the descriptor's nonzero `case_count`.
+- Assumption A58.14: `switch_info_t::ncases` is the number of non-default case values for both ordinary and custom IDA 9.4 switches. Falsify against the pinned `switch_info_t` documentation, exact-SDK callback execution, and grouped sparse-case fixtures. Dependent result: custom case-vector materialization. **Bounded risk [low]:** target aliases remain allowed because multiple case groups may legitimately reach the same destination. Validation is expected `O(C)` time and `O(C)` space for `C <= 65,535` case values.
+
+### 35.176. Automatic Runtime Discovery Must Be Release-Exact [F523]
+
+- A preferred version is not a pin. Once top-level configuration rejects every SDK except 940, repository-owned implicit runtime discovery must search only IDA 9.4. Older standard bundles and unversioned development paths may be ABI-incompatible even when linking succeeds. `IDADIR` remains explicit caller input and therefore may intentionally select a nonstandard compatible build.
+- Assumption A58.15: the standard 9.4 application bundle is the only repository-owned macOS discovery target required by the current release contract. Falsify by removing it while leaving another bundle installed: implicit configuration must fail instead of linking the stale runtime; explicit `IDADIR` must continue to work. Dependent result: automatic local runtime coherence. **Bounded risk [low]:** callers can still explicitly select an incompatible runtime, but the selected path is observable configuration rather than silent fallback. Discovery is `O(1)`.
+
+### 35.177. Repository Candidates Exclude Workflow Acquisition Roots [F524]
+
+- The repository privacy scanner intentionally includes tracked files and non-ignored untracked files so a newly created candidate cannot bypass byte-level checks before staging. A workflow-downloaded IDA installer and nested SDK checkout are external inputs, not candidate repository content; ignore `ida-installer/` and `ida-sdk/` at the root so those inputs cannot contaminate the project-owned scan boundary.
+- Assumption A58.16: workflows use only the two documented root acquisition directories for proprietary runtime and SDK inputs. Falsify with `git check-ignore --stdin` for both roots and a CI scan after installation; any new acquisition location must be classified explicitly. Dependent result: present-tree candidate privacy, not privacy claims about proprietary vendor artifacts. **Bounded risk [medium]:** an accidentally staged file remains scanned because tracked files are returned by `git ls-files --cached` despite ignore rules. Candidate enumeration is `O(F)` for project-owned file count `F`.
+
+### 35.178. HCLI Rich-Table Input Is UTF-8 at the CLI Boundary [F525]
+
+- HCLI uses Unicode table separators. A Python subprocess opened with the Windows locale codec can fail while encoding test input, and a selector that inherits an arbitrary stdin text codec can misparse the same bytes. Read `sys.stdin.buffer`, decode UTF-8 with replacement, and keep all security-relevant identifiers/status/type/edition matching ASCII.
+- Assumption A58.17: current HCLI emits UTF-8 when piped in supported GitHub shells. Falsify with positive and negative UTF-8 subprocess fixtures on Linux, Windows, and macOS plus the authenticated installation step. Dependent result: deterministic active-named product selection. **Bounded risk [low]:** malformed non-UTF-8 decoration becomes replacement characters without changing ASCII row fields; a malformed delimiter causes fail-closed no-license selection. Parsing is `O(N)` time and memory for table bytes `N`.
+
+### 35.179. Disposable Processor Smoke Requires Installed User State [F526]
+
+- `IDAUSR` isolates processor discovery, but an empty override also hides the HCLI installation's accepted EULA registry and potentially its installed named-license file. Copy only `ida.reg` and root-level `*.hexlic` from `~/.idapro` or the Windows application-data IDA directory into the temporary user root, then install the test procmod there. Do not copy plugins, preferences, or mutate the source directory.
+- Assumption A58.18: IDA 9.4 stores the HCLI-accepted registry in `ida.reg` and any user-scoped license as a root-level `*.hexlic` on the supported hosts. Falsify with an isolated-state unit fixture and authenticated Linux/Windows/macOS batch launches after installation. Dependent result: real procmod dispatch under disposable `IDAUSR`. **Bounded risk [medium]:** a future installer may move state; absence remains fail-closed at IDA launch with a redacted diagnostic. State discovery is `O(L)` for the small number of root-level license files `L`.
+
+### 35.180. Processor Smoke Failure Diagnostics Include the IDA Log [F527]
+
+- IDA can emit a fatal batch diagnostic only to the file selected by `-L`, leaving captured stdout/stderr empty. On nonzero exit, read that bounded temporary log, combine it with console streams, and apply canonical-license plus known-root redaction before raising the validation error.
+- Assumption A58.19: the temporary log is the authoritative additional failure channel for the IDA 9.4 batch executable. Falsify with an offline failing-launch stub that writes only the log and with a real nonzero host launch. Dependent result: diagnosability of procmod runtime failures. **Bounded risk [low]:** diagnostics are bounded to the last 4,000 rendered characters after redaction; analysis is `O(D)` for temporary diagnostic bytes `D`.
+
+### 35.181. Loaded Assembler Descriptors Require Escape Codes [F528]
+
+- IDA validates each selected `asm_t` beyond pointer presence. `esccodes` must identify characters that cannot appear literally inside string/character constants; for the generic IDAX assembler this is the configured quote pair. The byte directive also supplies the generic ASCII-data directive.
+- Assumption A58.20: the pinned 64-bit IDA 9.4 `asm_t` prefix through `esccodes` has the documented native layout and quote delimiters are the complete minimum escape set for the generic assembler. Falsify with `ctypes` offset/materialization checks on all matrix platforms and an IDA batch processor selection. Dependent result: assembler acceptance and processor activation. **Bounded risk [medium]:** later host validation may reveal additional semantic directive constraints, which remain fail-closed in the same live smoke. Prefix inspection is `O(1)`.
+
+### 35.182. Canonical Output Uses Wrapper-Owned Tokens [F529]
+
+- A successful mnemonic hook already provides the text and semantic token classes needed by `ev_out_insn`; invoking `outctx_t::out_mnemonic()` afterward adds a host virtual-ABI dependency and can recurse through `ev_out_mnem`. Render the wrapper tokens directly. If the hook is unimplemented, use the validated instruction descriptor mnemonic; for each shown operand, prefer typed wrapper output and invoke the SDK operand helper only when that hook is unimplemented.
+- Assumption A58.21: stable `outctx_base_t` token append/flush methods are available on every supported IDA 9.4 host even where the later convenience mnemonic slot is null. Falsify with exact-SDK compilation, crash-frame localization, all-host runtime matrix execution, and expected-mnemonic inspection of generated assembly. Dependent result: canonical instruction rendering and absence of the observed null-slot fault. **Bounded risk [medium]:** a legacy processor that supplies neither typed operand text nor a host-renderable operand remains subject to the SDK helper's fail-closed result. Rendering is `O(T + O)` for token count `T` and at most eight operands `O`.
+
+### 35.183. CI History Privacy Requires Complete Reachability [F530]
+
+- `check_repository_privacy.py --history-ref=HEAD` can inspect only objects present in the clone. `actions/checkout` defaults to one commit, so the validation checkout must use full history before invoking the common runner. Keep the present-tree scan separately because it also includes non-ignored untracked candidate files that are not Git objects.
+- Assumption A58.22: the full-depth validation checkout contains every object reachable from the tested branch head. Falsify by checking `git rev-list --count HEAD` against a fresh full clone and by injecting a prohibited marker into a non-tip ancestor in an isolated fixture. Dependent result: branch-reachable history privacy enforcement in CI. **Bounded risk [high]:** pull refs, caches, forks, and unreachable remote objects remain outside branch reachability and under F466. The scan is `O(B + O)` for reachable bytes `B` and objects `O`.
+
+### 35.184. Symlink Privacy Reads Use Platform-Native Link Text [F531]
+
+- `os.readlink()` returns the stored link target representation, which can include the Windows extended-length prefix even when `Path.symlink_to()` received an ordinary absolute path. Privacy scanning should inspect those raw target bytes and must not resolve or read the target file. A portable regression compares `read_candidate()` with `os.readlink()` using the same surrogate-escape boundary, then separately rejects equality with the target payload.
+- Assumption A58.23: `os.readlink()` is the authoritative non-following text boundary on supported Python/host combinations. Falsify on Linux, macOS, and Windows symlink-capable runners and by placing distinct bytes in the target file. Dependent result: cross-platform link-text privacy scanning. **Bounded risk [low]:** hosts without symlink privilege skip only the synthetic regression; tracked Git symlink blobs remain covered by the history scanner. Each read is `O(P)` for link-target path length `P`.
+
+### 35.185. Installable HCLI Selection Requires Plausible Expiration [F532]
+
+- Filter HCLI rows by supported IDA product edition, named type, active status, and strict ISO expiration. Reject malformed values and years after 2100, then select the latest plausible expiration within edition priority with source order as the deterministic tie-breaker. This preserves Ultimate preference, excludes server/free/home products, and avoids the observed anomalous first row whose installed certificate IDA reports as expired.
+- Assumption A58.24: supported named IDA subscriptions used by this release expire no later than 2100, and the 3025 display value is not a usable long-lived certificate. Falsify with selector tests containing the supplied table shape and authenticated Linux/macOS/Windows HCLI install plus IDA launch. Dependent result: automatic CI license selection. **Bounded risk [medium]:** a legitimate post-2100 subscription would be rejected explicitly rather than silently chosen; adjust the bound only with an authenticated host probe. Parsing and sorting are `O(R log R)` for license-row count `R`.
+
+### 35.186. Runtime Evidence Must Avoid Cross-Version IDB Conversion [F533]
+
+- A pre-analysed sidecar created by an older IDA release is not a neutral input to an exact-9.4 first-open test. The host may convert the disposable database and terminate before the test body runs. The generic runner therefore copies only the isolated raw executable so analysis, xrefs, names, and types are all produced by the tested runtime; explicit existing-database tests remain separate.
+- Assumption A53.2: exact IDA 9.4 analysis of the tracked raw fixture yields at least two distinct named and two distinct typed eligible referents plus one data referent. Falsify through the registered integration test on each licensed runtime host; it fails explicitly if any candidate class is missing. Dependent result: apply/preserve/ambiguity runtime coverage only. **Bounded risk [low]:** analysis output can change with future processor signatures, in which case the evidence fixture must be updated rather than weakening the guards. Setup is `O(B)` for raw fixture bytes `B`; analysis and extraction remain `O(F + I + R)`.
+
+### 35.187. C++ Integration Fixtures Are Runtime-Analysed [F534]
+
+- The common CTest runner copies only the raw executable into a unique disposable directory. It does not copy a pre-analysed `.i64`, because that file encodes an IDA database format and analysis state tied to a release. Each integration executable opens and analyzes the raw copy with the runtime being validated; consumers that explicitly test existing-database behavior may still select the tracked sanitized sidecar directly.
+- Assumption A53.3: every supported IDA 9.4 host can analyze the small ELF64 fixture deterministically enough for the existing semantic assertions. Falsify with the complete 20-target database-backed CTest matrix on Linux, macOS, and Windows; any target-specific need for a prebuilt database must be registered explicitly rather than restoring implicit sidecar copying. Dependent result: native integration runtime evidence. **Bounded risk [medium]:** analysis is slower and future signature changes may alter derived names/types, but failures now identify current-runtime behavior instead of an opaque conversion exit. Per-test setup is `O(B)` for raw fixture bytes `B`; host analysis cost is runtime-defined.
+
+### 35.188. Optional Boolean Capabilities Use Two-Stage Checks [F535]
+
+- For `Result<bool>`, `operator bool` reports whether the call returned a value; it does not report the contained capability. Tests and consumers must first handle the error state and then inspect `*result`. This is material for decompiler availability: a successful `false` result means the host is valid but the optional feature must not be invoked.
+- Assumption A53.4: decompiler absence is an allowed state for the general native integration matrix, while strict decompiler hosts are tested through their dedicated opt-in gate. Falsify by running the same tests on hosts with and without a compatible decompiler and requiring independent storage/domain assertions in both cases. Dependent result: optional-capability test classification. **Bounded risk [low]:** a strict release gate can still require availability explicitly; it must state that requirement rather than infer it from `Result` success. Each check is `O(1)`.
+
+### 35.189. String-List Output Uses Extended Prefix-Compatible Storage [F536]
+
+- Construct `string_info_ex_t`, pass its base pointer to the exported `get_strlist_item`, validate the base metadata, and copy any populated decompiler string. This remains source-compatible with the exact SDK and binary-compatible with a runtime that writes either only the documented base prefix or the extended record. Directly calling `get_strlist_item_ex` is not portable to the tested IDA 9.4 arm64 library because that declared symbol is absent.
+- Assumption A53.5: supported IDA 9.4 runtimes preserve `string_info_t` as the leading base of `string_info_ex_t` and write no more than the extended record through the legacy call. Falsify with exact-SDK builds and initialized string-list enumeration on Linux, macOS arm64, and Windows, including ordinary and decompiler-generated entries where available. Dependent result: memory-safe copied string snapshots. **Bounded risk [high]:** this defends an observed runtime/header discrepancy; a later release must re-audit symbol exports and record sizes rather than assume the workaround indefinitely. Enumeration is `O(N + T)` time and `O(N + T)` copied memory for `N` entries and total text bytes `T`.
+
+### 35.190. Undo/Redo Is an Opaque Named-Checkpoint Domain [F537]
+
+- The pinned IDA 9.4 surface has five operations: serialize a named checkpoint, query the next undo label, query the next redo label, perform undo, and perform redo. All five symbols are present in the tested IDA 9.4 runtime. The serialized `UNDO_ACTION_START` body is an SDK-private implementation detail consisting of packed action-name and display-label strings.
+- Public IDAX values are owned UTF-8 strings and booleans. `create_point(action_name, label)` rejects embedded NUL and returns whether undo recording accepted the checkpoint. Label queries return an optional owned string because no queued action is a valid state. Perform operations return whether the host executed the request; `false` is an availability/state result, not a fabricated transport error.
+- Assumption A59.1: the official two-`pack_ds` adapter is the complete stable record shape required by supported IDA 9.4 hosts. Falsify with exact-SDK compilation plus an isolated checkpoint/mutation/label/undo/redo/restoration round trip on Linux, Windows, and macOS. Dependent result: checkpoint creation and label fidelity only; absence/error containment remains independent. **Bounded risk [medium]:** later SDK releases may revise the private record payload; the wrapper must re-audit the official adapter when changing the pinned SDK.
+- Assumption A59.2: after auto-analysis completes, ordinary database metadata mutation is recorded between an explicit checkpoint and the next checkpoint. Falsify by changing a repeatable comment in a disposable database, verifying exact undo-label text, undoing to the original value, redoing to the changed value, and undoing once more for cleanup. Dependent result: runtime mutation round-trip evidence. **Bounded risk [low]:** a host with undo globally disabled returns `false` explicitly and cannot satisfy the release round-trip gate.
+- Complexity is `O(A + L)` time and memory to serialize action-name bytes `A` and label bytes `L`; label readback is `O(L)`. Undo/redo execution cost is host-defined by the recorded database mutation set.
+
+### 35.191. Embedded-NUL Tests Require Length-Preserving Views [F538]
+
+- `std::string_view` constructed from a C-string literal measures through the first NUL. A negative test that passes `"prefix\0suffix"` directly therefore does not contain an embedded NUL from the callee's perspective. Use the `(pointer, byte_count)` constructor or an owned `std::string` with an explicit length.
+- Assumption A59.3: Node, Python, and Rust preserve the source language's string length until their binding layer rejects or dispatches the value. Falsify with binding-level embedded-NUL cases and the C++ explicit-length probe; dependent result: validation coverage only. **Bounded risk [low]:** any future C ABI accepting separate pointer/length pairs must repeat the same negative rather than rely on `CString`. Probe cost is `O(N)` for input bytes `N`.
+
+### 35.192. Current Runtime Examples Follow the Exact Release Baseline [F539]
+
+- Build-time SDK rejection and runtime discovery do not protect copied shell examples. Current setup instructions must name IDA Professional 9.4 consistently; older-release strings remain valid only when they identify historical evidence rather than an executable current command.
+- Assumption A59.4: the Rust README's direct-execution examples are intended for the repository's current release rather than archival reproduction. Falsify by comparing the prerequisites and build helper's exact-940 contract with every executable command in the same document. Dependent result: correct default runtime guidance. **Bounded risk [low]:** explicitly configured `IDADIR` continues to support non-standard installation paths, while ABI compatibility remains caller-verifiable. The documentation scan is `O(T)` for tracked text bytes `T`.
+
+### 35.193. Node Undo Inputs Preserve Length Until Validation [F540]
+
+- V8/NAN supplies both UTF-8 bytes and their length. The undo adapter constructs `std::string(bytes, length)` locally instead of using the legacy null-terminated shared helper, allowing the opaque C++ boundary to reject embedded NUL without changing unrelated Node-domain behavior.
+- Assumption A59.5: `Nan::Utf8String::length()` counts the exact byte sequence exposed through its pointer, including embedded NUL. Falsify with JavaScript strings containing one interior NUL in each parameter and require the structured validation error before host dispatch. Dependent result: Node malformed-input parity. **Bounded risk [low]:** other Node domains still use their established conversion contracts and are outside this local change. Conversion and validation are `O(N)` for UTF-8 bytes `N`.
+
+### 35.194. Release Matrices Use Supported Hosted-Runner Labels [F541]
+
+- The current [GitHub-hosted runner inventory](https://docs.github.com/en/actions/how-tos/write-workflows/choose-where-workflows-run/choose-the-runner-for-a-job) exposes Intel macOS through `macos-15-intel` and `macos-26-intel`, not `macos-13`. The Node tag workflow keeps its x64 artifact row but moves it to `macos-15-intel`. Both Node addon build commands quote the command-substitution result, and the Windows LLVM environment record uses literal `printf` output.
+- Assumption A59.6: GitHub's documented `macos-15-intel` standard runner remains available to this repository and supplies the x64 environment required by the release matrix. Falsify with `actionlint` plus a version-tag workflow run that uploads `darwin-x64`. Dependent result: Intel Node prebuild publication. **Bounded risk [medium]:** hosted labels are external mutable infrastructure and must be revalidated when GitHub deprecates an image. Matrix parsing is `O(Y)` for workflow YAML bytes `Y`.
+
+### 35.195. Named Undo/Redo Passes the Complete Release Matrix [F542]
+
+- The exact implementation SHA passes all 18 configured push jobs: three native integration rows, six validation rows, and nine binding rows. Unix initialized hosts exercise the complete cross-binding state transition; Windows covers native runtime plus the established binding compilation/package boundary. All jobs resolve the pinned SDK commit and IDA Professional 9.4.
+- Assumption A59.7: the configured Linux, Windows, and macOS jobs represent the supported release platform/consumer matrix. Falsify by adding any supported platform or binding job and requiring the same five-operation surface plus isolated state round trip. Dependent result: release portability for the current matrix. **Bounded risk [medium]:** the tag-only Intel Node artifact row is syntax/label validated but requires a version-tag run for artifact-upload evidence. Log scanning is `O(G)` for complete job-log bytes `G`.
+
+### 35.196. Analysis Problems Form a Separate Opaque Domain [F543]
+
+- The pinned IDA 9.4 `problems.hpp` defines 16 valid problem kinds and six operations. The tested runtime exports all six. Generic `search::next_error` uses a different SDK facility and cannot describe, remember, name, remove, or test a typed analysis problem.
+- Public IDAX uses `problem::Kind`, owned UTF-8 strings, optional descriptions/next addresses, and booleans for removal/presence. It preserves absent message versus an explicitly empty message, rejects embedded NUL before C-string conversion, validates the kind range and rejects `BadAddress`, but does not require the address to be mapped because some SDK problem kinds intentionally describe flow beyond current limits.
+- Assumption A60.1: SDK kind values 1 through 16 retain the exact semantic mapping declared by the pinned header. Falsify with exact-SDK discriminant assertions plus short/long runtime name lookup for every kind; dependent result: kind identity and names. **Bounded risk [low]:** changing the SDK pin requires a fresh enum audit rather than accepting unknown values.
+- Assumption A60.2: `PR_ATTN` can be used for an isolated non-interactive remember/describe/traverse/remove round trip without an ordinary UI diagnostic. Falsify on Linux, Windows, and macOS by waiting for analysis, recording a Unicode description at a real function address, reading it exactly, locating it at-or-after that address, removing it, and verifying ordinary absence. Dependent result: runtime state-transition evidence. **Bounded risk [medium]:** host analysis may already own attention markers at another address, so the test cleans and scopes all assertions to its selected address.
+- Wrapper validation and copied string work are `O(M + T)` for message bytes `M` and returned text bytes `T`; single presence/removal operations add `O(1)` wrapper work. Ordered lookup complexity and host storage are SDK-defined.
+
+### 35.197. Python Generic Runtime Fixtures Are Raw-Only [F544]
+
+- The Python initialized-host test is a generic current-runtime semantic matrix, not an existing-database compatibility test. It copies only the configured raw input into its disposable directory and opens that copy. A neighboring tracked sidecar is never selected implicitly.
+- Assumption A60.3: the configured raw fixture is sufficient for every generic Python assertion under the pinned IDA 9.4 runtime. Falsify with the complete initialized-host test on Linux and macOS; any assertion that specifically requires saved database state must move to a separately declared sidecar test. Dependent result: Python runtime portability. **Bounded risk [low]:** raw setup can cost more host analysis time, but it cannot silently inherit incompatible serialized state. Fixture copy is `O(B)` time and space for binary bytes `B`; analysis cost is host-defined.
+
+### 35.198. Analysis Problems Pass the Complete Release Matrix [F545]
+
+- The exact implementation SHA passes all 18 configured push jobs: three native integration rows, six validation rows, and nine binding rows. Every Linux, Windows, and macOS job selects an eligible active named Ultimate entitlement, installs IDA Professional 9.4, and resolves exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`. Complete logs contain zero unmasked canonical license identifiers.
+- Assumption A60.4: the configured Linux, Windows, and macOS jobs represent the supported release platform/consumer matrix. Falsify by adding any supported platform or consumer job and requiring the same six-operation, 16-kind surface plus isolated state round trip. Dependent result: release portability for the current matrix. **Bounded risk [medium]:** the tag-only Intel Node artifact row remains outside push-triggered runtime evidence and requires a version-tag run for artifact publication. Log scanning is `O(G)` for complete job-log bytes `G`.
+
+### 35.199. Exception Regions Are an Independent Opaque Database Domain [F546]
+
+- The pinned IDA 9.4 `tryblks.hpp` defines five operations and the tested runtime exports all five. The domain stores architecture-independent C++ and structured-exception regions in the database; neither decompiler syntax trees nor generic address ranges provide its fragmented handlers, catch selectors, SEH filters, system-region lookup, or membership classification.
+- Assumption A61.1: native kind values `TB_CPP` and `TB_SEH`, catch sentinels `-1`/`-2`, SEH dispositions `BADADDR`/`0`/`1`, and `TBEA_*` bits retain the exact pinned-header semantics. Falsify with exact-SDK constant assertions and isolated add/retrieve conversions for both native kinds; dependent result: discriminated-value fidelity. **Bounded risk [low]:** changing the SDK pin requires a fresh constant and aggregate audit.
+- Assumption A61.2: a disposable analyzed database permits non-overlapping synthetic C++ and SEH records over mapped instruction subranges and removes them without changing bytes or items. Falsify with add/list/membership/system-lookup/remove/final-absence round trips in isolated copies on Linux, Windows, and macOS. Dependent result: mutation evidence only. **Bounded risk [medium]:** input analysis may already own exception metadata, so tests must scope deletion and assertions to a selected isolated range and restore final absence.
+- Conversion is `O(R + H)` time and copied memory for total range fragments `R` and handlers `H`; native lookup/storage complexity is SDK-defined.
+
+### 35.200. System-EH Lookup Is Independent of Stored SEH Membership [F547]
+
+- Adding and retrieving an ordinary structured-exception block can make `TBEA_SEHTRY`, `TBEA_SEHLPAD`, and `TBEA_SEHFILT` membership true while `find_syseh()` still returns `BADADDR`. The wrapper therefore returns an optional copied address directly from the host and never synthesizes it from `Block` values.
+- Assumption A61.3: positive system-EH classification depends on processor/loader-derived host metadata beyond a generic `TB_SEH` record. Falsify with a fixture whose runtime analysis already produces a positive `find_syseh()` result, then require exact copied start-address fidelity. Dependent result: positive lookup evidence only; error/absence transport remains covered independently. **Bounded risk [medium]:** the current generic fixture proves ordinary absence but not a positive platform-specific system-EH case. Lookup adds `O(1)` wrapper work; host search complexity is SDK-defined.
+
+### 35.201. Exception Regions Pass the Complete Release Matrix [F548]
+
+- The exact implementation SHA passes all 18 configured push jobs: three native integration rows, six validation rows, and nine binding rows. Linux, Windows, and macOS consumers compile the opaque range/handler model and execute applicable mutation/classification round trips using IDA Professional 9.4 and exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`. Complete logs contain zero unmasked canonical license identifiers.
+- Assumption A61.4: the configured Linux, Windows, and macOS jobs represent the supported release platform/consumer matrix. Falsify by adding any supported platform or consumer job and requiring the same five-operation C++/SEH surface and cross-binding round trip. Dependent result: release portability for the current matrix. **Bounded risk [medium]:** the tag-only Intel Node artifact row remains outside push-triggered runtime evidence and requires a version-tag publication run. Log scanning is `O(G)` for complete job-log bytes `G`.
+
+### 35.202. Source Parsers Are an Independent Opaque Type-Ingestion Domain [F549]
+
+- The pinned IDA 9.4 `srclang.hpp` defines nine operations and the tested runtime exports all nine. Unlike `type::parse_declarations`, this subsystem chooses a third-party parser by semantic language support or explicit name, configures its arguments/options, accepts source text or a source-file path, and reports parse-error counts while importing results into the current database's local type library.
+- Assumption A62.1: the six language bits and nine function contracts retain the exact meanings declared by the pinned header. Falsify with exact-SDK constant/signature assertions plus runtime selection, missing-parser, unsupported-operation, and parse-result probes; dependent result: selection/configuration/error mapping. **Bounded risk [low]:** changing the SDK pin requires a fresh enum, signature, and export audit.
+- Assumption A62.2: at least one installed IDA 9.4 parser supports C and C++ source ingestion in initialized idalib sessions. Falsify on Linux, Windows, and macOS by selecting for each language, parsing uniquely named declarations from both memory and a disposable source file, resolving those names from the local type library, and removing only disposable database state by closing without saving. Dependent result: positive runtime ingestion evidence. **Bounded risk [medium]:** a reduced installation can omit the third-party parser plugin even when the core runtime exports the registry functions; absence must remain an explicit `NotFound` result rather than fabricated success.
+- Assumption A62.3: parser option names and accepted values are implementation-defined and cannot be represented as a closed portable enum. Falsify by a future SDK contract that publishes a stable cross-parser option schema; dependent result: owned validated option-name/value strings. **Bounded risk [medium]:** an individual parser may reject an otherwise well-formed option, which remains an SDK rejection rather than an input-validation failure.
+- Wrapper work is `O(I + P + O)` time for input bytes `I`, parser-name bytes `P`, and option/argument bytes `O`, with copied memory proportional to owned strings. Parser execution, filesystem access, and local-type storage complexity are SDK-defined.
+
+### 35.203. Parser Identity and Option Keys Are Host-Registered State [F550]
+
+- The tested IDA 9.4 parser selected for combined C/C++ support is named `clang`. Resetting selection to the default succeeds but can continue returning that explicit name; only an actually empty native result maps to optional absence. Registered options include `CLANG_ARGV` and `CLANG_APPLY_TINFO`, whereas the same plugin's configuration-only `CLANG_PARSE_STATIC_DECLS` key is unavailable through the parser-option API.
+- Assumption A62.4: an explicit parser name may remain observable after default selection because the default resolves to the same registered parser. Falsify on each supported host by selecting a non-default parser, selecting default, and reading the native name; dependent result: selected-name state only. **Bounded risk [low]:** callers must not use optional presence as evidence that selection was explicit.
+- Assumption A62.5: reading and re-setting the current value of a registered parser option is state-preserving. Falsify by reading `CLANG_APPLY_TINFO`, setting the same copied value, and reading it back exactly in a disposable initialized-host run; dependent result: positive option transport evidence. **Bounded risk [medium]:** option availability remains parser/version-specific, so portable code must handle `NotFound`.
+
+### 35.204. Validate Parser Outputs Before Stateful Dispatch [F551]
+
+- A report-output pointer belongs to the private Rust C transport, but parsing mutates the current local type library. Validation after expression evaluation is therefore too late: the host operation may already have executed. All three parse adapters validate the report pointer before constructing or invoking the C++ parser request, while the common converter repeats the check defensively.
+- Assumption A62.6: `parse_decls_*` may create local types even when the caller cannot receive its report. Falsify with a deliberately null private-ABI report pointer and a unique declaration, then prove the declaration remains absent; dependent result: fail-before-mutation transport semantics. **Bounded risk [low]:** this ABI is crate-private, but malformed callers must remain deterministic. Pointer validation is `O(1)`; the prevented host work is parser-defined.
+- Assumption A62.7: `HTI_HIGH` and `HTI_LOWER` express contradictory prototype-level transformations, and converting an out-of-range JavaScript number to `size_t` is not a valid portable input path. Falsify the first against a future SDK contract explicitly allowing both flags, and the second with binding-level finite/integer/range probes; dependent result: semantic option validation. **Bounded risk [low]:** raw SDK-flag combinations remain intentionally outside the opaque API. Validation is `O(1)`.
+
+### 35.205. Normalize NAN Optional Arguments Before Cross-Compiler Type Selection [F552]
+
+- `Nan::Undefined()` returns `v8::Local<v8::Primitive>`, while an actual callback argument is `v8::Local<v8::Value>`. A conditional expression between the two is not portably typed because each handle specialization can convert to the other: Apple Clang selected a conversion, while GCC rejected the ambiguity. A dedicated helper with an explicit `v8::Local<v8::Value>` return type performs the derived-to-base conversion at the return boundary for all optional parser arguments.
+- Assumption A62.8: explicit conversion to the callback's `v8::Local<v8::Value>` boundary is supported by every Node/V8 version in the configured matrix. Falsify by compiling the same parser binding on Linux/GCC, Windows/MSVC, and macOS/Apple Clang and running omitted/present optional-argument tests. Dependent result: Node parser binding portability. **Bounded risk [low]:** a future NAN/V8 API can change handle conversions and requires the binding matrix to revalidate. Dispatch is `O(1)` time and space.
+
+### 35.206. Source-Parser Release Matrix Closure [F553]
+
+- Release commit `3d6b8b1b6b39e15b0ff32c1f0044070474990c5f` passes all 18 configured push jobs: three native integration rows, six validation rows, and nine binding rows. Linux/GCC, Windows/MSVC, and macOS/Apple Clang consumers compile the opaque parser model and execute applicable selection/configuration/source/file/local-type round trips using IDA Professional 9.4 and exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`. Complete logs contain zero unmasked canonical license identifiers.
+- Assumption A62.9: the configured Linux, Windows, and macOS jobs represent the supported release platform/consumer matrix. Falsify by adding any supported platform or consumer job and requiring the same nine-operation C++ surface, all binding builds, and initialized-host parser round trips. Dependent result: release portability for the current matrix. **Bounded risk [medium]:** the tag-only Intel Node artifact row remains outside push-triggered runtime evidence and requires a version-tag publication run. Log scanning is `O(G)` for complete job-log bytes `G`.
+
+### 35.207. Standard Dirtrees Are a Missing Organizational Domain [F554]
+
+- The exact IDA 9.4 `dirtree.hpp` defines eight host-owned standard trees: Local Types, Functions, Names, Imports, IDA-place bookmarks, breakpoints, Local Types bookmarks, and IDB-backed snippets. The tested runtime exports the complete operation family required for resolve/enumerate/search, directory and item mutation, ordering, bulk operations, and traversal. No current IDAX namespace or binding represents these capabilities.
+- Assumption A63.1: an initialized database exposes every standard tree applicable to that host, while a context-specific unavailable tree can be represented as `Unsupported`. Falsify by opening each semantic kind across Linux, Windows, and macOS and executing read-only root resolution/enumeration; dependent result: tree acquisition and kind mapping. **Bounded risk [medium]:** debugger/UI-specific trees can exist but contain no entries in headless sessions.
+- Assumption A63.2: built-in-tree consumers can be losslessly represented by owned absolute paths and copied entry snapshots without exposing native inodes, directory indexes, or cursors. Falsify with directory create/resolve/enumerate/rename/order/remove plus existing-item link/move/unlink round trips and exact bulk partial-failure indices; dependent result: the standard-tree public boundary. **Bounded risk [low]:** custom `dirspec_t` backends remain a separate authoring surface because they require user callbacks rather than a built-in semantic tree kind.
+- Child enumeration is `O(N)` time and copied space for `N` direct entries; recursive snapshots are `O(V)` time and space for visited entries `V`; bulk conversion is `O(P + M)` for total path bytes `P` and moved/failed entries `M`. Native tree persistence and lookup costs remain SDK-defined.
+
+### 35.208. Standard-Tree Path Transport Preserves Host Identity Privately [F555]
+
+- The tested headless IDA 9.4 runtime returns a usable standard tree for all eight pinned semantic kinds, including the UI/debugger-associated trees when they are empty. A copyable wrapper therefore needs to retain only the closed kind; each operation can reacquire the host-owned tree and copy paths, names, display names, attributes, and failure details before returning.
+- Native `bulk_move` and `bulk_remove` report source-specific failures independently of their destination-level return code. The wrapper pre-resolves paths, retains original caller indices, merges pre-resolution and native failures in input order, and returns successful affected paths in the same report instead of collapsing partial success into a generic error.
+- Assumption A63.3: the standard-tree registry remains process-owned and stable for the lifetime of an initialized database, so reacquisition by kind is safer than retaining a borrowed native pointer. Falsify by opening a tree, performing database lifecycle transitions permitted by IDAX, and requiring each later operation either to reacquire current state or return explicit unsupported/failure without using stale storage. Dependent result: copyable `Tree` lifetime semantics. **Bounded risk [low]:** calls remain constrained to an initialized database; cross-database retained handles intentionally select the same semantic kind in the current database rather than a historical instance.
+- Assumption A63.4: source-specific native bulk-error indices refer to the compact valid-cursor input vector. Falsify with a batch containing missing, valid, and host-rejected entries at interleaved positions and require exact remapping to original caller indices on every supported runtime. Dependent result: partial-failure index fidelity. **Bounded risk [medium]:** the current focused probe covers one pre-resolution miss after two valid sources; interleaved native rejection remains a release-matrix test target.
+- Wrapper conversion is `O(P + R log R)` time for total input bytes `P` and failures `R`, including deterministic failure sorting, with `O(P + M + R)` copied memory for moved paths and reports. Native resolution and mutation complexity is SDK-defined.
+
+### 35.209. Avoid ODR-Using Header-Only SDK Integral Constants [F556]
+
+- The pinned `direntry_t::ROOTIDX` declaration has an in-class initializer but no linkable runtime definition. A return expression whose conversion path can bind/reference that member is not guaranteed to remain a pure compile-time value. Static-library extraction in the Rust consumer exposed the otherwise hidden undefined symbol.
+- Use a typed semantic literal only after exact-SDK assertions establish the native value; this preserves the wrapper contract without importing a non-exported SDK object into the ABI. Assumption A63.5: `direntry_t::ROOTIDX` remains zero for the pinned SDK. Falsify with an exact-header `static_assert` and every SDK-pin change; dependent result: root child enumeration. **Bounded risk [low]:** this is an immutable property of the current exact pin and is re-audited on pin changes.
+- The generated C transport owns every duplicated entry/report string and provides aggregate destructors; safe Rust copies before calling those destructors. Conversion is `O(B)` time and memory for returned string bytes `B`, with no borrowed host storage retained.
+
+### 35.210. Folded Names and Item Membership Round-Trip Through Owned Text [F557]
+
+- `fold_common_prefix` joins a single-child directory chain with the native non-path separator byte `0x1D`. Copying that byte exactly preserves the host identity; replacing it with `/` in the wrapper would manufacture multiple path components and make subsequent mutation ambiguous.
+- Item `unlink` changes only membership in the current tree. The standard tree's private directory specification still resolves the item's full name, so `link(name)` in the same current directory restores the original absolute path without any public inode or native entry object.
+- Assumption A63.6: the pinned folded separator remains `0x1D` and full item names remain sufficient for built-in-tree relinking in their current directory. Falsify with exact-header assertions and create/fold/enumerate/remove plus unlink/absence/link/presence probes across all supported release hosts; dependent result: pointer-free fold and item-membership parity. **Bounded risk [medium]:** duplicate display names are not identities; callers must use copied full names/paths, and custom callback-backed trees remain outside this standard-tree contract.
+- Interleaved missing/valid/missing/valid batches now prove original-index remapping for wrapper pre-resolution failures. Native host rejection after successful cursor resolution remains independently represented by the same merge path. Conversion costs remain `O(P + R log R)` for total path bytes `P` and failure count `R`.
+
+### 35.211. Publish C Aggregate Counts Only After Allocation [F558]
+
+- A pointer/count aggregate has a destructor invariant: `count > 0` implies the corresponding pointer names at least `count` initialized or zero-initialized elements. Setting the count first breaks that invariant on allocator failure and makes cleanup unsafe.
+- The private directory transport now allocates with `calloc`, assigns the count only after success, and clears the entire report after any recursive cleanup. Assumption A63.7: each nonzero returned count has an allocated backing array and every owned nested string is either valid or null in zero-initialized storage. Falsify with allocator-failure injection at each array/string allocation and require one structured internal error with leak-free, non-crashing cleanup. Dependent result: private FFI memory safety. **Bounded risk [low]:** ordinary tests do not force allocator exhaustion; the invariant is structurally reviewable and can be fault-injected in a dedicated harness.
+
+### 35.212. Compact Native Bulk Errors Require Original-Index Remapping [F559]
+
+- A parent directory cannot be moved into its own child, but an independent sibling in the same batch can still move successfully. With one missing path filtered before dispatch, the native `OwnChild` error index addresses compact cursor 0 while its caller index is 1; the independent success is caller index 2.
+- Assumption A63.4 is strengthened and satisfied locally: pre-resolution failure, native source rejection, and success coexist in one report with exact original indices and affected path. Falsify across each supported release host and binding by repeating the same own-child batch and requiring `[(0, NotFound), (1, OwnChild)]` plus the index-2 destination path. Dependent result: deterministic partial bulk fidelity. **Bounded risk [low]:** destination-level failure remains a whole-operation error by the pinned SDK contract and intentionally has no partial report.
+- Remapping uses `O(N + R log R)` time for `N` sources and `R` failures and `O(N + R)` auxiliary storage, excluding copied path bytes and SDK-defined mutation cost.
+
+### 35.213. Standard Directory Trees Pass the Complete Release Matrix [F560]
+
+- Implementation commit `dc9d3ac61bad6c82cfd8bd81bcdb6a3fb5a2ab21` passes all 18 configured push jobs: three native integration rows, six validation rows, and nine binding rows. Linux/GCC, Windows/MSVC, and macOS/Apple Clang consumers compile the opaque tree model and execute applicable directory/item/fold/order/rank/bulk round trips using IDA Professional 9.4 and exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`. Complete logs contain zero license-install failures and zero unmasked canonical license identifiers.
+- Assumption A63.8: the configured Linux, Windows, and macOS jobs represent the supported release platform/consumer matrix. Falsify by adding any supported platform or consumer job and requiring the same standard-tree C++ surface, all binding builds, all eight kinds, and initialized-host mutation/partial-report round trips. Dependent result: release portability for the current matrix. **Bounded risk [medium]:** the tag-only Intel Node artifact row remains outside push-triggered runtime evidence and requires a version-tag publication run. Log scanning is `O(G)` for complete job-log bytes `G`.
+
+### 35.214. Persistent Registry State Needs a Scoped Typed Boundary [F561]
+
+- The pinned registry stores global configuration in the Windows registry or the Unix IDA registry file but exposes the same 14 runtime operations for typed values, key/value discovery and deletion, and ordered string lists. No current IDAX namespace or binding represents that plugin persistence surface.
+- Assumption A64.1: a nonempty owned subkey is sufficient portable scope for all value and list operations. Falsify on Linux, Windows, and macOS with a unique disposable subtree containing copied UTF-8 string, arbitrary binary, signed 32-bit integer, boolean, child/value enumeration, list update/trim, value deletion, nonrecursive-key deletion, and recursive cleanup. Dependent result: scoped-store portability. **Bounded risk [medium]:** persistence is process-global rather than database-local, so every mutation test must use and remove a collision-resistant disposable subtree.
+- Assumption A64.2: native `regval_type_t` values `1`, `3`, and `4` retain string, binary, and 32-bit integer meaning for the exact pin, while boolean is an integer convention. Falsify with exact-SDK assertions and type/readback probes after each write; dependent result: semantic `ValueKind` mapping. **Bounded risk [low]:** a future pin can add types, which map to explicit unknown/unsupported state until audited.
+- Assumption A64.3: changing the registry application root cannot be safely scoped because the SDK exports `set_registry_name` without a getter or restoration token. Falsify with a future SDK root-query/scoped-override contract; dependent result: exclusion of process-global root mutation. **Bounded risk [low]:** callers needing an alternate application registry remain outside this store boundary instead of silently redirecting IDA configuration or licensing state.
+- Wrapper validation/copying is `O(K + V + B)` time and space for key bytes `K`, text/list bytes `V`, and binary bytes `B`; native persistence and locking costs are SDK-defined.
+
+### 35.215. History Suppression Makes Native String-List Update Non-Portable [F562]
+
+- The native update helper checks process-wide `IDA_NO_HISTORY` before opening the requested subkey. In idalib, the variable can be present even when a caller is updating unrelated plugin configuration, so the void operation provides neither mutation nor failure evidence. Direct list read/write remains functional in the same session.
+- The scoped store derives deterministic state by copying the list, removing all semantic matches, deduplicating and front-inserting an addition, trimming to `1..1000` records, and using the already verified write/readback path. Case-insensitive matching uses the SDK's private UTF-8 comparison helper without exposing it publicly.
+- Assumption A64.4: read-modify-write fidelity is preferable to an unverifiable native no-op when history suppression is active. Falsify with a future SDK operation that returns mutation status and scopes history suppression to history keys; dependent result: deterministic `update_string_list`. **Bounded risk [medium]:** the compound fallback is not atomic across concurrent writers because the SDK exposes no public transaction/lock token. Callers sharing one key must serialize compound updates. Complexity is `O(N * C + V)` time for `N` records, comparison cost `C`, and total bytes `V`, with `O(V)` copied memory.
+
+### 35.216. Return Optional Python Wrapper Values Through Explicit Object Branches [F563]
+
+- Pybind concrete wrappers such as `bytes` and `none` have overlapping conversions. The C++ conditional operator attempts bidirectional common-type conversion before the lambda's declared `py::object` return can resolve it, producing an ambiguity. An explicit absent branch followed by the concrete present return performs one unambiguous upcast per path.
+- Assumption A64.5: explicit branch returns retain Python `None | bytes` identity on every supported compiler/pybind version. Falsify by compiling the registry binding with each release-matrix toolchain and asserting missing/empty/nonempty binary results. Dependent result: Python optional binary parity. **Bounded risk [low]:** other mixed concrete pybind return pairs require the same pattern. Conversion remains `O(B)` for copied binary bytes `B`.
+
+### 35.217. Test the Node Package Export Layer Independently of Native Registration [F564]
+
+- The native addon returns one object containing registered namespaces, and `lib/index.js` currently assigns that object directly to `module.exports` before repeating explicit per-namespace assignments. A missing explicit assignment can therefore remain observable by coincidence while the documented destructured-export inventory drifts.
+- Registry now has an explicit package assignment and participates in the namespace completeness loop. Assumption A64.6: the package entrypoint continues to preserve every native namespace as an own property and an explicit documented export. Falsify by loading `lib/index.js`, comparing its namespace inventory with the native addon's registered namespaces, and requiring `registry` plus its factory. Dependent result: Node package-level registry discoverability. **Bounded risk [low]:** future namespace additions must update both registration and the package inventory; structural comparison is `O(D)` for domain count `D`.
+
+### 35.218. Branch Explicitly Between Optional V8 Values and Null [F565]
+
+- A conditional expression between `v8::Local<String|Value|Int32|Boolean>` and `v8::Local<Primitive>` has two viable conversion directions. Compiler choice is not portable: the local build accepted all five registry returns, while the push matrix rejected them under both GCC and Apple Clang.
+- The registry methods now set their return value through explicit present and absent branches. Assumption A64.7: explicit branches preserve exact JavaScript `null` absence and the concrete present value on every supported V8/compiler combination. Falsify by compiling all Node rows and executing missing plus present string/binary/integer/boolean/kind probes on each initialized Unix host. Dependent result: Node optional-return portability. **Bounded risk [low]:** future mixed V8 handle conditionals can reproduce the same compile failure and should use explicit branches or one deliberately typed `v8::Local<v8::Value>` helper. The branch has `O(1)` overhead excluding copied payload bytes.
+
+### 35.219. Scoped Persistent Registry Passes the Complete Release Matrix [F566]
+
+- Corrective release commit `1489e775a1bb0f6d128e927cf4ca6147ccc69b85` passes all 18 configured push jobs: three native integration rows, six validation rows, and nine binding rows. Linux/GCC, Windows/MSVC, and macOS/Apple-Clang consumers compile the opaque registry model and execute applicable typed-value, inventory, ordered-list, deletion, malformed-input, and cleanup round trips using IDA Professional 9.4 and exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`.
+- Complete logs from runs 29536527402, 29536525913, and 29536526464 contain zero standalone canonical license identifiers under boundary-aware matching, zero license-install failures, and zero reported identity-path occurrences. Assumption A64.8: these 18 jobs represent the supported release platform/consumer matrix. Falsify by adding any supported platform or consumer and requiring the same C++ surface, binding builds, disposable runtime round trips, and complete-log privacy gates. Dependent result: release portability for the current matrix. **Bounded risk [medium]:** the tag-only Intel Node artifact row remains outside push-triggered runtime evidence and requires a version-tag publication run. Log scanning is `O(G)` for complete job-log bytes `G`.
+
+### 35.220. Register Tracking Needs Owned Semantic State [F567]
+
+- The seven pinned convenience operations distinguish unsupported processor tracking, ordinary no-value state, rich dead-end/aborted/unknown causes, known constants, stack-pointer-relative deltas, multiple candidates, and nearest-of-two discovery. Existing decoded operands and debugger registers do not reconstruct those backward data-flow results.
+- Assumption A65.1: the public `reg_value_base_t` predicates form an exhaustive mutually exclusive classification for every result returned by the seven convenience operations. Falsify with exact-header assertions/review plus runtime probes that require exactly one mapped state and reject any unclassified value. Dependent result: semantic `TrackingState`. **Bounded risk [medium]:** future SDK states must fail closed as `Unsupported` until mapped rather than collapsing into generic unknown.
+- Assumption A65.2: name-based lookup plus private `parse_reg_name` resolution preserves alias width for ordinary tracking and supplies the base register identity required only by native nearest-of-two selection. Falsify with 32-/64-bit aliases on supported processors and compare name-based results with the native rich result. Dependent result: no public processor register numbers. **Bounded risk [medium]:** nearest-of-two has native full-base-register semantics; aliases must be documented and tested instead of presented as width-specific.
+- Assumption A65.3: each candidate's raw stack delta is sign-extended using the tracker's effective 4- or 8-byte address size, while constants retain unsigned slot-width semantics. Falsify with negative stack deltas and maximum-width constants on 32- and 64-bit databases. Dependent result: copied candidate numeric fidelity. **Bounded risk [low]:** the pinned tracker explicitly excludes 16-bit address size and normalizes it to 4 bytes.
+- Conversion is `O(N + B)` time and memory for `N` native candidates and rendered text bytes `B`; host control-flow search complexity and cache behavior are SDK-defined.
+
+### 35.221. Compile Register-Finder Convenience Calls Against the Shipped 9.4 ABI [F568]
+
+- The pinned header conditionally supplies inline wrappers that redirect the two rich numbered-register operations to `reg_finder94_*`. The tested 9.4 release library exports only the unsuffixed operation names, while the other five audited convenience/cache operations already use those unsuffixed exports. Suppressing only the two inline redirects and redeclaring their adjacent documented signatures restores link-time agreement without exposing or guessing a public ABI.
+- Assumption A65.4: every supported IDA Professional 9.4 release library exports the unsuffixed `find_reg_value_info` and `find_nearest_rvi` ABI with the signatures documented immediately below the SDK compatibility declarations. Falsify by link-testing the exact C++ target on Linux/GCC, Windows/MSVC, and macOS/Apple-Clang, then executing nearest/rich tracking in initialized hosts. Dependent result: rich numbered-register/nearest implementation portability. **Bounded risk [medium]:** a later SDK/runtime pair may remove the legacy exports; the exact release pin and cross-platform link matrix must fail closed and trigger a new bridge decision. The ABI selection adds `O(1)` time and space.
+
+### 35.222. Use a Tracker-Capable Processor Fixture for Positive Register-Finder Evidence [F569]
+
+- The shared x86-64 fixture loads and analyzes correctly but its processor module returns `-1`/`false` from every register-finder query, exactly matching the SDK's unsupported contract. It therefore proves only rejection/unsupported behavior. A compact AArch64 instruction sequence provides explicit constants, one stack adjustment, one stack-relative value, a call, function-entry unknown state, and a two-path constant merge; the exact 9.4 AArch64 module tracks these values in focused tests.
+- Assumption A65.5: the committed freestanding AArch64 ELF remains loader- and tracker-compatible across all supported IDA Professional 9.4 hosts regardless of runner CPU. Falsify by executing the isolated fixture on Linux, Windows, and macOS initialized-host rows and requiring identical semantic results. Dependent result: cross-host positive tracker evidence. **Bounded risk [low]:** tracker behavior is tied to the selected processor module and release, so a new release must rerun rather than reuse these expected values without evidence. The fixture is constant-size; test conversion is `O(N + B)` for returned candidates and descriptions.
+
+### 35.223. Exercise Every Audited Register-Finder Export Through a Semantic Path [F570]
+
+- A richer operation can implement a simpler public result but does not prove the simpler SDK export links or behaves on the release runtime. The default-depth constant path now uses `find_reg_value`; explicit-depth constants derive from named rich state. The nearest support probe uses `find_reg_value_info`, while ordinary rich tracking uses the width-aware named export. Stack and both cache families already dispatch their dedicated operations.
+- Assumption A65.6: truncating the dedicated base-register constant to `parse_reg_name()`'s validated 1/2/4/8-byte alias width matches the named tracker's unsigned alias semantics. Falsify with AArch64 `wN`/`xN` and another processor's subregister aliases using values whose high bits differ. Dependent result: default-depth `constant_at` fidelity while exercising `find_reg_value`. **Bounded risk [medium]:** exotic aliases with non-low-bit extraction would invalidate mask truncation and must remain on the rich named path; cross-processor alias probes should expand before claiming them. Dispatch and masking add `O(1)` time and space beyond native tracking.
+
+### 35.224. AArch64 Base/Alias Constant Paths Preserve Width [F571]
+
+- The deterministic fixture materializes `x0 = 0x0000ABCD00001234` before the query. The dedicated default-depth base query returns the complete value; default-depth `w0` returns `0x1234` after private width truncation; explicit-depth `w0` returns the same value through `find_regname_value_info`. C++, Node, Rust, and Python all pass these three checks.
+- Assumption A65.7: this AArch64 result establishes low-bit alias fidelity only for aliases whose parsed width selects the low bits. Falsify with a tracker-capable processor exposing high-byte or otherwise non-low-bit aliases; dependent result: documented AArch64 `wN`/`xN` fidelity. **Bounded risk [medium]:** IDAX must not generalize the mask to exotic non-low-bit aliases without processor evidence. Each conversion is `O(1)` time and space.
+
+### 35.225. Strip Non-Loadable Toolchain Provenance from Binary Fixtures [F572]
+
+- LLD adds a non-allocated ELF `.comment` section even when a freestanding fixture has no debug information. Its public source-control transport identifier is email-shaped and therefore correctly trips the repository's byte-level binary-email policy.
+- Assumption A65.8: deleting only `.comment` preserves every loadable byte and symbol required by the IDA loader and AArch64 register tracker. Falsify by comparing ELF program headers and `.text` bytes before/after stripping, requiring the section to be absent, then repeating all C++/Node/Rust/Python initialized-host tracker assertions. Dependent result: privacy-clean deterministic fixture. **Bounded opportunity [high]:** documenting the post-link removal prevents future toolchain versions from reintroducing provenance strings when the fixture is rebuilt. The operation is `O(F)` time and space for fixture size `F`; runtime analysis complexity is unchanged.
+
+### 35.226. Preserve Compatible Control-Flow Merge Values as Candidates [F573]
+
+- Exact IDA 9.4 tracks `x2` before a join reached from assignments `0x11` and `0x22` as `Constant` with two candidates and distinct defining origins. `constant_at()` returns ordinary absence because the candidates are not unique; it does not select one by traversal order.
+- Assumption A65.9: candidate order is host traversal state and must not be public semantics. Falsify by running the merge on every release host and requiring the unordered set `{0x11, 0x22}`, two copied origins, and no convenience constant without requiring vector order. Dependent result: deterministic multi-value fidelity. **Bounded risk [low]:** a future tracker can classify the merge as an explicit incompatible state; the closed state remains representable, but release-pin tests must deliberately update instead of weakening the assertion. Candidate copying is `O(N)` time and memory for `N` retained values.
+
+### 35.227. Reject Values Outside Closed Register-Tracking Enums [F574]
+
+- C++ scoped enums can still be created from arbitrary underlying integers. Cache invalidation must therefore switch exhaustively and reject any value outside `Added`/`Removed`; treating every non-added value as removal can silently dispatch a different mutation. Likewise, only an empty native tracker result is public `Undefined`; a nonempty state not mapped by the pinned exhaustive predicates is `Unsupported`.
+- Assumption A65.10: the pinned state predicates cover every current nonempty native result, and future additions must require an explicit mapping. Falsify with exact-SDK state assertions plus a runtime corpus that returns a nonempty value failing all mapped predicates; dependent result: fail-closed state conversion. **Bounded opportunity [medium]:** this turns a future SDK-state addition into an actionable compatibility failure instead of silent semantic loss. Both validations are `O(1)` time and space.
+
+### 35.228. Eliminate `setup-uv` Latest-Release API Resolution [F575]
+
+- Six concurrent `astral-sh/setup-uv@v5` invocations with no version pin can share and exhaust runner-address-based unauthenticated GitHub API capacity before any IDAX checkout, compilation, or test. Phase 65 jobs 87764215050 and 87764215005 failed at that acquisition boundary with explicit rate-limit annotations; this is not evidence about the register-tracking implementation.
+- Exact v5 action/source inspection shows that `github-token` already defaults to `${{ github.token }}`, but omitted version input still resolves `latest` through release metadata and falls back to an anonymous client when the authenticated request fails. Merely spelling the token input explicitly does not eliminate that fallback path.
+- Pin setup-uv to immutable revision `11f9893b081a58869d3b5fccaea48c9e9e46f990` (`v8.3.2`) and uv to explicit `0.11.28` at all six call sites. That action revision runs on Node 24, contains the selected release checksum, defaults to the Astral mirror, and accepts the workflow token for GitHub fallback downloads without runtime latest-version resolution.
+- Assumption A65.11: uv `0.11.28` supports every current `uv`/`uvx` workflow command, and setup-uv `v8.3.2` can acquire its published per-platform artifacts through the mirror or authenticated fallback under existing workflow permissions. Falsify by requiring every replacement release job to report uv `0.11.28`, pass `Setup uv`, and complete its unchanged repository validation. Dependent result: deterministic uv acquisition across concurrent release rows. **Bounded risk [high]:** mirror/GitHub service outages can still prevent acquisition, while version updates become an explicit reviewed workflow change. The configuration change is `O(W)` maintenance for `W = 6` call sites and has `O(1)` runtime overhead per job.
+
+### 35.229. Audit Complete CI Logs Inside GitHub's Trust Boundary [F576]
+
+- Public Actions metadata is adequate for terminal job/step evidence but not for content privacy: both run- and job-log download endpoints require authenticated `actions:read` even for a public repository. Making release closure depend on a workstation token or browser session therefore couples a repository invariant to unrelated mutable local state.
+- A `workflow_run` consumer on the default branch can use a per-run `GITHUB_TOKEN` restricted to `actions:read` and `contents:read`, download only the completed triggering run's ZIP, and scan it without extraction. The scanner allows only GitHub-hosted runner homes, rejects case-insensitive canonical license IDs and every other POSIX/Windows user-home prefix, bounds entry count and total uncompressed bytes, and reports only entry ordinals/categories.
+- Assumption A65.12: GitHub makes a completed triggering run's complete log ZIP available to the `workflow_run` token, and the explicit runner-home allowlist covers all current GitHub-hosted release images. Falsify by requiring three independently triggered audit jobs to pass for Integrations, Bindings, and Validation, plus unit fixtures that accept Linux/macOS/Windows runner homes and reject five sensitive forms, empty archives, and malformed ZIPs. Dependent result: credential-independent complete-log privacy evidence. **Bounded risk [medium]:** a future hosted runner username requires an explicit reviewed allowlist update; a ZIP above 1 GiB fails closed. Scanning is `O(E + B)` time and `O(M)` peak memory for `E` entries, `B` total uncompressed bytes, and largest entry size `M`.
+
+### 35.230. Expose Sanitized Audit Categories Through Workflow Annotations [F577]
+
+- A failed shell step's ordinary stderr is not public on unsigned GitHub job pages; only the exit code becomes an annotation. Because the scanner already suppresses matched values and retains only entry ordinal/category, it can safely emit that same text as an `::error` workflow command when `GITHUB_ACTIONS=true`.
+- A tag matching `ci-log-privacy-<numeric-run-id>` can trigger a read-only replay job without REST authentication on the workstation: SSH authorizes the tag push, while the workflow token supplies `actions:read` for the immutable log ZIP. The replay checks out the default-branch scanner and rejects malformed tag suffixes before API access.
+- Assumption A65.13: GitHub renders workflow-command errors on the public job page without requiring log access, and a tag push is excluded from the branch-filtered release workflows. Falsify with replay of failed audit source run 29542885658, requiring a visible sanitized category annotation and no new Integrations/Bindings/Validation run for that tag SHA. Dependent result: non-secret audit diagnosis without local API credentials. **Bounded risk [low]:** replay tags are operational references and must be removed after one-shot diagnosis; the numeric validation prevents arbitrary URL/path injection. Replay overhead is one `O(B)` scan.
+
+### 35.231. Documented Linuxbrew State Did Not Explain the Finding [F578]
+
+- GitHub's primary `actions/runner-images/images/ubuntu/Ubuntu2404-Readme.md` inventory documents Homebrew as preinstalled beneath the dedicated Linuxbrew service account. Binding toolchains can emit that service-owned prefix even when no developer identity is present; the general POSIX-home detector intentionally cannot infer ownership from syntax alone.
+- The proposed exact Linuxbrew allowance was tested, replay 29544303227 remained red at both entries, and encrypted classification later identified a hosted macOS runner case variant instead. The unevidenced allowance is removed; only the two runner identities remain.
+- Assumption A65.14 (**FALSIFIED by replay 29544303227**): the two Bindings findings are solely the official Linuxbrew prefix. The byte-identical replay remains red at entries 73 and 84 after that one addition. Dependent result is invalid; no further allowlist expansion is permitted without exact private classification. After removing that hypothesis, membership checks remain `O(H)` for `H = 2` POSIX allowlist entries.
+
+### 35.232. Encrypt One-Shot CI Findings Instead of Publishing Them [F579]
+
+- Category and entry ordinal are insufficient when multiple legitimate service identities are syntactically user homes, but printing the matched value would defeat the privacy boundary. A one-use RSA public key can be committed safely while its private key remains outside the repository.
+- On replay failure, collect only deduplicated regex matches, cap each plaintext at 128 B, encrypt independently with RSA-OAEP/SHA-256 and MGF1/SHA-256 through OpenSSL stdin, and publish only base64 ciphertext plus category. Never pass plaintext in process arguments or shell output.
+- Assumption A65.15 (**VERIFIED by replay 29544535103**): the replay runner provides OpenSSL with OAEP/SHA-256 support and public annotations preserve the ciphertext exactly. A local fixture round-tripped, one deduplicated ciphertext decrypted successfully, and no plaintext entered repository bytes or public job text. The diagnostic public key/code are removed in the immediate corrective commit. Encryption used `O(F)` OpenSSL invocations and 256 B ciphertext per unique finding for `F = 1`.
+
+### 35.233. Normalize Only Exact Hosted-Runner Home Keys [F580]
+
+- The privately decrypted 13 B finding contained uppercase account component `RUNNER`; both reported entries deduplicated to that one prefix. This is a case-rendering difference for the existing hosted macOS runner identity, not a third user or toolchain home.
+- Store only the two hosted Linux/macOS home keys assembled from fragments and lowercased. Lowercase each complete regex match solely for set membership. This admits case variants of exactly those keys while still rejecting suffixes, lookalike usernames, arbitrary homes, Windows identities outside their separate list, and every canonical license ID.
+- Assumption A65.16: both original Bindings entries are the same hosted macOS key and no other finding remains. Falsify with byte-identical replay 29542885658 after case normalization, then with automatic audits for all three replacement workflows. Dependent result: complete-log privacy without a false positive. **Bounded risk [low]:** case normalization is broader than the macOS filesystem requires but remains bounded to two whole-key equalities. Membership is `O(1)` average time and `O(2)` stored keys.
+
+### 35.234. Byte-Identical Bindings Log Replay Passes [F581]
+
+- Replay 29544791067 rescanned unchanged Bindings run 29542885658 with the final two-key case-normalized policy and passed. This isolates the correction to comparison semantics: no source log changed, no third home identity was admitted, and no license exception exists.
+- Assumption A65.16's first falsification probe is satisfied; final dependency remains the three automatic audits for correction commit `30af98e1`. **Bounded opportunity [low]:** the numeric replay workflow provides reproducible regression diagnosis for retained Actions logs without workstation REST credentials. Replay cost is `O(B)` for archived bytes `B`.
+
+### 35.235. CI Diagnostic-Mode Tests Require Environment Isolation [F582]
+
+- GitHub-hosted jobs set `GITHUB_ACTIONS=true`; copying the parent environment into subprocess tests implicitly selects Actions annotation formatting.
+- A test that covers both local stderr and Actions annotations must delete `GITHUB_ACTIONS` from its baseline child environment and add it only for the annotation-specific case.
+- Validation run 29544788074 exposed this as a platform-independent pre-CMake harness failure across all six rows; the scanner's privacy matching behavior was not implicated.
+- Assumption A65.17: inherited diagnostic mode is the only cause of all six Validation failures. Falsify locally with the test under both absent and forced `GITHUB_ACTIONS=true`, then with all six replacement Validation rows. Dependent result: release closure. **Bounded risk [low]:** this changes only child-process diagnostic formatting in a test harness; scanner production behavior is unchanged. Each subprocess environment normalization is `O(E)` time and space for `E` inherited environment entries.
+
+### 35.236. Delayed Audits Retain the Audited Revision's Scanner [F583]
+
+- `CI Log Privacy` checks out `github.event.workflow_run.head_sha`, so a long-running source workflow uses the scanner committed at its own start revision even if a correction reaches `master` before the audit begins.
+- Bindings run 29544300132 started at 00:16:02 UTC, ran 20 min 56 s, and maps exactly to audit 29545265951 at 00:37:00 UTC. Its source revision `87eb596` predates case-normalized hosted-runner membership.
+- Current-scanner replay 29545854051 passes that exact archive. The diagnostic fallback emitted no ciphertext, so entries 89/100 are already accepted by the corrected two-key policy and do not represent a new identity.
+- Assumption A65.18 is falsified: there is no new non-allowed prefix under the current scanner. **Bounded opportunity [low]:** map delayed audit results by source start plus total duration before diagnosing them as current-policy failures. This mapping is `O(R)` over candidate source runs and requires exact timestamp equality.
+
+### 35.237. Phase 65 Release and Complete-Log Closure [F584]
+
+- Corrective release commit `c035111e9cf8ed8db5fcd3cdf03a7ab33712a540` passes runs 29545255109 (Integrations 3/3), 29545255136 (Validation 6/6), and 29545255093 (Bindings 9/9). The 18 jobs cover C++ integration/validation plus Node, generated C/safe Rust, and Python consumers on Linux, Windows, and macOS.
+- All workflows select an eligible active named IDA product license, install IDA Professional 9.4, and check out exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`.
+- Automatic audits 29545467762, 29545625755, and 29546203247 pass against each complete archive. The final scanner admits only whole-key case variants of the two hosted POSIX runner homes plus the bounded Windows runner identities; it retains fail-closed canonical-license detection and adds no license exception.
+- Assumption A65.19: these 18 jobs and three whole-log audits represent the configured push-triggered release consumers. Falsify by adding a supported platform, binding, or release job and requiring it to enter both the source matrix and `workflow_run` audit set. Dependent result: current release portability and log-privacy closure. **Bounded risk [medium]:** tag-only release workflows remain outside push-triggered evidence until an actual release tag is exercised. Source validation cost is `O(J)` for 18 jobs; archive scanning is `O(G)` time over complete log bytes `G` and bounded to 1 GiB uncompressed input.
+- **Bounded opportunity [medium]:** the persistent replay workflow permits exact re-evaluation of retained archives after scanner corrections without a workstation API credential. All one-use replay tags, public/private keys, encryption code, ciphertext, and decrypted temporaries are absent at closure.
+
+### 35.238. Node 24 Action Runtime and Hosted-Image Warning Audit [F585]
+
+- Current green runs report three Integrations, six Validation, and ten Bindings warnings. The Node runtime annotations name `actions/checkout@v4`, `actions/setup-node@v4`, `actions/upload-artifact@v4`, and `ilammy/msvc-dev-cmd@v1`; the additional Bindings warning is Homebrew tap trust during Rust macOS dependency setup.
+- Exact upstream manifests declare `node24` at checkout v7.0.0 commit `9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0`, setup-node v7.0.0 commit `820762786026740c76f36085b0efc47a31fe5020`, upload-artifact v7.0.1 commit `043fb46d1a93c77aae656e7c1c64a875d1fc6a0a`, and download-artifact v8.0.1 commit `3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c`.
+- `ilammy/msvc-dev-cmd` v1.13.0 commit `0b201ec74fa43914dc39ae48a89fd1d8cb592756` still declares `node20`. Its required IDAX subset is only x64 `vcvarsall.bat` discovery, invocation, changed-variable export, path-list deduplication, and compiler-presence validation, so a local composite PowerShell action can close the runtime dependency without reducing current semantics.
+- Rust bindgen needs a loadable `libclang`, not specifically a Homebrew formula. GitHub macOS runners include Xcode; derive the bundled toolchain library directory from `xcode-select -p` and require `libclang.dylib` before export.
+- Assumption A66.1: all configured GitHub-hosted runners satisfy the Node 24 action minimum, and Xcode's selected toolchain supplies architecture-compatible `libclang.dylib`. Falsify through all 18 push-triggered source jobs plus a structural tag-workflow audit; require every action setup and Rust macOS build to pass with zero Node 20 or Homebrew trust annotations. Dependent result: Phase 66 release closure. **Bounded risk [medium]:** the tag-only Intel macOS release row remains structurally validated until an authorized release tag executes it. Action scanning is `O(W + U)` for workflow bytes `W` and `U` action references; MSVC environment comparison is `O(E + P)` for environment entries `E` and semicolon-delimited path entries `P`.
+
+### 35.239. Action Inventory Must Parse Both Step Layouts [F586]
+
+- GitHub workflow YAML permits both a named step with an indented `uses:` key and shorthand `- uses:`. A line-anchored scanner that accepts only the former is not a complete supply-chain inventory.
+- Permit optional indentation and one optional list marker before `uses:`, then apply the same local/external allowlist, immutable 40-hex commit, reviewed-SHA, and exact-count checks.
+- Assumption A66.2: workflow action invocations occur as ordinary scalar `uses:` keys rather than anchors or generated YAML. Falsify by adding fixture cases for each supported syntax and rejecting any workflow whose semantic action count differs from the reviewed inventory. Dependent result: offline pin enforcement. **Bounded risk [low]:** YAML anchors are not used in the repository and remain rejected indirectly by exact count mismatch. Regex scanning remains `O(W)` in workflow bytes.
+
+### 35.240. PowerShell Native Exit State Requires Explicit Initialization [F587]
+
+- The Windows 2025/Visual Studio 2026 GitHub-hosted image runs PowerShell 7 with strict mode. Five completed jobs independently reached the local composite and failed because reading `$LASTEXITCODE` raised an uninitialized-variable error.
+- Invoke each native program without an intervening pipeline, capture `$?` immediately, and only then filter its output. This preserves process success as an initialized Boolean while retaining independent validation of non-empty `vswhere` output and the complete compiler environment.
+- Assumption A66.3: GitHub-hosted PowerShell 7 sets `$?` to false for non-zero native exits and true for successful `vswhere.exe`/`cmd.exe` calls. Falsify through all six Windows rows and the static regression that rejects `$LASTEXITCODE`; every row must pass MSVC setup and its downstream compiler invocation. Dependent result: Windows Phase 66 validation. **Bounded risk [low]:** future PowerShell native-error preference changes could alter `$?`; output and `cl.exe` validation remain independent fail-closed checks. Status capture is `O(1)` and output filtering remains `O(E)` for `E` environment lines.
+
+### 35.241. Node 24 CI Runtime and Immutable-Action Release Closure [F588]
+
+- Corrective commit `245dd2bf4a425c9b9bbfaa9d6842540db49a37be` passes runs 29547501264 (Integrations 3/3), 29547501196 (Validation 6/6), and 29547501214 (Bindings 9/9) across Linux, Windows, and macOS. All jobs retain IDA Professional 9.4 and exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`.
+- Every one of the six Windows rows passes local composite MSVC setup and downstream compilation. Rust macOS passes dependency setup with Xcode's bundled `libclang.dylib`. Complete-log inspection across all 18 jobs finds zero `##[warning]` commands, Node 20 action-runtime warnings, Homebrew LLVM invocations, or untrusted-tap warnings.
+- Automatic whole-log audits 29547738319 (Integrations), 29547844551 (Validation), and 29548385969 (Bindings) pass. Candidate privacy passes across 559 project-owned files; pre-closure reachable-history privacy passes across 4,168 objects.
+- Assumption A66.4: these 18 push-triggered jobs and three whole-log audits represent every configured release consumer exercised by a master push. Falsify by adding a supported platform, binding, or workflow and requiring it to enter both the exact action inventory and live source/audit evidence. Dependent result: Phase 66 closure. **Bounded risk [medium]:** the tag-only Intel macOS release job remains structurally/action-pin validated until an authorized release tag executes it. Complete-log warning inspection is `O(G)` time over total log bytes `G`; action inventory remains `O(W + U)` over workflow bytes `W` and action uses `U`.
+- **Bounded opportunity [medium]:** the exact action-count gate turns any newly introduced external or local action into a fail-closed review event before hosted execution, while immutable commits make runtime-manifest drift independently auditable.
+
+### 35.242. Address Bookmarks Are a Missing `moves.hpp` Domain [F589]
+
+- Pinned IDA 9.4 exports `bookmarks_t_mark`, `bookmarks_t_get`, `bookmarks_t_get_by_inode`, `bookmarks_t_get_desc`, `bookmarks_t_set_desc`, `bookmarks_t_find_index`, `bookmarks_t_size`, `bookmarks_t_erase`, and `bookmarks_t_get_dirtree_id`. The SDK class operates on cloned `lochist_entry_t`/`place_t` state and uses `uint32(-1)` plus opaque userdata/inodes/dirtree IDs.
+- All EA-capable viewers share the IDA-place bookmark store. A private `idaplace_t(address, DEFAULT_PLACE_LNNUM)` plus default renderer state is sufficient to name an address bookmark without exposing a widget, renderer, place class, or SDK allocation to callers.
+- The public boundary is one owned `Bookmark { address, slot, description }`, copied enumeration and address/slot lookup, deterministic lowest-free-slot allocation, optional explicit slots in `[0, 1024)`, same-address description update, conflict rejection when an explicit slot/address identity disagrees, and idempotent remove-by-address/slot.
+- Assumption A67.1: null widget userdata selects the shared EA-capable bookmark store in headless idalib, and explicit `mark`/`set_desc`/`erase` persist through save/reopen. Falsify with a disposable fixture that begins from an enumerated baseline, creates two nonadjacent explicit slots plus one automatic slot, checks copied Unicode descriptions/address lookup/conflicts, updates one description, removes all additions, saves, and confirms absence after reopen. Dependent result: Phase 67 runtime closure. **Bounded risk [medium]:** non-EA custom-viewer bookmarks and UI navigation stacks require distinct place templates/userdata and remain outside this address-specific phase. Enumeration is bounded `O(H)` for exclusive native high-water slot `H <= 1024`; lowest-free allocation is `O(H)` with bounded auxiliary storage.
+- **Bounded opportunity [medium]:** coupling semantic bookmarks to the existing `directory::Kind::IdaPlaceBookmarks` snapshot enables later folder/rank organization without exposing bookmark inodes or dirtree IDs.
+
+### 35.243. Bookmark Enumeration Uses an Exclusive Sparse-Slot Bound [F590]
+
+- Native `bookmarks_t::size()` is one past the highest occupied slot. Native `bookmarks_t::get()` interprets its input as the actual sparse slot: with one bookmark in slot 17, size is 18, `get(0)` fails, and `get(17)` plus address lookup succeeds.
+- Scan `[0, size)`, treat a false `get` as an unoccupied slot, and preserve successful reads in ascending slot order. Reject a size above the exact 1,024-slot capacity before scanning.
+- Assumption A67.2: the pinned exclusive high-water bound covers every occupied native slot and never exceeds `MAX_MARK_SLOT`. Falsify through exact `MAX_MARK_SLOT == 1024` compilation plus sparse low/high explicit-slot runtime probes. Dependent result: complete copied enumeration. **Bounded risk [low]:** concurrent UI mutation can change the high-water mark during a scan; the returned value remains a safe copied snapshot of successful reads. Time is `O(H)` and space is `O(B)` for `H <= 1024` scanned slots and `B` occupied bookmarks.
+
+### 35.244. Sparse Bookmark Removal Requires Snapshot/Clear/Rebuild [F591]
+
+- `bookmarks_t::erase(entry, index)` operates on the native high-water sequence: it shifts supplemental-array positions above `index` downward, removes the former tail, and decrements the bound. Empty sparse positions are not materialized values, so an erase at a non-tail occupied slot can consume only a hole and leave the target bookmark present; higher bookmark identities can also move.
+- IDAX removal preserves public slot identity by copying the complete ordered state, clearing from `size() - 1` down to zero, recreating every survivor at its original explicit slot, and verifying byte-exact descriptions plus addresses and slots. A failed replacement triggers the same clear/rebuild operation with the original snapshot; failure of both mutation and rollback is reported explicitly.
+- Assumption A67.3: tail-first erasure decreases the exclusive bound by exactly one for occupied and empty tail positions, and explicit `mark` recreates a copied survivor at the requested slot without remapping. Falsify with isolated bookmarks at low and nonadjacent high slots, remove high/middle/low identities in sequence, compare the complete baseline after each mutation, then save/reopen. Dependent result: identity-preserving removal. **Bounded risk [medium]:** native replacement is not atomic against concurrent UI mutation or abrupt process termination; verification detects completed-state divergence, while in-process failures receive a best-effort full rollback. Removal is bounded `O(H + B * H)` under repeated native mutation/verification with `H <= 1024` and `B <= 1024`.
+- **Bounded opportunity [low]:** a future SDK primitive that deletes a marker by stable slot without compacting sparse storage can replace the rebuild internally without changing the public API.
+
+### 35.245. Distinguish Object-Compile Surface Evidence from Runtime Aggregation [F592]
+
+- `idax_api_surface_check` is an OBJECT library. Compilation validates every defined check body regardless of whether dead `main` calls it; CTest only echoes successful compilation and does not run `main`.
+- Registry and register-tracking declaration probes therefore retained compile coverage despite being absent from the dead aggregator. The stale 33-group expectation versus 34 listed calls was still misleading and is reconciled with bookmark at 37 groups: 35 concept domains plus shared core and error contracts.
+- A configure-time inventory derives all authoritative includes from `idax.hpp`, requires the exact reviewed total, and requires a corresponding `check_<domain>_surface` definition (`check_error_categories` for the error model) before creating the object target.
+- Assumption A67.4: every authoritative umbrella domain has a defined compile probe and the object target is part of every relevant build. Falsify by adding an umbrella include without its probe or removing a referenced declaration: configuration or compilation must fail. Dependent result: compile-surface evidence. **Bounded risk [low]:** the inventory proves domain membership and body compilation, not behavioral execution. The structural comparison is `O(D * C)` for domain count `D` and parity-source bytes `C`, with small fixed `D = 37`.
+
+### 35.246. Python Native Inventory Is Whitespace-Invariant [F593]
+
+- The manifest extracts native functions from the narrow `domain.def(` receiver plus a literal snake-case public identifier. Standard C++ formatting may place arbitrary whitespace, including a newline, between the opening parenthesis and that literal.
+- Accept only `\s*` at that boundary while retaining the exact receiver and identifier grammar. Lambda bodies, expressions, computed names, and unsupported registration helpers remain outside the grammar and fail closed.
+- Assumption A67.5: every direct Python domain-function registration uses a literal snake-case name immediately after optional whitespace following `def(`. Falsify by running the pure Python suite and `check_python_api_manifest.py` after standard formatting; either must reject a declared/native mismatch. Dependent result: the 35-domain/898-symbol Python inventory. **Bounded risk [low]:** a new unsupported registration form fails closed rather than silently entering the package. Regex inventory time is `O(N)` in native binding source bytes.
+
+### 35.247. Bookmark Binding Probes Preserve Pre-Existing Session State [F594]
+
+- Search copied function-code addresses for the first address without a bookmark and use only that address for the binding lifecycle. Do not remove unknown state to prepare a test.
+- For same-address/different-slot conflict evidence, select slot 1 when the created slot is 0 and slot 0 otherwise. The conflicting slot is always within `[0, 1024)` and distinct even if the only free created slot is 1023.
+- Assumption A67.6: each binding runtime fixture contains at least one unbookmarked function-code address and one free bookmark slot. Falsify through the Node, Rust, and Python initialized-host probes; failure must be explicit rather than mutating baseline state. Dependent result: cross-language lifecycle evidence. **Bounded risk [low]:** a saturated synthetic fixture cannot exercise creation and will fail its probe; product behavior remains covered by the isolated C++ sparse lifecycle. Address selection is `O(A * H)` through bounded lookup for `A` copied code addresses and native high-water `H <= 1024`.
+
+### 35.248. Address-Bookmark Release Closure [F595]
+
+- Implementation commit `151a4622294a71836c9063a6ac9fa569053d6d07` passes runs 29551204566 (Integrations 3/3), 29551204572 (Validation 6/6), and 29551204568 (Bindings 9/9) across Linux, Windows, and macOS. Every row uses IDA Professional 9.4 and exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`.
+- Automatic complete-log audits 29551426405 (Integrations), 29551508095 (Validation), and 29551931196 (Bindings) pass. Local candidate privacy covers 568 project-owned files; pre-implementation-commit reachable-history privacy covers 4,174 objects, and post-commit privacy covers 4,226 objects.
+- Assumption A67.7: the 18 push-triggered jobs and three whole-log audits represent every configured release consumer exercised by a master push. Falsify by adding a supported platform, binding, or workflow and requiring it to enter both live source and audit evidence. Dependent result: Phase 67 closure. **Bounded risk [medium]:** the tag-only Intel macOS release job remains structurally and action-pin validated until an authorized release tag executes it. Live matrix inspection is `O(J)` over `J = 18` jobs; complete-log scanning is `O(G)` over total log bytes `G`.
+- **Bounded opportunity [medium]:** the existing `directory::Kind::IdaPlaceBookmarks` tree can organize folders and ranks for these semantic bookmarks in a later evidence-driven phase without exposing native bookmark inodes.
+
+### 35.249. Current Navigation History Is a Missing `moves.hpp` Family [F596]
+
+- Pinned IDA 9.4 exports `navstack_t_register_live`, `deregister_live`, `init`, `perform_move`, `set_current`, `get_current`, `get_all_current`, `stack_jump`, `stack_nav`, `stack_seek`, `stack_index`, `set_stack_entry`, `get_stack_entry`, `stack_size`, and `stack_clear`, plus `navstack_entry_t_serialize`/`deserialize`. The installed runtime exposes all 17 normal symbols; `dump` is test-build-only.
+- `navstack_entry_t` owns a cloned native place, renderer coordinates/type, widget-ID string, and userdata string. `navstack_t` also owns a persistent netnode-backed stream and live-object registration. IDAX currently provides no stack lifecycle, copied history, cursor movement, or persistent stream operation in any binding.
+- The candidate boundary is address-specific: privately construct `idaplace_t`, retain textual widget/userdata fields only if runtime semantics require them, and expose owned snapshots plus a copyable logical history handle whose operations reacquire transient native sessions. Deprecated `lochist_t`, entry byte serialization, arbitrary custom places, UI widget pointers, renderer positions, and netnode IDs remain implementation details or explicit scope exclusions unless runtime evidence requires otherwise.
+- Assumption A68.1: a uniquely named private stream initialized with an `idaplace_t` entry can be mutated and reopened in headless idalib without an interactive widget. Falsify through an exact-IDA 9.4 disposable-database probe covering size/index/entry/current/push/seek/back/forward/update/clear/save/reopen. Dependent result: Phase 68 feasibility and public model. **Bounded risk [high]:** `stack_jump` may dispatch UI navigation or require widget registration even when storage operations work; any such behavior must remain outside the headless address-history boundary. Indexed snapshot work is `O(S)` in stack size `S`; native storage complexity is unknown until probed.
+- **Bounded opportunity [high]:** persistent semantic navigation trails would let headless analyzers, decompiler plugins, and cross-language tools save and replay investigation paths without reproducing SDK place ownership.
+
+### 35.250. Navigation-Stack Initialization Has Creation/In-Out Semantics [F597]
+
+- On a new unique stream, `navstack_t::init(&default_entry, name, flags)` returns true and creates a size-1/index-0 stack. After save/reopen, the same call returns false but loads the exact stored stack and cursor; false means existing stream, not failure.
+- On reopen, native initialization overwrites its `default_entry` pointer with stored state. Pass a private converted temporary and retain the caller's owned value unchanged. Expose creation state separately if useful; do not infer failure from the Boolean.
+- `moves.hpp` declares the stack's `netnode` member without including its definition, so standalone stack consumers must include `netnode.hpp` first. Existing IDAX SDK bridge ordering already satisfies that dependency.
+- Assumption A68.2: for a validated unique native stream name, `init` has no third Boolean state beyond newly created versus successfully opened. Falsify with malformed-name/allocation probes and post-init size/entry validation; any invalid loaded state must produce an IDAX error independently of the Boolean. Dependent result: history factory semantics. **Bounded risk [medium]:** native initialization does not expose a structured error channel; exact postconditions must fail closed. Initialization validation is `O(S)` if the wrapper snapshots all `S` entries.
+
+### 35.251. Address Navigation History Persists Headlessly [F598]
+
+- `set_current(entry, true)` replaces the current indexed entry and current-by-channel state without growing the stack. `stack_jump(false, entry)` appends and advances the index. `stack_back`, `stack_forward`, and `stack_seek` change the index and copy the destination without deleting entries.
+- `set_stack_entry` replaces one indexed value without changing size/index. `stack_clear(new_tip)` produces exactly size 1/index 0. Addresses, textual widget IDs, userdata, size, and index survive database save/reopen exactly.
+- Assumption A68.3: using `try_to_unhide=false` keeps address-history push/navigation independent of interactive UI state across supported release hosts. Falsify through Linux/Windows/macOS initialized idalib runs and explicit headless widget absence. Dependent result: headless history mutation. **Bounded risk [medium]:** the native operation is named `stack_jump` and returns void, so exact post-mutation snapshot verification is required. Push and indexed reads are wrapper `O(1)` plus unknown native persistence cost; full snapshots are `O(S)`.
+
+### 35.252. Current State Is a Per-Channel Map Separate from the Stack [F599]
+
+- Native widget-ID text acts as a current-location channel key. `set_current(entry, false)` updates that map only; `true` additionally replaces the stack entry at the cursor. `get_current(channel)` and `get_all_current()` copy the map independently of stack enumeration.
+- History-disabled initialization retains current-channel state but makes clear/jump produce a zero-entry stack. The semantic history wrapper always enables history and exposes textual `channel`, not an SDK widget pointer or IDA widget identity.
+- Assumption A68.4: nonempty UTF-8 channel strings are stable map keys and do not require a live `TWidget`. Falsify with multiple channels through set/get/all-current, push, save/reopen, and headless cross-platform runs. Dependent result: semantic channel current state. **Bounded risk [low]:** the native ordering of `get_all_current` is not documented; preserve returned order but do not specify it publicly. Per-channel lookup has unknown native complexity; copied enumeration is `O(C)` output for `C` channels.
+
+### 35.253. Stream Transfer Moves One Channel and Optionally Its Entries [F600]
+
+- `perform_move(destination, source, channel, false)` removes the channel's current state and all matching entries from source, installs current state in destination, and discards the removed history. With `true`, matching source entries append to destination in original order and its cursor advances to the appended current entry.
+- Other-channel source/destination entries and current states remain. The native Boolean is not a reliable mutation result: a missing source stream can return true without changing destination.
+- Expose transfer only between two acquired semantic handles. Preflight source-channel presence, distinct streams, and destination-channel absence; after native dispatch verify current-state ownership, removal of every source matching entry, preservation of unrelated entries, and either unchanged destination entries or exact ordered append according to `retain_history`.
+- Assumption A68.5: channel transfer partitions entries by exact widget-ID string and preserves relative order for both retained source entries and appended destination entries. Falsify with interleaved two-channel stacks, both retain-history modes, cursor positions away from the tail, and save/reopen. Dependent result: semantic channel transfer. **Bounded risk [medium]:** the native operation is multi-stream and nontransactional; snapshot-based rollback may itself fail, so initial implementation must either provide verified rollback or report combined mutation/rollback failure. Verification is `O(S + D)` over source/destination entry counts.
+
+### 35.254. Channel Transfer Requires Explicit Cursor Normalization [F601]
+
+- A retained transfer from `other, alpha, other, alpha` at source cursor 3 removes both alpha entries but leaves the native source cursor at 3 while the new source size is 2. Entry and current-channel partitioning are otherwise correct; the cursor is the inconsistent state.
+- Compute the source result cursor as the nearest retained entry at or before the old cursor: count nonmatching entries through the old cursor and subtract one, or select index zero when none precedes it. Preserve the destination's prior cursor even when retained channel entries append.
+- Use the exported five-argument seek helper with `apply_cur=false` for normalization. The public `navstack_t::stack_seek` convenience always applies the selected entry as channel-current state, which would couple cursor repair to the independent current map.
+- Assumption A68.6: the exported `apply_cur=false` seek changes only the cursor and returns the exact indexed entry for a structurally valid stack. Falsify through cross-platform initialized-host transfers with the removed channel at the start, middle, and tail, then compare every entry/current channel and save/reopen state. Dependent result: verified semantic transfer. **Bounded risk [high]:** future native implementations may normalize cursors differently; IDAX postconditions remain authoritative and rollback reports combined failure if normalization cannot establish them. Cursor computation and transfer verification remain `O(S + D)`.
+
+### 35.255. Transient Initialization Requires a Filtered Bootstrap Channel [F602]
+
+- `navstack_t::init(default, existing_stream, 0)` does more than load state: when the default's widget-ID channel is absent from current state, initialization inserts that default into the current map. A duplicate instance and a subsequent reopen both observe the insertion.
+- Passing the public history's original entry on every transient operation can therefore resurrect a channel removed by `perform_move`. Use one reserved IDAX-private bootstrap channel for native acquisition, filter it before public current enumeration, and reject the private prefix from caller entry/current/transfer channels.
+- For a newly created stream, initialization first creates a bootstrap stack/current entry. Immediately clear the stack to the validated public initial tip and explicitly install its public current state; creation postconditions then remain one public entry at index zero while the hidden bootstrap channel is stable across later opens.
+- Assumption A68.7: an exact reserved textual channel remains internal and does not collide with native UI/widget channel conventions or appear in public output. Falsify by rejecting the full reserved prefix, checking every `all_current()` result, transferring the original public channel, and reopening on all release hosts. Dependent result: transient-handle semantic stability. **Bounded risk [medium]:** the private current record consumes native storage until the database is discarded; it is namespaced per IDAX-private stream and does not affect public stack complexity. Filtering is `O(C)` over native current channels.
+
+### 35.256. Address-Navigation Release Closure [F603]
+
+- Implementation commit `c3977730f20b65adb30f6443b0f366fe0651a4ee` passes runs 29555219434 (Integrations 3/3), 29555219457 (Validation 6/6), and 29555219429 (Bindings 9/9) across Linux, Windows, and macOS. Every row installs IDA Professional 9.4 and uses exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`.
+- Automatic complete-log audits 29555414138 (Integrations), 29555572331 (Validation), and 29556133959 (Bindings) pass. Local candidate privacy covers 577 project-owned files; pre-implementation-commit reachable-history privacy covers 4,232 objects, and post-commit privacy covers 4,287 objects. Direct scans find neither reported checkout root in the candidate or committed tree.
+- Assumption A68.8: the 18 push-triggered jobs and three complete-log audits represent every configured release consumer exercised by a master push. Falsify by adding a supported platform, binding, or workflow and requiring it to enter both live source and audit evidence. Dependent result: Phase 68 closure. **Bounded risk [medium]:** the tag-only Intel macOS release job remains structurally and action-pin validated until an authorized release tag executes it. Live matrix inspection is `O(J)` over `J = 18` jobs; complete-log scanning is `O(G)` over total log bytes `G`.
+- **Bounded opportunity [medium]:** plugin ports can now persist semantic multi-view investigation trails through the cross-language address-history model; custom-place histories and interactive widget navigation remain a separately falsifiable boundary.
+
+### 35.257. GitHub Server and Fork Privacy Retention Persists [F604]
+
+- GitHub's Git object API still resolves former pre-rewrite commit `1ef932847ea1d0595a1aa35c70bc33f4826eb287`. Remote advertisement still contains closed PR heads 3 and 4, and the fork network still contains four independently owned repositories.
+- P54.3 requires all three independent facts to change: affected cached objects become unavailable, server-retained PR refs no longer retain contaminated reachability, and every fork is rewritten or removed. None can be changed through ordinary `origin/master` push authority; the roadmap remains open while active work remains absent until external authority or state changes.
+- Assumption A54.2: GitHub Support garbage collection plus independent fork-owner remediation is necessary and sufficient to remove the remaining externally retained objects. Falsify when raw former-object retrieval fails and privacy scans of every advertised PR/fork ref pass without those actions, or when either action completes but an affected object remains retrievable. Dependent result: P54.3 closure. **Bounded risk [high]:** present and owned reachable history is clean, but third-party/cached historical identity data remains retrievable outside the rewritten branch.
+
+### 35.258. Segment-Register State Is an Unwrapped Processor/Segment Family [F605]
+
+- Pinned `segregs.hpp` exposes `get_sreg`, `split_sreg_range`, `set_default_sreg_value_ea`, `set_sreg_at_next_code`, `get_sreg_range`, `get_prev_sreg_range`, `set_default_dataseg`, `get_sreg_ranges_qty`, `getn_sreg_range`, `get_sreg_range_num`, `del_sreg_range`, and `copy_sreg_ranges`; all 12 are present in the exact arm64 IDA library.
+- Native state uses processor ordinals, `BADSEL`, `sreg_range_t`, and four raw provenance tags. The current processor descriptor supplies register names, the contiguous segment-register interval, register width, and code/data roles. IDAX can resolve names privately and expose descriptors, optional unsigned values, copied half-open ranges, and a closed source enum without leaking native identities.
+- Existing `ida::segment::set_default_segment_register` and `set_default_segment_register_for_all` accept raw ordinals and call deprecated `set_default_sreg_value`. Retain source compatibility but route through the current address-based entry point; the new semantic family must use names and exact readback where the SDK exposes observable state.
+- Assumption A69.1: every current processor supplies a valid nonempty virtual-or-physical segment-register interval and stable names, and the 12 operations work headlessly on a disposable database. Falsify through exact-SDK compile assertions plus initialized-host discovery/query/split/delete/default/copy/save-reopen probes on release platforms. Dependent result: Phase 69 public model. **Bounded risk [high]:** void mutations and inherited/default interactions may not have direct success channels, so snapshot/readback and rollback semantics must be selected from runtime evidence rather than inferred from declarations. Query/enumeration is `O(R)` for native range count `R`; verified multi-range mutation may require `O(Rs + Rd)` source/destination snapshots.
+- **Bounded opportunity [high]:** complete name-based segment-register state enables processor modules and architecture-aware plugins to model mode/bank/context changes without reproducing processor register ordinals or `SR_*` storage rules.
+
+### 35.259. Segment-Register Mutation Has a Processor-Specific Acceptance Boundary [F606]
+
+- A disposable probe built with pinned SDK 9.4 enumerated the x86-64 segment-register interval as six named registers with semantic code/data roles. On a local 9.3 runtime used only as a stable-export proxy, `split_sreg_range` accepted a user-tagged `es` range at an instruction, produced the exact requested start/value/source and one additional enumerated range, and `del_sreg_range` restored the prior inventory. The corresponding code-register split returned failure without changing state.
+- Public name resolution must therefore validate semantic identity but cannot predict processor-module policy. Boolean SDK mutations must propagate rejection and then compare copied post-state; void mutations require precondition discovery plus post-state comparison. Unknown values use optionals instead of `BADSEL`; four known provenance tags use a closed enum and any unknown future tag returns `Unsupported`.
+- The 9.3 runtime lacks `set_default_sreg_value_ea` and the current segment-info export, so it cannot validate 9.4 default readback or serve as release evidence. Exact 9.4 runtime execution remains a P69.2/P69.4 requirement.
+- Assumption A69.2: pinned IDA 9.4 preserves the stable split/delete/enumeration semantics observed through the 9.3 proxy and implements the declared current default/next-code/copy contracts with observable post-state. Falsify through the isolated exact-9.4 C++ lifecycle on all release platforms; any mismatch changes the private verification rule before P69.2 closes. Dependent result: Decision 19.76 implementation candidate. **Bounded risk [high]:** native range/default mutations are shared database state and some current operations return void; disposable database copies and exact readback are mandatory. **Bounded opportunity [medium]:** a single semantic name/value/range model can replace both legacy numeric setters and ad hoc processor-module bookkeeping across four languages.
+
+### 35.260. Rust Declaration Regeneration Requires a Native Bindgen Provenance Check [F607]
+
+- `IDAX_SYS_SKIP_NATIVE=1` does not parse the shim header; it copies the checked-in pre-generated declarations. Its output is therefore suitable for pure compilation only, not as a regeneration source.
+- Regenerate from the native build output produced by bindgen over the complete current shim header. Before replacing the checked-in file, require established bookmark/navigation declarations plus the new segment-register declarations and inspect the diff for additive domain-local change. The accepted Phase 69 output adds 173 lines and retains all prior domains.
+- Assumption A69.3: the same pinned bindgen/toolchain configuration produces ABI-equivalent declarations on all supported hosts even if formatting differs. Falsify through the release jobs' generated-versus-checked-in comparison and C layout assertions; any semantic diff blocks packaging. Dependent result: safe Rust FFI parity. **Bounded risk [medium]:** copying a skip-native cache can compile a subset of pure tests while corrupting docs.rs/pre-generated coverage, so provenance and retention checks are mandatory.
+
+### 35.261. Rust Crate Verification Is Publish-Order Dependent [F608]
+
+- The workspace path dependency keeps safe `idax` and private `idax-sys` source synchronized during normal checks. A packaged `idax` archive instead resolves its versioned `idax-sys` dependency from the registry.
+- Before the matching system crate is published, ordinary `cargo package -p idax` verification can combine a prior registry shim with current wrapper headers and fail correctly. Inspect both archives with `--no-verify`, publish/verify `idax-sys`, then verify/publish `idax`; the Rust README records this sequence.
+- Assumption A69.4: registry publication preserves the locally inspected `idax-sys` archive and makes it available before safe-crate verification. Falsify by comparing the registry crate checksum/content with the local package or by a post-publication verification failure. Dependent result: future crates.io release verification. **Bounded risk [medium]:** reversing publish order tests an invalid mixed ABI and can be mistaken for a source regression.
+
+### 35.262. Segment-Register Raw FFI Outputs Fail Closed [F609]
+
+- Every new `idax-sys` segment-register query validates its output storage before SDK access. Descriptor/range list pointer-count pairs are initialized to null/zero before fallible discovery or allocation; scalar value, presence, range, and index outputs reject null independently.
+- Assumption A69.5: C ABI callers may bypass safe Rust and pass malformed pointers. Falsify by constraining `idax-sys` visibility so the raw symbols cannot be called externally. Dependent result: raw FFI crash containment. **Bounded risk [high]:** without boundary checks, one null output pointer causes process termination; validation is constant-time `O(1)` before each query.
+
+### 35.263. Segment-Register Release Closure [F610]
+
+- Implementation commit `de7d708ad34a8abaccf827721e635e1a4ced4c66` passes runs 29559231436 (Integrations 3/3), 29559231501 (Validation 6/6), and 29559231487 (Bindings 9/9) across Linux, Windows, and macOS. Every row uses exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`; licensed rows install IDA Professional 9.4 through the fail-closed eligible-license selector.
+- Automatic complete-log audits 29559500512 (Integrations), 29559649571 (Validation), and 29560318570 (Bindings) pass. Local committed-tree privacy covers 579 project-owned files and reachable-history privacy covers 4,331 objects, with neither prohibited checkout root present.
+- Assumption A69.6: the 18 push-triggered jobs and three complete-log audits represent every configured release consumer exercised by a master push. Falsify by adding a supported platform, binding, or workflow and requiring it to enter both live source and audit evidence. Dependent result: Phase 69 closure. **Bounded risk [medium]:** the tag-only Intel macOS release job remains structurally and action-pin validated until an authorized release tag executes it. Live matrix inspection is `O(J)` over `J = 18` jobs; complete-log scanning is `O(G)` over total log bytes `G`.
+- **Bounded opportunity [high]:** processor modules and architecture-aware plugins can now inspect, persist, and mutate mode/bank/context state through canonical register names in all four language surfaces without coupling to SDK ordinals or range storage.
+
+### 35.264. Operand Offset and Reference Surface Gap [F611]
+
+- Exact pinned IDA 9.4 defines ten standard offset encodings (`OFF8`, `OFF16`, `OFF32`, `OFF64`, `LOW8`, `LOW16`, `LOW32`, `HIGH8`, `HIGH16`, and `HIGH32`), custom descriptors, nine semantic option bits, main/outer operand locations, copied target/base/signed-delta metadata, expression rendering, target/base calculations, offset candidates, and reference-aware data-xref creation. All stable operations are present in the installed runtime proxy; current IDAX exposes only a write-only plain-offset convenience.
+- A disposable proxy probe compiled from the pinned headers enumerated the ten descriptors, selected `OFF64` for one 64-bit immediate, applied and queried matching reference metadata, calculated the expected target/base, produced a tagged complex expression, removed the reference, and exercised candidate/base helpers. The proxy is evidence for stable ABI semantics only, not exact-version closure.
+- Assumption A70.1: exact IDA 9.4 preserves these stable reference-info semantics and exposes all declarations in its shipped runtime on each release host. Falsify through an isolated exact-9.4 lifecycle covering every standard kind, supported option round trips, main/outer addressing, custom descriptor discovery where available, calculation/rendering, xref creation, removal, and save/reopen. Dependent result: Phase 70 public model selection. **Bounded risk [high]:** operand representation and xref mutation alter shared database state, custom descriptors are processor/plugin dependent, and several native helpers use sentinel returns; disposable copies and exact copied postconditions are mandatory. **Bounded opportunity [high]:** loaders, processor modules, relocation analyzers, and decompiler-support plugins can replace raw `refinfo_t`/flag handling with one portable semantic model across four languages.
+
+### 35.265. Offset Reference Mutation Requires Layered Postconditions [F612]
+
+- Standard full-width references make the target optional; low/high-part references require it. The nine behavioral bits round-trip independently in the proxy, while self-relative input forces stored base to the reference address. Public values use optionals for native address sentinels and validate signed-operand mode only for full-width standard encodings.
+- Native outer-offset success is unreliable without processor evidence: x86 accepted the call but stored no queryable outer metadata. Require a decoded operand with `OF_OUTER_DISP` and a nonzero secondary encoded-value offset before dispatch, then require exact outer readback. This capability check is `O(1)` after instruction decoding.
+- Native `del_refinfo` clears only supplemental metadata; `clr_op_type` clears the operand representation. Safe removal snapshots the original reference, deletes metadata, clears the representation, verifies both absence predicates, and reapplies the original reference if the second step or verification fails.
+- Assumption A70.2: the pinned IDA 9.4 exact runtime preserves the proxy's standard-kind, option, normalization, rendering, xref, and layered-deletion behavior. Falsify in the isolated release lifecycle on every licensed host; any mismatch changes private normalization/rollback rather than the public value model. Dependent result: Decision 19.77 implementation. **Bounded risk [high]:** a false-positive native mutation can silently leave a mismatched display/xref state; preflight plus postcondition comparison is mandatory. **Bounded opportunity [medium]:** exact copied metadata makes relocation and processor-module tests deterministic without serialized operand records.
+
+### 35.266. Reference Absence and Operand-Representation Availability Are Independent [F613]
+
+- `reference_info(address, location) == None` only proves that no rich offset metadata is readable. The operand can still have an enum, structure-member, numeric, character, or other non-offset representation, which `apply_reference` intentionally rejects as a conflict.
+- Initialized-host mutation probes use disposable fixture copies and explicitly clear the chosen numeric operand representation before applying reference metadata. Production callers receive the conflict and must make a separate deliberate representation-removal decision.
+- Assumption A70.3: `clr_op_type` on the disposable numeric fixture operand removes only its display representation and leaves the decoded operand/value usable for the offset lifecycle. Falsify by re-decoding the operand and requiring apply/query/render/remove to complete with the same address, index, and value. Dependent result: binding initialized-host evidence. **Bounded risk [medium]:** selecting by metadata absence alone makes tests fixture-order-dependent and can overwrite unrelated presentation state; the extra clear is `O(1)` and confined to a disposable database copy.
+
+### 35.267. Reference-Base Value Is an SDK-Defined Transformation [F614]
+
+- The current SDK contract for `calc_basevalue(target, base)` does not specify `target - base`, encoded displacement, or any other closed arithmetic identity. One initialized-host observation returned `0` for `(target=8, base=0)`, so tests require only the documented optional result behavior and never substitute local arithmetic.
+- Assumption A70.4: native `BADADDR` continues to mean no calculable base value and all other bit patterns are valid opaque address-width results. Falsify on exact 9.4 with cases that independently produce success/failure and compare the wrapper optional against the direct native result. Dependent result: `calculate_base_value` semantics. **Bounded risk [medium]:** asserting an invented identity can make a valid processor-specific transformation look like corruption; forwarding the native value is `O(1)` and lossless.
+
+### 35.268. Offset Apply Rejection Does Not Prove Non-Mutation [F615]
+
+- Both native rejection and successful dispatch with mismatched readback enter the same rollback boundary. When a prior reference existed, restore and re-query its exact native state; otherwise clear the operand representation and require both metadata absence and, for main operands, a false offset flag.
+- Assumption A70.5: clearing after a rejected apply with no prior reference is idempotent on every supported processor. Falsify with an exact-runtime processor case where `op_offset_ex` returns false, snapshot before/after copied state, and require the wrapper to return SDK rejection only when restoration succeeds. Dependent result: apply failure atomicity. **Bounded risk [high]:** returning directly on native rejection can preserve partial operand state even though the public operation reports failure; rollback remains `O(1)`.
+
+### 35.269. Node Operand Indices Are Validated Before Native Conversion [F616]
+
+- The Node offset boundary accepts only finite, integral, nonnegative `Number` values no greater than `2^53 - 1` before converting to `std::size_t`; the core then enforces the semantic operand range `[0, 8)`. This prevents an out-of-range floating-to-integer conversion while retaining exact JavaScript integer semantics.
+- Assumption A70.6: every JavaScript `Number` at or below `2^53 - 1` converts exactly to `std::size_t` on supported 64-bit release hosts. Falsify on any supported host with `sizeof(std::size_t) < 8` or a regression that accepts a value not exactly representable as `std::size_t`; then validate directly against `min(2^53 - 1, SIZE_MAX)` before conversion. Dependent result: malformed Node operand-location rejection. **Bounded risk [medium]:** unchecked conversion can produce implementation-dependent indices or bypass the intended validation path; the added check is constant-time `O(1)`.
+
+### 35.270. Offset Runtime Evidence Fails Closed on Fixture Drift [F617]
+
+- Every language lifecycle requires a real decoded numeric operand with no rich reference metadata; Node, Rust, and Python no longer report success when selection fails. The chosen disposable location is then deliberately cleared of competing presentation state before the complete apply/query/render/calculate/xref/remove sequence.
+- Assumption A70.7: each maintained integration fixture contains at least one decoded immediate operand suitable for isolated offset mutation. Falsify by changing the fixture or processor so selection returns empty; the test must fail before any mutation. Dependent result: cross-language runtime coverage. **Bounded risk [medium]:** silent probe skipping can hide processor, decoder, or fixture regressions while CI remains green; selection remains `O(I * O)` for `I` decoded instructions and at most `O = 8` operands.
+
+### 35.271. Raw Offset FFI Outputs Fail Closed [F618]
+
+- All new offset C ABI functions reject null output pointers. Optional-address helpers set `value=0` and `has_value=0`, removal sets `removed=0`, and xref creation sets `target=0` before fallible core work; owned structs and pointer/count pairs are already zeroed before dispatch. The initialized-host Rust lifecycle seeds each scalar with a nonzero value, forces `BadAddress` failure, and requires zero/absent output.
+- Assumption A70.8: raw `idax-sys` consumers can call the C ABI without the safe Rust layer and may inspect output storage even after a nonzero return. Falsify by making the raw crate private and proving no external C/Rust call path exists. Dependent result: deterministic raw-ABI failure state. **Bounded risk [medium]:** stale scalar outputs can be consumed after correctly reported failure; initialization is constant-time `O(1)`.
+
+### 35.272. Node Integration Assertions Use the Repository Harness Grammar [F619]
+
+- `bindings/node/test/harness.js` implements direct matchers but no Jest-style `.not` chain. Fail-closed assertions must use its supported predicate/value form or extend the harness with dedicated regression coverage.
+- Assumption A70.9: direct Boolean equality remains part of the maintained harness contract. Falsify by removing or changing `toBe`; the structural/integration tests must then fail immediately. Dependent result: Node fixture-selection enforcement. **Bounded risk [low]:** an unsupported matcher records a test failure before the intended lifecycle executes; using the existing matcher is `O(1)`.
+
+### 35.273. Operand Offset/Reference Release Closure [F620]
+
+- Implementation commit `fafcbaffe0f859b9f3e1835c0f76126486532a18` passes runs 29564523560 (Integrations 3/3), 29564523607 (Validation 6/6), and 29564523569 (Bindings 9/9) across Linux, Windows, and macOS. Every row uses exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`; licensed rows install IDA Professional 9.4 through the fail-closed eligible-license selector.
+- Automatic complete-log audits 29564829739 (Integrations; 41 entries/1,022,329 bytes), 29565022137 (Validation; 90 entries/1,754,542 bytes), and 29565920823 (Bindings; 163 entries/9,834,319 bytes) pass. The implementation candidate privacy scan covers 588 project-owned files and its pre-closure reachable history covers 4,383 objects with no user-home absolute path.
+- Assumption A70.10: the 18 push-triggered source jobs and three whole-log audits represent every configured release consumer exercised by `master`. Falsify by adding a platform, binding, workflow, or tag-only release path and requiring it to enter source plus audit evidence. Dependent result: Phase 70 closure. **Bounded risk [medium]:** custom reference formats and positive outer-displacement capability remain processor/plugin dependent, so the public boundary continues to fail closed when live evidence is absent. Live matrix inspection is `O(J)` for `J = 18` jobs and log auditing is `O(G)` over total log bytes `G`.
+- **Bounded opportunity [high]:** relocation analyzers, loaders, processor modules, and decompiler-support plugins can now share one owned operand-reference model across C++, Node, Rust, and Python without native reference identities or records.
+
+### 35.274. IDC Value and Script-Execution Surface Gap [F621]
+
+- Exact pinned IDA 9.4 `expr.hpp` contains three separable lifecycle classes: caller-owned values and execution operations; host-retained external IDC-function descriptors/callbacks; and host-retained third-party interpreter descriptors/callbacks. IDAX has none of these public families. Phase 71 covers the first class only so no callback pointer or static-storage contract is hidden inside a value API.
+- The execution class includes IDC value conversion/copy/rendering, object attributes and slices, global variables/references, include-path and file resolution, system-script execution, current-language and IDC-only evaluation, IDC file/text/snippet compilation, named invocation, file execution, and IDC snippet execution. Exact arm64 IDA 9.4 import-library inspection confirms every non-inline operation is exported.
+- Assumption A71.1: a privately owned `idc_value_t` can preserve object, function, reference, and pointer results across ordinary wrapper copies for the lifetime permitted by IDA while exposing only copied semantic observations. Falsify with exact-runtime copy/deep-copy, attribute/slice, exception-result, and database-close probes; any dangling or context-coupled state must become an explicitly scoped handle or `Unsupported`. Dependent result: opaque retained-value design. **Bounded risk [high]:** native IDC objects/references may depend on interpreter or database lifetime, and an unconstrained value wrapper could outlive valid host state.
+- Assumption A71.2: the documented Boolean execution returns plus copied `errbuf` and result/exception value distinguish success, compile failure, and runtime failure without consulting hidden interpreter state. Falsify with syntax errors, missing functions, thrown IDC exceptions, and successful falsey results. Dependent result: structured `Result<Value>` and `Status` mapping. **Bounded risk [high]:** conflating a falsey IDC result with native Boolean failure would silently discard valid execution state.
+- Assumption A71.3: expression/file/snippet text, function/global/attribute names, and paths are NUL-terminated SDK inputs and therefore embedded NUL bytes must be rejected before dispatch. Falsify by identifying a length-bearing overload in the pinned family. Dependent result: validation boundary. **Bounded risk [medium]:** truncation at an embedded NUL can execute or resolve different input than the caller supplied.
+- **Bounded opportunity [high]:** loaders, processor modules, automation plugins, and headless tools can evaluate configuration expressions and reuse IDC automation through one value model across all four language surfaces.
+- **Bounded scope [medium]:** external IDC-function registration and third-party external-language installation are intentionally not Phase 71 execution operations; each retains callbacks and storage beyond the initiating call and requires independent teardown, concurrency, exception-containment, and unload-safety evidence.
+
+### 35.275. IDC Value and Execution Semantics Proxy [F622]
+
+- A disposable proxy compiled with the exact pinned 9.4 header and dispatched only stable exports in the locally available initialized host. It proves the stable ABI semantics used for implementation but does not replace exact IDA 9.4 release evidence.
+- Default object copy construction shares attribute state, while `deep_copy_idcv` isolates the copied object. String slice bounds are half-open, and replacement may change length. Runtime division-by-zero failure retains an object-class exception result and nonempty error text.
+- Expression result truthiness is unrelated to native operation success: evaluating integer zero succeeds. Missing function, syntax error, and runtime error each fail with nonempty error text. Named text compilation plus two-argument call and snippet execution both produce integer 42.
+- Exact access and coercion are distinct: `idcv_int64` converts a nonnumeric string to integer zero with `eOk`, as documented by the SDK's conversion contract. Public `as_integer` must reject a non-integer kind, while `coerce_integer` must preserve the SDK behavior rather than promise strict numeric parsing.
+- Assumption A71.4: the stable operations exercised by the cross-minor proxy retain these semantics in exact IDA 9.4. Falsify in all licensed 9.4 runtime rows with the same scalar/object/error lifecycle. Dependent result: implementation may proceed before live release evidence. **Bounded risk [medium]:** a 9.4-only semantic change could pass compile/link and violate value/error assumptions; exact CI remains a Phase 71 closure gate.
+- Assumption A71.5: native copy construction is the correct ordinary public copy contract: scalar/string storage is independent while object references alias; explicit `deep_copy` requests object isolation. Falsify by mutating a copied scalar/string and copied object in exact IDA 9.4. Dependent result: C++/binding value ownership. **Bounded risk [high]:** accidentally sharing the wrapper allocation would make scalar mutation alias, while always deep-copying would erase native object identity.
+- **Bounded opportunity [medium]:** retaining exception objects permits callers to inspect class and attributes instead of receiving only a flattened error string.
+
+### 35.276. Script Binding Transport Preserves Value/Error Semantics [F623]
+
+- C++ `Value(std::string_view)` and exact/coerced string access are length-bearing and preserve embedded NUL bytes. The generated C/safe-Rust boundary uses `(uint8_t*, size_t)` for these value payloads and validates UTF-8 only in the safe Rust string model. Interpreter source, file, include, name, and resolver fields remain validated NUL-terminated strings because the pinned SDK provides no length-bearing overload.
+- Native execution failure is a successful wrapper transport containing `succeeded=false`, copied diagnostic text, and an owned result/exception `Value`; only validation/allocation/SDK-adapter failure returns a C ABI error. C result destructors reclaim partially populated values and messages, and safe Rust detaches ownership before invoking them.
+- Assumption A71.6: caller-visible IDC string values are UTF-8 in the safe Rust and Python surfaces even though the native value container can hold arbitrary bytes. Falsify with an exact-runtime IDC expression or plugin-defined function that returns non-UTF-8 bytes; if observed, add an explicit bytes-valued accessor while retaining `str` for valid UTF-8. Dependent result: safe binding string return model. **Bounded risk [medium]:** lossy decoding would corrupt value identity, so both bindings currently fail rather than substitute replacement characters. Pointer-plus-length copying is `O(N)` for payload length `N`.
+- **Bounded opportunity [medium]:** structured failure values permit cross-language inspection of IDC exception classes/attributes without exposing native object pointers or flattening runtime state into a string.
+
+### 35.277. Node Script Behavior Flags Are Strict Booleans [F624]
+
+- `Value.attribute(..., useHandler)`, `Value.setAttribute(..., useHandler)`, and `executeSystemScript(..., complainIfMissing)` accept an omitted or `undefined` flag as false and otherwise require a JavaScript Boolean. Truthy numbers, strings, objects, and `null` are rejected before native dispatch, matching the TypeScript contract.
+- Assumption A71.7: no supported JavaScript caller depends on undocumented truthiness for behavior-selecting flags. Falsify by identifying a published declaration or compatibility test that permits non-Boolean values; any compatibility layer must be explicit and must not weaken the typed namespace. Dependent result: Node declaration/runtime parity. **Bounded risk [medium]:** truthiness can silently enable attribute handlers or missing-script complaints; strict validation is constant-time `O(1)`.
+
+### 35.278. Raw Script FFI Outputs Fail Closed [F625]
+
+- Every new script C ABI output is initialized before validation and fallible core work: handles and strings to null, scalar values/presence flags to zero, pointer/count pairs to null/zero, and result structs to their empty aggregate state. Helper fill functions also reset complete output structs before allocating owned payloads.
+- Assumption A71.8: direct `idax-sys` consumers may inspect caller-owned output storage after a nonzero return despite the documented status contract. Falsify by making the raw crate private and proving no external C/Rust path can invoke the ABI. Dependent result: deterministic raw-script failure state. **Bounded risk [medium]:** stale handles can cause invalid frees and stale scalars can be mistaken for successful evaluation results; initialization is `O(1)` apart from existing owned result copying.
+
+### 35.279. Python Script Stub Qualifies the Builtin Object Type [F626]
+
+- Names declared in a Python class body participate in later annotation lookup. Because `Value.object` is the public object factory, `__deepcopy__` must spell its memo type as `dict[builtins.object, builtins.object]`; otherwise strict mypy reports the factory function as an invalid type.
+- Assumption A71.9: mypy's class-scope name resolution matches Python stub consumers supported by the project. Falsify with a supported type checker that resolves the unqualified annotation to the builtin despite the method declaration; the qualified spelling remains semantically equivalent. Dependent result: strict Python declaration validation. **Bounded risk [low]:** the defect affects static consumers rather than runtime execution; qualification has `O(1)` tooling cost.
+
+### 35.280. IDC Global Assignment Is Copy-Before-Mutate [F627]
+
+- `set_global` first copies the caller value into a private native temporary. Only after that succeeds does it find or create the global and atomically swap the prepared value into the target. Existing state is unchanged on copy failure, and creation cannot precede a failed copy. A zero-length `Value(std::string_view{})` supplies `""` rather than a potentially null `data()` pointer and round-trips as an empty string.
+- Assumption A71.10: native `swap_idcvs` is a non-failing ownership exchange for initialized IDC values, as defined by the pinned inline SDK helper. Falsify by an SDK revision that makes swap report failure or require additional interpreter context; replace it with an explicitly checked move operation before upgrading. Dependent result: global assignment failure atomicity. **Bounded risk [high]:** mutation-before-copy can corrupt an existing global or leave a newly visible empty one after allocation failure; preparation copies in `O(V)` for value payload size `V`, matching ordinary assignment complexity.
+
+### 35.281. Total Moved-From IDC Value State [F628]
+
+- A default move of the opaque value's private `std::unique_ptr` makes the source implementation null. The public API has no precondition excluding ordinary observation or copying after a move, so that representation would turn an ownership optimization into a null-dereference boundary.
+- A null implementation now denotes a read-only logical integer-zero state. Const observations and copies consume one immutable function-local default `idc_value_t`; a mutating operation materializes normal private storage only if it reaches a valid mutation path. Move construction and assignment therefore remain constant-time and `noexcept`, the source is deterministically integer zero, and no new exception path crosses Node or the generated C ABI during ownership transfer.
+- Assumption A71.11: a default `idc_value_t` is the SDK-defined integer-zero value and const SDK observations do not mutate it. Falsify with exact-runtime move-construction/move-assignment/source-query/source-copy probes, a pinned default-state change, or a const-incorrect SDK operation. Dependent result: total moved-from `Value` operations. **Bounded risk [low]:** the immutable sentinel is process-lifetime state, while any later valid mutation receives independent storage; move and observation are `O(1)`.
+
+### 35.282. Node IDC Values Need Explicit Shallow Copy [F629]
+
+- C++ has copy construction/assignment, Rust maps ordinary copying to `Clone`, and Python maps it to `copy.copy`. JavaScript has no equivalent language protocol, so exposing only `deepCopy()` made the native shallow object-copy contract unreachable from Node even though scalar duplication remained indirectly possible.
+- `Value.copy()` constructs a second wrapper through the C++ copy constructor. Object attribute state therefore aliases exactly as the SDK defines, while `deepCopy()` remains the explicit isolation operation. The initialized-host test mutates the shallow copy and observes the source change, then mutates a deep copy and observes source stability.
+- Assumption A71.12: explicit `copy()` is the least ambiguous JavaScript spelling for the ordinary value-copy contract. Falsify with an established project-wide clone protocol or a declaration conflict; retain both shallow and deep operations under distinct names. Dependent result: Node value-model parity. **Bounded opportunity [medium]:** Node plugins can intentionally choose shared IDC-object identity or isolated snapshots instead of receiving forced deep-copy behavior; both copy operations are `O(V)` in the SDK-defined payload semantics.
+
+### 35.283. Node Optional Arguments Require One Explicit V8 Handle Type [F630]
+
+- A conditional expression between `info[index]` (`v8::Local<v8::Value>`) and `Nan::Undefined()` (`v8::Local<v8::Primitive>`) has no unique common conversion under the hosted GCC, Apple Clang, and MSVC toolchains because both local-handle types convert to each other. The same applies to a `Local<String>` versus `Local<Primitive>` result.
+- Return-context conversion through `OptionalArgument(...)->v8::Local<v8::Value>` selects one type before the parser call. An explicit `if` selects string or null output without asking the conditional operator to infer a V8 handle type. This is identical to the established Phase 62 parser-binding repair and changes no JavaScript semantics.
+- Assumption A71.13: all supported NAN/Node 20 compiler combinations accept direct return conversion from `Nan::Undefined()` to `v8::Local<v8::Value>`, as already proven by parser CI. Falsify with any Linux, macOS, or Windows Node build failure at that helper. Dependent result: portable optional script arguments. **Bounded risk [high]:** a locally accepted bidirectional conversion can prevent the entire addon from compiling on release toolchains; explicit selection remains `O(1)`.
+
+### 35.284. Phase 71 Exact-Release Closure [F631]
+
+- Implementation commit `bbcb34511947f53b443fd004cf0ae93ea16fb388` and correction commit `a9c8bd0cd2264603a8644b99cedfb3a596c8090a` pass runs 29573171753 (Integrations 3/3), 29573171723 (Validation 6/6), and 29573171713 (Bindings 9/9). Every one of the 18 Linux, Windows, and macOS jobs records exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594` and IDA Professional 9.4; the corrected Node addon compiles and passes on hosted GCC, Apple Clang, and MSVC.
+- Automatic complete-log audits 29573520110, 29573734060, and 29574575456 inspect the corresponding replacement source runs and pass across 294 entries and 12,790,604 uncompressed bytes. Repository candidate/history and extracted CPack, Node, Rust, wheel, and sdist privacy gates independently passed before push.
+- Assumption A71.14: the configured exact-9.4 release matrices cover the supported caller-owned value and synchronous execution contracts without implying support for host-retained external IDC-function or external-language registration. Falsify with a supported-host regression in scalar/object ownership, error/exception retention, evaluation/compilation/call execution, or include/file handling; reopen only the affected contract. Dependent result: P71.2/P71.4 closure. **Bounded risk [high]:** conflating synchronous resolver maps with host-retained callback registries would create an untested lifetime contract; those registries remain separately scoped. **Bounded opportunity [medium]:** opaque structured exception values and explicit shallow/deep copies permit cross-language script tooling without native value identities.

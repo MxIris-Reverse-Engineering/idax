@@ -38,6 +38,15 @@ changes in a live chooser window and builds a labeled impact graph on stop.
 Persists a summary into a netnode for cross-session audit trails. Toggle with
 **Ctrl-Shift-T**.
 
+### `plugin/ida_names_port_plugin.cpp` + `plugin/ida_names_port_widget.cpp` — IDA-names Port
+
+Qt plugin port that keeps pseudocode window titles synchronized with the
+current function name. It uses `ida::ui::current_widget()` for active-view
+polling, `ida::decompiler::on_switch_pseudocode()` for function-switch
+notifications, and address-free `ida::name::demangled(symbol)` before crossing
+the explicit widget-host bridge for `QWidget::setWindowTitle`. The Shift-T
+action provides manual title editing.
+
 ### `plugin/storage_metadata_plugin.cpp` — Binary Fingerprint
 
 Computes a structural fingerprint (segment layout digest, function histogram by
@@ -58,6 +67,7 @@ handling.
 ### `loader/sep_firmware_loader.cpp` — Apple SEP Firmware Loader Port
 
 Port of `/Users/int/Downloads/sep-binja-main` into an idax example loader.
+Port of `<upstream-source>/sep-binja-main` into an idax example loader.
 It detects raw 64-bit SEP firmware images via the `Built by legion2` markers,
 parses the SEP container header/app table, maps the boot/kernel/SEPOS/app/shared
 library modules into distinct IDA segments, loads embedded Mach-O segments with
@@ -91,7 +101,7 @@ current idax abstraction.
 
 ### `plugin/qtform_renderer_plugin.cpp` + `plugin/qtform_renderer_widget.cpp` — ida-qtform Port
 
-Port of `<userhome>/dev/ida-qtform` to idax plugin and UI surfaces. It uses
+Port of `<ida-qtform-root>` to idax plugin and UI surfaces. It uses
 `ida::ui::create_widget()` + `ida::ui::with_widget_host()` to mount a Qt
 renderer widget in a dock panel and parse IDA form markup into live controls.
 The original "Test in ask_form" flow now uses markup-only
@@ -99,7 +109,7 @@ The original "Test in ask_form" flow now uses markup-only
 
 ### `plugin/drawida_port_plugin.cpp` + `plugin/drawida_port_widget.cpp` — DrawIDA Port (Not Applicable / Host-Constrained)
 
-Port of `<userhome>/Downloads/plo/DrawIDA-main` to idax plugin and UI surfaces.
+Port of `<upstream-source>/plo/DrawIDA-main` to idax plugin and UI surfaces.
 It recreates DrawIDA's whiteboard workflow (draw/text/eraser/select,
 undo/redo, style dialog, clear canvas) using `ida::plugin::Plugin` and
 `ida::ui::create_widget()` + `ida::ui::with_widget_host()` to host a Qt canvas
@@ -139,7 +149,7 @@ the optional Qt clipboard helper with `ask_text` fallback.
 
 ### `plugin/driverbuddy_port_plugin.cpp` — DriverBuddy Port
 
-Port of `<userhome>/Downloads/plo/DriverBuddy-master` to idax plugin, search,
+Port of `<upstream-source>/plo/DriverBuddy-master` to idax plugin, search,
 analysis, type, xref, and instruction surfaces.
 
 The plugin keeps DriverBuddy's core workflows:
@@ -153,9 +163,212 @@ The plugin keeps DriverBuddy's core workflows:
 - For WDF targets, builds/applies a `WDFFUNCTIONS` type over the dispatch table
   using idax type APIs (strict parity mode uses the full 440 historical slots).
 
+### `plugin/intelligent_inliner_port_plugin.cpp` — Intelligent Function Inliner Port
+
+Port of `<upstream-source>/intelligent-function-inliner.py` to idax function,
+graph, instruction, xref, type, progress-UI, action, and decompiler-cache APIs.
+It preserves the original `<7`-instruction strict rule and score threshold/weights,
+skips thunk/library/non-returning/variadic functions, detects processor-marked
+memory writes, and sets `FUNC_OUTLINE` on selected functions. The SDK defines
+this marker as “outlined code, not a real function”; the original uses it as its
+inline-candidate signal, and the port does not rewrite binary code. The
+interactive pass is cancellable and reports exact skip/change/failure counts.
+
+The Rust adaptation (`intelligent_inliner_port`) provides the same analysis in
+headless form. It reports without mutation by default; `--apply` sets the markers,
+invalidates available decompiler caches, and saves the database. Example:
+
+```bash
+cargo run -p idax --example intelligent_inliner_port -- <idb> --show 20
+cargo run -p idax --example intelligent_inliner_port -- <idb> --apply
+```
+
+### `plugin/magic_strings_port_plugin.cpp` — IDAMagicStrings Port
+
+Port of `<upstream-source>/plo/idamagicstrings-master/IDAMagicStrings.py`
+to idax data, lines, name, xref, function, chooser, graph, and action APIs. It
+preserves the original non-NLTK path: one-byte/two-byte string discovery,
+source filename and language evidence, first-token candidate extraction,
+blacklist and one-function rarity filtering, scoped class hierarchies, and
+false-positive marking. Three actions separate analysis from confirmed
+candidate and source-derived renames; proposed identifiers are sanitized and
+only `sub_*` functions are changed.
+
+The Rust adaptation (`magic_strings_port`) is report-only by default. Candidate
+and source fallback mutations require separate explicit flags, and simultaneous
+application gives a candidate priority over a source name for the same
+function:
+
+```bash
+cargo run -p idax --example magic_strings_port -- <idb> --show 20
+cargo run -p idax --example magic_strings_port -- <idb> --apply-candidates --apply-sources
+```
+
+### `plugin/auto_enum_port_plugin.cpp` — Auto Enum Port
+
+Port of `<upstream-source>/plo/auto-enum-main` to idax import, type,
+instruction, decompiler, plugin-action, and refresh APIs. The global action
+matches imported functions by normalized name, matches arguments by name with
+positional fallback, creates named `ENUM_<id>` local enum types, and replaces
+only eligible integral argument types while preserving the remaining function
+prototype metadata. The local action starts from the decompiler call at the
+cursor and applies selector-dependent enum display to the target operand.
+
+The embedded corpus is a representative dependency-free Linux/Windows subset covering
+file flags, address families/socket types, memory protection/mapping, `prctl`,
+access modes, socket levels, and selected `socket`/`setsockopt`/`prctl`
+specializations plus Windows `OpenProcess` access rights. The table-driven engine does not depend on Python or JSON and
+does not claim coverage for omitted source-corpus entries.
+The upstream MIT notice is retained in `plugin/auto_enum_port_LICENSE.txt`.
+
+The Rust adaptation (`auto_enum_port`) covers the deterministic global workflow.
+It reports without mutation by default; `--apply` creates the enum types,
+applies revised imported prototypes, and saves the database:
+
+```bash
+cargo run -p idax --example auto_enum_port -- <idb> --show 20
+cargo run -p idax --example auto_enum_port -- <idb> --apply
+```
+
+### `plugin/diaphora_exact_port_plugin.cpp` — Diaphora Exact Port
+
+Bounded adaptation of Diaphora 3.4.0's exact per-function fingerprint layer.
+It exports a deterministic `IDAX_DIAPHORA_EXACT` manifest containing function
+and segment RVAs, canonical CFG metrics, mnemonic sequences, full-byte MD5,
+Diaphora-style relocation-light MD5, non-auto names, printable declarations,
+and repeatable comments. Comparison accepts only globally unique candidates in
+four ordered tiers. Export and compare are non-mutating; the separate apply
+action transfers only absent/auto function metadata and preserves existing
+target declarations and comments.
+
+The companion `IDAX_DIAPHORA_INSTRUCTION_METADATA` manifest carries ordinary
+and repeatable instruction comments plus ordered forced operand text. It first
+requires a globally unique function match, then validates the signed
+function-relative byte offset, instruction ordinal, decoded size, mnemonic,
+and relocation-light MD5. Compare is non-mutating; explicit apply fills only
+absent slots and preserves every nonempty target value. C++ and Rust emit the
+same versioned tab/hex representation.
+
+The `IDAX_DIAPHORA_REFERENT_METADATA` companion carries separate code and data
+records only when an exact instruction has one distinct non-flow referent of
+that class and the referent owns a non-auto name or applied type. Comparison
+repeats the unique-reference check after the exact function/instruction guards.
+Apply fills only absent/auto names and absent types, preserves target-owned
+metadata, and never creates references or follows secondary offsets. C++ and
+Rust emit the same versioned tab/hex bytes.
+
+The `IDAX_DIAPHORA_PSEUDOCODE_COMMENTS` companion carries one record per
+persisted semantic tree location. It preserves multiple locations at one
+instruction address, validates the same unique-function and exact-instruction
+guards, and applies only to absent target locations. Modified decompiled
+functions are saved explicitly; orphan deletion is never implicit. C++ and
+Rust emit the same canonical location names and tab/hex bytes.
+
+None of these manifests is a Diaphora SQLite database. SQLite schema
+interchange, the complete heuristic/ratio/multimatch engine, pseudocode and
+microcode similarity, raw function flags, program definitions and type
+libraries, callgraph matching, compilation units, and chooser UI remain
+separate audited surfaces. The upstream copyright, adaptation notice, and
+complete AGPL text are retained in
+`plugin/diaphora_port_LICENSE.txt`.
+
+The Rust adaptation provides byte-compatible headless function, instruction,
+referent, and pseudocode-comment export/compare/apply:
+
+```bash
+cargo run -p idax --example diaphora_exact_port -- <input> --export baseline.idax-diaphora.tsv
+cargo run -p idax --example diaphora_exact_port -- <input> --compare baseline.idax-diaphora.tsv
+cargo run -p idax --example diaphora_exact_port -- <input> --compare baseline.idax-diaphora.tsv --apply
+cargo run -p idax --example diaphora_exact_port -- <input> --export-instruction-metadata baseline.idax-diaphora-instructions.tsv
+cargo run -p idax --example diaphora_exact_port -- <input> --compare-instruction-metadata baseline.idax-diaphora-instructions.tsv
+cargo run -p idax --example diaphora_exact_port -- <input> --compare-instruction-metadata baseline.idax-diaphora-instructions.tsv --apply
+cargo run -p idax --example diaphora_exact_port -- <input> --export-referent-metadata baseline.idax-diaphora-referents.tsv
+cargo run -p idax --example diaphora_exact_port -- <input> --compare-referent-metadata baseline.idax-diaphora-referents.tsv
+cargo run -p idax --example diaphora_exact_port -- <input> --compare-referent-metadata baseline.idax-diaphora-referents.tsv --apply
+cargo run -p idax --example diaphora_exact_port -- <input> --export-pseudocode-comments baseline.idax-diaphora-pseudocode.tsv
+cargo run -p idax --example diaphora_exact_port -- <input> --compare-pseudocode-comments baseline.idax-diaphora-pseudocode.tsv
+cargo run -p idax --example diaphora_exact_port -- <input> --compare-pseudocode-comments baseline.idax-diaphora-pseudocode.tsv --apply
+```
+
+### `plugin/symless_structure_port_plugin.cpp` — Symless Structure Reconstruction Port
+
+Bounded port of `<upstream-source>/plo/symless-main` to the opaque owned
+microcode graph and type APIs. The interactive plugin has separate report and
+apply actions for one selected function argument, declarative allocator roots,
+and verified constructor/vtable roots. It preserves register/stack
+propagation, nested instruction evaluation, pointer add/sub, load/store width
+recovery, topological predecessor-state preference, and the upstream
+minimum-width overlap rule. It also follows resolved direct calls and exact
+database-derived indirect targets with an explicit maximum depth, active-cycle
+rejection, completed-context reuse, ABI argument injection, and conservative
+terminal-return consensus. Plain immediates, call-info hints without database
+provenance, runtime-only targets, and non-entry addresses remain unresolved.
+Apply creates
+or reuses a named UDT, changes eligible ordinary arguments/returns, and applies
+exact shifted-parent/delta metadata to proven nonzero propagated argument
+sites. Existing mismatched complex pointers remain unchanged; shifted returns
+remain excluded as in upstream Symless. Exact same-name local structure
+forwards are replaced at their existing ordinal with the recovered complete
+definition; complete definitions and incompatible declarations are preserved.
+For each exact type-compatible recovered field, apply also ensures persistent
+user informational references from every unique access instruction to the
+member's internal IDA identity. Report mode counts candidates without mutation;
+apply reports candidate, added, reused, and skipped reference counts. Register
+evidence from direct memory locations and pointer add/sub observations is mapped
+to processor registers, grouped by `(instruction, register)`, and matched to a
+phrase/displacement or register-preceded immediate machine operand. The first
+source-ordered field in each group receives an exact opaque `[root, member]`
+struct-offset path; additional fields remain represented by their member
+references. Repeated apply verifies and reuses the copied root/member-name path.
+
+Allocator mode accepts one specification per line: `malloc:<locator>:<size-index>`,
+`realloc:<locator>:<size-index>`, or
+`calloc:<locator>:<count-index>:<size-index>`. A locator is an exact
+name/address or `module!import-prefix`. The bounded classifier verifies exact
+direct calls plus database-derived fixed-pointer calls reached through one
+exact data-slot reference hop, recognizes constants in `1..0x3fff`, confirms
+forwarding wrappers only through terminal return of the originating call token,
+recursively visits unique heirs, and reconstructs each fixed-size root as a
+distinct UDT. Apply
+keeps allocator/wrapper returns generic `void*` and types/names existing
+size/count parameters as `size_t`; it does not synthesize parameters or assign
+one allocation-specific type to a reusable allocator return.
+
+Constructor/vtable mode scans bounded pointer-width function tables and accepts
+a class root only when preoptimized microcode proves an exact table store into
+argument zero at byte offset zero. Referenced non-first slots terminate a table,
+all-import tables are excluded, multiple distinct zero-offset tables make the
+constructor ambiguous, and nonzero stores remain reported secondary evidence.
+Load discovery searches the function-array address first, then falls back to
+the two-pointer Itanium RTTI label and recursively crosses only exact
+pointer-valued data aliases. Every candidate still requires final table-value
+store confirmation. Accepted non-import table members become deduplicated
+argument-zero roots, so method-only fields join constructor evidence under the
+same depth and conflict bounds. Apply creates semantic class/vftable UDTs,
+applies the table type, and replaces only existing eligible generic `this`
+arguments. It does not synthesize missing ABI parameters, resolve runtime
+object dispatch, or rank inheritance by table size/xref counts.
+
+This is not a full Symless parity claim: runtime-only or object-dependent
+indirect dispatch and microcode-widget operand selection remain outside this
+port. The upstream MIT notice is retained in
+`plugin/symless_port_LICENSE.txt`.
+
+The Rust adaptation (`symless_structure_port`) is report-only by default and
+requires `--apply` before saving the UDT/prototype mutation:
+
+```bash
+cargo run -p idax --example symless_structure_port -- <idb> --function <address-or-name> --argument 0 --max-depth 8
+cargo run -p idax --example symless_structure_port -- <idb> --function <address-or-name> --argument 0 --max-depth 8 --name recovered_type --apply
+cargo run -p idax --example symless_structure_port -- <idb> --allocator malloc:_malloc:0 --max-depth 8
+cargo run -p idax --example symless_structure_port -- <idb> --allocator malloc:_malloc:0 --name recovered_alloc --max-depth 8 --apply
+cargo run -p idax --example symless_structure_port -- <idb> --vtables --name recovered --max-depth 8
+cargo run -p idax --example symless_structure_port -- <idb> --vtables --name recovered --max-depth 8 --apply
+```
+
 ### `plugin/lifter_port_plugin.cpp` — lifter Port Probe (Adapted Standalone Port)
 
-Port probe of `<userhome>/dev/lifter` focused on plugin-shell workflows that
+Port probe of `<lifter-source>` focused on plugin-shell workflows that
 are currently portable through idax: action registration, pseudocode popup
 attachment, decompiler pseudocode/microcode snapshot dumping, and
 outlined-flag/cache-invalidation helpers.
@@ -200,7 +413,7 @@ raw decompiler-view handle context for advanced per-view manipulations).
 
 ### `plugin/idapcode_port_plugin.cpp` — idapcode Port (Adapted Standalone Port)
 
-Port of `<userhome>/Downloads/plo/idapcode-main` to idax plugin/UI/database
+Port of `<upstream-source>/plo/idapcode-main` to idax plugin/UI/database
 surfaces with Sleigh-backed p-code generation.
 
 The Rust adaptation (`idapcode_headless_port`) extracts the non-UI analysis slice 
@@ -213,9 +426,9 @@ function, rendering instruction headers plus lifted p-code ops. It also keeps
 linear-view/custom-viewer navigation synchronized in both directions, including
 cross-function follow when the linear cursor moves into a different function.
 It uses idax wrappers for current-function lookup, byte extraction, custom
-viewer hosting, and architecture context (`processor_id`, `processor_name`,
-`address_bitness`, `is_big_endian`, `abi_name`) and resolves Sleigh specs via
-`sleigh::FindSpecFile`.
+viewer hosting, and normalized architecture context (`ProcessorProfile` with
+raw and optional verified identity, bitness, endianness, and optional ABI),
+then resolves Sleigh specs via `sleigh::FindSpecFile`.
 
 Build requires `IDAX_BUILD_EXAMPLE_IDAPCODE_PORT=ON`. Runtime spec resolution
 uses Sleigh default search paths and can be overridden with
@@ -226,7 +439,7 @@ If the Sleigh submodule is not present, fetch it with:
 
 ### `tools/idalib_dump_port.cpp` — idalib-dump Port (no Telegram)
 
-Port of `<userhome>/dev/idalib-dump` `ida_dump` behavior to pure idax calls:
+Port of `<idalib-dump-root>` `ida_dump` behavior to pure idax calls:
 database open/analysis wait, function traversal/filtering, assembly dump, and
 pseudocode/microcode dump, plus headless plugin policy controls
 (`--no-plugins`, `--plugin <pattern>`) through `ida::database::RuntimeOptions`.
@@ -241,7 +454,7 @@ address.
 
 ### `tools/ida2py_port.cpp` — ida2py Port Probe
 
-Port of `<userhome>/Downloads/plo/ida2py-main` static query workflows to pure
+Port of `<upstream-source>/plo/ida2py-main` static query workflows to pure
 idax calls: user-defined symbol discovery, type apply/retrieve checks,
 symbol-centric value/xref inspection, and decompiler-backed callsite text
 listing. It also includes optional runtime `--appcall-smoke` coverage for

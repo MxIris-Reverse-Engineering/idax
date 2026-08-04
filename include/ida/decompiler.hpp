@@ -161,6 +161,12 @@ Result<Token> on_func_printed(std::function<void(const PseudocodeEvent&)> callba
 /// Subscribe to the refresh_pseudocode event (fired when pseudocode view refreshes).
 Result<Token> on_refresh_pseudocode(std::function<void(const PseudocodeEvent&)> callback);
 
+/// Subscribe to pseudocode-view function switches.
+///
+/// Fired on `hxe_switch_pseudocode` after the new cfunc/microcode pointers are
+/// available but before the pseudocode text has been refreshed.
+Result<Token> on_switch_pseudocode(std::function<void(const PseudocodeEvent&)> callback);
+
 /// Subscribe to the curpos event (fired when cursor moves in pseudocode view).
 Result<Token> on_curpos_changed(std::function<void(const CursorPositionEvent&)> callback);
 
@@ -245,6 +251,13 @@ enum class MicrocodeOpcode : int {
     FloatDiv,
     IntegerToFloat,
     FloatToFloat,
+    SignedExtend,
+    Call,
+    IndirectCall,
+    Goto,
+    IndirectJump,
+    Return,
+    Other,
 };
 
 struct MicrocodeInstruction;
@@ -262,12 +275,19 @@ enum class MicrocodeOperandKind : int {
     NestedInstruction,
     UnsignedImmediate,
     SignedImmediate,
+    AddressReference,
+    CallArguments,
+    StringConstant,
+    FloatingPointConstant,
+    Other,
 };
 
 /// One typed microcode operand.
 struct MicrocodeOperand {
     MicrocodeOperandKind kind{MicrocodeOperandKind::Empty};
     int register_id{0};
+    /// Processor-module register corresponding to a register microoperand, or -1.
+    int processor_register_id{-1};
     int local_variable_index{0};
     std::int64_t local_variable_offset{0};
     int second_register_id{0};
@@ -280,6 +300,10 @@ struct MicrocodeOperand {
     std::int64_t signed_immediate{0};
     int byte_width{0};
     bool mark_user_defined_type{false};
+    std::shared_ptr<MicrocodeOperand> referenced_operand{};
+    std::vector<MicrocodeOperand> call_arguments{};
+    Address call_target{BadAddress};
+    std::string text{};
 };
 
 /// Generic typed microcode instruction model.
@@ -291,6 +315,30 @@ struct MicrocodeInstruction {
     MicrocodeOperand right{};
     MicrocodeOperand destination{};
     bool floating_point_instruction{false};
+    /// True when executing this instruction modifies its destination operand.
+    bool modifies_destination{false};
+    Address address{BadAddress};
+    std::string text{};
+};
+
+/// Requested/observed maturity of an owned function-level microcode graph.
+enum class MicrocodeMaturity : int {
+    Generated    = 1,
+    Preoptimized = 2,
+    LocallyOptimized = 3,
+    CallsAnalyzed = 4,
+    GloballyOptimized1 = 5,
+    GloballyOptimized2 = 6,
+    GloballyOptimized3 = 7,
+    LocalVariables = 8,
+};
+
+/// Options for generation of an owned function-level microcode graph.
+struct MicrocodeGenerationOptions {
+    MicrocodeMaturity maturity{MicrocodeMaturity::Preoptimized};
+    /// Resolve call argument lists and calling conventions before copying.
+    /// May decompile direct callees and invoke Hex-Rays call analysis.
+    bool analyze_calls{false};
 };
 
 /// Placement policy for emitted microcode instructions.
@@ -354,6 +402,32 @@ struct MicrocodeValueLocation {
     std::int64_t stack_offset{0};
     Address static_address{BadAddress};
     std::vector<MicrocodeLocationPart> scattered_parts{};
+};
+
+/// One copied function argument and its microcode-level storage location.
+struct MicrocodeFunctionArgument {
+    std::string name{};
+    MicrocodeValueLocation location{};
+    int byte_width{0};
+};
+
+/// One copied microcode basic block.
+struct MicrocodeBlock {
+    int index{0};
+    Address start_address{BadAddress};
+    Address end_address{BadAddress};
+    std::vector<int> predecessors{};
+    std::vector<int> successors{};
+    std::vector<MicrocodeInstruction> instructions{};
+};
+
+/// SDK-independent snapshot of a complete function-level microcode graph.
+struct MicrocodeFunction {
+    Address entry_address{BadAddress};
+    MicrocodeMaturity maturity{MicrocodeMaturity::Generated};
+    std::vector<MicrocodeFunctionArgument> arguments{};
+    std::optional<MicrocodeValueLocation> return_location{};
+    std::vector<MicrocodeBlock> blocks{};
 };
 
 /// Optional per-argument semantic flags for helper-call arguments.
@@ -907,6 +981,41 @@ private:
     std::shared_ptr<Impl> impl_;
 };
 
+/// Serializable saved Hex-Rays local-variable user setting.
+struct LocalVariableUserSetting {
+    LocalVariableLocator locator;
+    std::string name;
+    std::string type_declaration;
+    std::string comment;
+};
+
+struct ReferencedTypeCollection {
+    std::vector<std::uint32_t> ordinals;
+    std::vector<ida::type::UsedMemberOffsets> used_offsets;
+};
+
+/// Opaque snapshot of saved Hex-Rays local-variable user settings.
+///
+/// The snapshot owns SDK-derived state privately; it can be captured from one
+/// decompiled function and restored later to the same function address.
+class LvarSnapshot {
+public:
+    LvarSnapshot();
+    ~LvarSnapshot();
+    LvarSnapshot(const LvarSnapshot&);
+    LvarSnapshot& operator=(const LvarSnapshot&);
+    LvarSnapshot(LvarSnapshot&&) noexcept;
+    LvarSnapshot& operator=(LvarSnapshot&&) noexcept;
+
+    [[nodiscard]] bool empty() const noexcept;
+    [[nodiscard]] std::size_t saved_variable_count() const noexcept;
+
+private:
+    friend class DecompiledFunction;
+    struct Impl;
+    std::shared_ptr<Impl> impl_;
+};
+
 /// Enumerate saved user local-variable settings for a function.
 Result<std::vector<LocalVariableUserSetting>>
 saved_user_lvar_settings(Address function_address);
@@ -1264,13 +1373,74 @@ struct VisitOptions {
 
 // ── User comment position ───────────────────────────────────────────────
 
+/// Semantic kind of a persisted pseudocode comment location.
+enum class CommentPositionKind : std::uint8_t {
+    Default,
+    Argument,
+    ParenthesisOpen,
+    Assembly,
+    ElseLine,
+    DoLine,
+    Semicolon,
+    OpenBrace,
+    CloseBrace,
+    ParenthesisClose,
+    LabelColon,
+    BlockBefore,
+    BlockAfter,
+    TryLine,
+    SwitchCase,
+};
+
 /// Where a user comment attaches relative to a ctree item.
-enum class CommentPosition : int {
-    Default     = 0,    ///< End-of-line comment at the item's address.
-    Semicolon   = 259,  ///< Comment at the semicolon.
-    OpenBrace   = 260,  ///< Comment at the opening brace.
-    CloseBrace  = 261,  ///< Comment at the closing brace.
-    ElseLine    = 258,  ///< Comment at the else line.
+///
+/// This is a semantic value: native Hex-Rays item-preciser integers are never
+/// exposed. Use argument() and switch_case() for parameterized locations.
+class CommentPosition {
+public:
+    CommentPosition() = default;
+
+    static const CommentPosition Default;
+    static const CommentPosition ParenthesisOpen;
+    static const CommentPosition Assembly;
+    static const CommentPosition ElseLine;
+    static const CommentPosition DoLine;
+    static const CommentPosition Semicolon;
+    static const CommentPosition OpenBrace;
+    static const CommentPosition CloseBrace;
+    static const CommentPosition ParenthesisClose;
+    static const CommentPosition LabelColon;
+    static const CommentPosition BlockBefore;
+    static const CommentPosition BlockAfter;
+    static const CommentPosition TryLine;
+
+    /// Attach at a zero-based call argument separator (0..63).
+    static Result<CommentPosition> argument(std::size_t zero_based_index);
+
+    /// Attach at a signed switch-case value representable by Hex-Rays.
+    static Result<CommentPosition> switch_case(std::int64_t value);
+
+    [[nodiscard]] CommentPositionKind kind() const noexcept { return kind_; }
+    [[nodiscard]] std::optional<std::size_t> argument_index() const noexcept;
+    [[nodiscard]] std::optional<std::int64_t> switch_case_value() const noexcept;
+
+    bool operator==(const CommentPosition&) const = default;
+
+private:
+    constexpr CommentPosition(CommentPositionKind kind, std::int64_t detail) noexcept
+        : kind_(kind), detail_(detail) {}
+
+    CommentPositionKind kind_{CommentPositionKind::Default};
+    std::int64_t detail_{0};
+};
+
+/// One copied persisted pseudocode comment.
+struct PseudocodeComment {
+    Address address{BadAddress};
+    CommentPosition position;
+    std::string text;
+
+    bool operator==(const PseudocodeComment&) const = default;
 };
 
 // ── Address mapping entry ───────────────────────────────────────────────
@@ -1380,6 +1550,9 @@ public:
     Result<std::string> get_comment(Address ea,
                                     CommentPosition pos = CommentPosition::Default) const;
 
+    /// Enumerate every persisted comment with copied semantic locations.
+    [[nodiscard]] Result<std::vector<PseudocodeComment>> comments() const;
+
     /// Save all user-defined comments to the database.
     Status save_comments() const;
 
@@ -1469,6 +1642,9 @@ public:
     [[nodiscard]] Result<std::string> get_comment(Address address,
                                                   CommentPosition pos = CommentPosition::Default) const;
 
+    /// Enumerate every persisted comment for the represented function.
+    [[nodiscard]] Result<std::vector<PseudocodeComment>> comments() const;
+
     /// Persist user comments.
     Status save_comments() const;
 
@@ -1502,6 +1678,15 @@ Result<DecompiledFunction> decompile(Address ea, DecompileFailure* failure);
 /// Decompile the function at \p ea.
 /// The decompiler must be available (call available() first or handle the error).
 Result<DecompiledFunction> decompile(Address ea);
+
+/// Generate and copy a complete function-level microcode graph.
+///
+/// The returned graph owns no SDK objects and remains valid after the native
+/// microcode array is destroyed. Pre-local-optimization maturities have their
+/// control-flow graph built before copying.
+Result<MicrocodeFunction>
+generate_microcode(Address function_address,
+                   const MicrocodeGenerationOptions& options = {});
 
 // ── Raw pseudocode access from event handles ────────────────────────────
 

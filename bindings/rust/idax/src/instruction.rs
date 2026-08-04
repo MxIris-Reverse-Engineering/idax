@@ -79,8 +79,16 @@ fn register_category_from_i32(value: i32) -> Result<RegisterCategory> {
 /// Structured representation of an operand struct-offset path.
 #[derive(Debug, Clone)]
 pub struct StructOffsetPath {
-    pub structure_ids: Vec<u64>,
+    pub structure_name: String,
+    pub member_names: Vec<String>,
     pub delta: AddressDelta,
+}
+
+/// Copied metadata for a named enum operand representation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OperandEnum {
+    pub name: String,
+    pub serial: u8,
 }
 
 // ---------------------------------------------------------------------------
@@ -96,8 +104,12 @@ pub struct Operand {
     value: u64,
     addr: Address,
     byte_width: i32,
+    encoded_value_byte_offset: Option<usize>,
+    secondary_encoded_value_byte_offset: Option<usize>,
     reg_name: String,
     reg_class: RegisterCategory,
+    read: bool,
+    written: bool,
 }
 
 impl Operand {
@@ -134,11 +146,27 @@ impl Operand {
     pub fn byte_width(&self) -> i32 {
         self.byte_width
     }
+    /// Byte offset from instruction start to the primary encoded operand value.
+    pub fn encoded_value_byte_offset(&self) -> Option<usize> {
+        self.encoded_value_byte_offset
+    }
+    /// Byte offset to a secondary encoded value for split operand encodings.
+    pub fn secondary_encoded_value_byte_offset(&self) -> Option<usize> {
+        self.secondary_encoded_value_byte_offset
+    }
     pub fn register_name(&self) -> &str {
         &self.reg_name
     }
     pub fn register_category(&self) -> RegisterCategory {
         self.reg_class
+    }
+    /// Whether the processor module marks this operand as read/used.
+    pub fn is_read(&self) -> bool {
+        self.read
+    }
+    /// Whether the processor module marks this operand as changed/written.
+    pub fn is_written(&self) -> bool {
+        self.written
     }
     pub fn is_vector_register(&self) -> bool {
         self.reg_class == RegisterCategory::Vector
@@ -226,10 +254,17 @@ pub(crate) unsafe fn instruction_from_ffi(raw: &idax_sys::IdaxInstruction) -> Re
                 value: op.value,
                 addr: op.target_address,
                 byte_width: op.byte_width,
+                encoded_value_byte_offset: usize::try_from(op.encoded_value_byte_offset).ok(),
+                secondary_encoded_value_byte_offset: usize::try_from(
+                    op.secondary_encoded_value_byte_offset,
+                )
+                .ok(),
                 reg_name: unsafe {
                     error::cstr_to_string(op.register_name, "reg name").unwrap_or_default()
                 },
                 reg_class,
+                read: op.is_read != 0,
+                written: op.is_written != 0,
             });
         }
     }
@@ -347,6 +382,30 @@ pub fn set_operand_offset(address: Address, n: i32, base: Address) -> Status {
     error::int_to_status(ret, "set_operand_offset failed")
 }
 
+/// Apply a named enum representation to one operand, or all operands for `n == -1`.
+pub fn set_operand_enum(address: Address, n: i32, enum_name: &str, serial: u8) -> Status {
+    let enum_name =
+        CString::new(enum_name).map_err(|_| Error::validation("enum name contains a NUL byte"))?;
+    let ret = unsafe {
+        idax_sys::idax_instruction_set_operand_enum(address, n, enum_name.as_ptr(), serial)
+    };
+    error::int_to_status(ret, "set_operand_enum failed")
+}
+
+/// Read the copied enum name and serial for an operand representation.
+pub fn operand_enum(address: Address, n: i32) -> Result<OperandEnum> {
+    unsafe {
+        let mut name: *mut std::ffi::c_char = std::ptr::null_mut();
+        let mut serial: u8 = 0;
+        let ret = idax_sys::idax_instruction_operand_enum(address, n, &mut name, &mut serial);
+        if ret != 0 {
+            return Err(error::consume_last_error("operand_enum failed"));
+        }
+        let name = error::cstr_to_string_free(name, "operand_enum returned a null name")?;
+        Ok(OperandEnum { name, serial })
+    }
+}
+
 /// Set operand as a structure member offset by structure name.
 pub fn set_operand_struct_offset_by_name(
     address: Address,
@@ -367,17 +426,33 @@ pub fn set_operand_struct_offset_by_name(
     error::int_to_status(ret, "set_operand_struct_offset_by_name failed")
 }
 
-/// Set operand as a structure member offset by raw structure id.
-pub fn set_operand_struct_offset_by_id(
+/// Idempotently apply one exact saved-local structure member path.
+pub fn ensure_operand_struct_member_offset(
     address: Address,
     n: i32,
-    structure_id: u64,
+    structure_name: &str,
+    member_byte_offset: usize,
     delta: AddressDelta,
-) -> Status {
+) -> Result<bool> {
+    let structure_name = CString::new(structure_name)
+        .map_err(|_| Error::validation("structure name contains a NUL byte"))?;
+    let mut added = 0;
     let ret = unsafe {
-        idax_sys::idax_instruction_set_operand_struct_offset_by_id(address, n, structure_id, delta)
+        idax_sys::idax_instruction_ensure_operand_struct_member_offset(
+            address,
+            n,
+            structure_name.as_ptr(),
+            member_byte_offset,
+            delta,
+            &mut added,
+        )
     };
-    error::int_to_status(ret, "set_operand_struct_offset_by_id failed")
+    if ret != 0 {
+        return Err(error::consume_last_error(
+            "ensure_operand_struct_member_offset failed",
+        ));
+    }
+    Ok(added != 0)
 }
 
 /// Set operand as a based structure offset.
@@ -396,13 +471,13 @@ pub fn set_operand_based_struct_offset(
 /// Read struct-offset path metadata for an operand.
 pub fn operand_struct_offset_path(address: Address, n: i32) -> Result<StructOffsetPath> {
     unsafe {
-        let mut out_ids: *mut u64 = std::ptr::null_mut();
+        let mut out_names: *mut *mut std::ffi::c_char = std::ptr::null_mut();
         let mut out_count: usize = 0;
         let mut out_delta: AddressDelta = 0;
         let ret = idax_sys::idax_instruction_operand_struct_offset_path(
             address,
             n,
-            &mut out_ids,
+            &mut out_names,
             &mut out_count,
             &mut out_delta,
         );
@@ -411,16 +486,24 @@ pub fn operand_struct_offset_path(address: Address, n: i32) -> Result<StructOffs
                 "operand_struct_offset_path failed",
             ));
         }
-        let structure_ids = if out_ids.is_null() || out_count == 0 {
-            Vec::new()
+        let names_result: Result<Vec<String>> = if out_names.is_null() || out_count == 0 {
+            Err(Error::internal(
+                "operand_struct_offset_path returned no root name",
+            ))
         } else {
-            std::slice::from_raw_parts(out_ids, out_count).to_vec()
+            let raw = std::slice::from_raw_parts(out_names, out_count);
+            raw.iter()
+                .map(|value| error::cstr_to_string(*value, "struct offset path name"))
+                .collect()
         };
-        if !out_ids.is_null() {
-            idax_sys::idax_free_addresses(out_ids);
+        if !out_names.is_null() {
+            idax_sys::idax_instruction_string_array_free(out_names, out_count);
         }
+        let mut names = names_result?;
+        let structure_name = names.remove(0);
         Ok(StructOffsetPath {
-            structure_ids,
+            structure_name,
+            member_names: names,
             delta: out_delta,
         })
     }

@@ -15,28 +15,51 @@ ida::                                     (root: type aliases, error model, opti
  |-- ida::segment        CRUD, properties, permissions                   [1 enum, 1 struct, 3 classes, ~13 free fns]
 |-- ida::function       CRUD, chunks, frames, register variables        [3 structs, 4 classes, ~29 free fns]
  |-- ida::instruction    Decode/create, operands, representation         [1 enum, 2 classes, ~25 free fns]
+ |-- ida::data           Read/write/patch/define/custom data, strings   [1 enum, 11 structs, ~60 free fns, 2 templates]
+ |-- ida::database       Open/save/close, metadata, snapshots            [1 enum, 6 structs, ~25 free fns]
+ |-- ida::path           Portable path splitting and directory checks    [~3 free fns]
  |
- |-- ida::name           Set/get/force/remove, demangling                [1 enum, ~11 free fns]
+ |-- ida::segment        CRUD, properties, semantic register ranges     [2 enums, 3 structs, 3 classes, ~25 free fns]
+|-- ida::function       CRUD, chunks, frames, register variables        [3 structs, 4 classes, ~29 free fns]
+ |-- ida::instruction    Decode/create, opaque operand representation    [3 enums, 2 structs, 2 classes, free-fn surface]
+ |
+ |-- ida::name           Set/get/force/remove, inventories, demangling   [1 enum, 2 structs, ~13 free fns]
  |-- ida::xref           Unified refs, typed code/data categories        [3 enums, 1 struct, ~10 free fns]
+ |-- ida::offset         Opaque operand reference semantics              [2 enums, 7 structs, 13 free fns]
  |-- ida::comment        Regular/repeatable, anterior/posterior           [~15 free fns]
  |
- |-- ida::type           Type construction, structs/unions, libraries     [1 struct, 1 class, ~9 free fns]
+ |-- ida::type           Type construction, rich layout metadata, libraries [8 structs, 3 enums, 1 class, ~9 free fns]
  |-- ida::entry          Entry points: list, add, rename                 [1 struct, ~5 free fns]
  |-- ida::fixup          Fixup descriptors, traversal, custom handlers   [2 enums, 2 structs, 2 classes, ~11 free fns]
  |
  |-- ida::search         Text/immediate/binary pattern search            [1 enum, 1 struct, ~7 free fns]
  |-- ida::analysis       Auto-analysis control, scheduling               [~7 free fns]
+ |-- ida::bookmark       Opaque address-bookmark management              [1 struct, 6 free fns]
+ |-- ida::navigation     Persistent semantic address history             [1 struct, 1 class]
+ |-- ida::problem        Typed analysis-problem lists                    [1 enum, 6 free fns]
+ |-- ida::exception      Opaque C++/SEH exception regions                [3 enums, 7 structs, 5 free fns]
+ |-- ida::parser         Third-party source parsing and type ingestion   [2 enums, 2 structs, 9 free fns]
+ |-- ida::script         Opaque IDC values and synchronous execution     [2 enums, 6 structs, 1 class, 17 free fns]
+ |-- ida::directory      Built-in database organization trees            [3 enums, 3 structs, 1 class]
+ |-- ida::registry       Scoped persistent plugin configuration           [1 enum, 1 struct, 1 class]
+ |-- ida::registers      Named register-value tracking                    [2 enums, 4 structs, 8 free fns]
  |-- ida::lumina         Lumina pull/push and connection control         [3 enums, 1 struct, ~8 free fns]
+ |-- ida::undo           Named restore points and undo/redo state        [5 free fns]
  |
  |-- ida::event          Typed IDB subscriptions, generic routing        [1 enum, 1 struct, 1 class, ~10 free fns]
  |-- ida::plugin         Plugin base, actions, menu/toolbar              [3 structs, 1 class, ~4 free fns]
+ |-- ida::event          Typed IDB change snapshots, generic routing     [3 enums, 6 structs, 1 class, ~19 free fns]
+ |-- ida::plugin         Plugin base, actions, scoped hotkeys, attachments [5 structs, 2 classes, ~14 free fns]
  |-- ida::loader         Loader base, InputFile, registration macro      [2 structs, 2 classes, ~5 free fns]
- |-- ida::processor      Processor base, descriptors, typed analysis/output [8 enums, 9 structs, 2 classes, IDAX_PROCESSOR]
+ |-- ida::processor      Loadable processor bridge, descriptors, typed analysis/output [9 enums, 9 structs, 2 classes, IDAX_PROCESSOR]
  |
  |-- ida::debugger       Process/thread control, backend routing, request queue, events [2 enums, 5 structs, 1 class, ~42 free fns]
 |-- ida::decompiler     Decompile, pseudocode/microcode, ctree, events/cache/helpers [15 enums, 15 structs, 9 classes, ~12 free fns]
  |-- ida::lines          Tagged text, color spans, address-tag helpers     [1 enum, ~6 free fns, constants]
 |-- ida::ui             Messages, dialogs, wait boxes, widgets/viewers   [1 enum, 5 structs, 3 classes, ~31 free fns]
+|-- ida::decompiler     Decompile, owned/call-analyzed microcode graphs, ctree, events/cache/helpers [16 enums, 19 structs, 9 classes, event/free-fn surface]
+ |-- ida::lines          Tagged text plus source-file address mappings     [1 enum, 1 struct, ~9 free fns, constants]
+|-- ida::ui             Messages, dialogs, wait boxes, widgets/viewers   [1 enum, 5 structs, 3 classes, widget/event free-fn surface]
 |-- ida::graph          Graph objects, viewers, flow charts, layouts     [2 enums, 5 structs, 2 classes, ~10 free fns]
  |
  |-- ida::storage        Netnode abstraction, id/open-by-id, alt/sup/hash/blob [1 class (Node), ~18 methods]
@@ -75,15 +98,22 @@ Defined across `error.hpp`, `address.hpp`, and `core.hpp`:
 | `ida::segment` | Segment management | `Segment`, `Permissions`, `Type` (+ default segment-register seeding helpers) |
 | `ida::function` | Function analysis | `Function`, `StackFrame`, `Chunk` |
 | `ida::instruction` | Instruction decoding | `Instruction`, `Operand`, `OperandType` |
+| `ida::data` | Byte-level, registered custom-data, and string-inventory access | `TypedValue`, `StringListOptions`, `StringLiteral`, `CustomDataTypeId`, `CustomDataFormatId`, owned definitions, copied metadata/item snapshots |
+| `ida::database` | Database lifecycle and normalized target metadata | `ProcessorId`, `ProcessorProfile`, `Snapshot`, `RuntimeOptions`, `PluginLoadPolicy`, `CompilerInfo`, `ImportModule`, `ImportSymbol` |
+| `ida::path` | Portable path helpers | (free functions only) |
+| `ida::segment` | Segment management and processor context ranges | `Segment`, `Permissions`, `Type`, `SegmentRegisterSource`, `SegmentRegisterDescriptor`, `SegmentRegisterRange` |
+| `ida::function` | Function analysis, printable prototype readback, and conservative prototype application | `Function`, `StackFrame`, `Chunk` |
+| `ida::instruction` | Instruction decoding, processor-reported access modes and encoded-value byte positions, opaque named enum representations, and copied root/member-name struct-offset paths | `Instruction`, `Operand`, `OperandType`, `OperandFormat`, `RegisterCategory`, `OperandEnum`, `StructOffsetPath` |
 
 ### Metadata Domains (read/write)
 
 | Namespace | Primary Focus | Key Types |
 |-----------|---------------|-----------|
-| `ida::name` | Symbol naming | `DemangleForm` |
+| `ida::name` | Symbol naming, filtered inventories, and address-free demangling | `ListOptions`, `Entry`, `DemangleForm` |
 | `ida::xref` | Cross-references | `Reference`, `CodeType`, `DataType` |
+| `ida::offset` | Operand offset/reference semantics | `ReferenceType`, `ReferenceTypeDescriptor`, `OperandLocation`, `ReferenceOptions`, `ReferenceInfo`, `RenderedExpression`, `ReferenceCalculation` |
 | `ida::comment` | Comments | (free functions only) |
-| `ida::type` | Type system | `TypeInfo`, `Member` |
+| `ida::type` | Type system, including copied shifted-pointer metadata, explicit forward classification/ordinal-preserving replacement, opaque exact-member persistent references, metadata-preserving pointer/prototype edits, and UDT semantic mutation | `TypeInfo`, `PointerDetails`, `TypeKind`, `EnumRadix`, `Member`, `FunctionDetails`, `EnumDetails`, `UdtDetails` |
 | `ida::entry` | Entry points | `EntryPoint` |
 | `ida::fixup` | Relocations | `Descriptor`, `CustomHandler`, `Type` |
 
@@ -93,15 +123,25 @@ Defined across `error.hpp`, `address.hpp`, and `core.hpp`:
 |-----------|---------------|-----------|
 | `ida::search` | Pattern matching | `Direction`, `TextOptions` |
 | `ida::analysis` | Auto-analysis | (free functions only) |
+| `ida::bookmark` | Address bookmarks | `Bookmark`, `MaxSlots` |
+| `ida::navigation` | Persistent address history | `Entry`, `History` |
+| `ida::problem` | Typed analysis-problem lists | `Kind` |
+| `ida::exception` | Architecture-independent exception regions | `BlockDefinition`, `Block`, `CatchHandler`, `SehHandler`, `Location` |
+| `ida::parser` | Third-party parser selection/configuration and local-type ingestion | `Language`, `InputKind`, `ParseOptions`, `ParseReport` |
+| `ida::script` | IDC value ownership and synchronous execution | `Value`, `ValueKind`, `DereferenceMode`, `CompileOptions`, `FileCompileOptions`, `CompilationResult`, `ExecutionResult` |
+| `ida::directory` | Built-in database organization trees | `Kind`, `Entry`, `BulkReport`, `Tree` |
+| `ida::registry` | Scoped persistent plugin configuration | `ValueKind`, `StringListUpdate`, `Store` |
+| `ida::registers` | Backward register-value analysis | `TrackingState`, `ValueOrigin`, `ValueCandidate`, `TrackedValue`, `NearestValue` |
 | `ida::lumina` | Lumina metadata sync | `Feature`, `PushMode`, `OperationCode`, `BatchResult` |
+| `ida::undo` | Named restore points and undo/redo state | (free functions only) |
 
 ### Module Authoring
 
 | Namespace | Primary Focus | Key Types |
 |-----------|---------------|-----------|
-| `ida::plugin` | Plugin development | `Plugin`, `Action`, `ActionContext`, `Info` |
+| `ida::plugin` | Plugin development | `Plugin`, `Action`, `ActionContext`, `ScopedHotkey`, `Info` |
 | `ida::loader` | Loader development | `Loader`, `InputFile`, `AcceptResult` |
-| `ida::processor` | Processor modules | `Processor`, `ProcessorInfo`, `AnalyzeDetails`, `OutputContext` |
+| `ida::processor` | Processor modules | `Processor`, `ProcessorInfo`, `ProcessorFlag2`, `AnalyzeDetails`, `OutputContext` |
 
 ### Interactive and Advanced
 
@@ -111,8 +151,11 @@ Defined across `error.hpp`, `address.hpp`, and `core.hpp`:
 | `ida::decompiler` | Decompilation | `ScopedSession`, `DecompiledFunction` (pseudocode+microcode), `LvarSnapshot`, `DecompileFailure`, `MaturityEvent`, `PopulatingPopupEvent`, `MicrocodeOpcode`, `MicrocodeOperandKind`, `MicrocodeOperand`, `MicrocodeInstruction`, `MicrocodeInsertPolicy`, `MicrocodeFunctionRole`, `MicrocodeArgumentFlag`, `MicrocodeValue`, `MicrocodeLocationPart`, `MicrocodeValueLocation`, `MicrocodeRegisterRange`, `MicrocodeMemoryRange`, `MicrocodeCallOptions`, `MicrocodeFilter`, `MicrocodeContext`, `ScopedSubscription`, `ScopedMicrocodeFilter` |
 | `ida::lines` | Tagged text/color utilities | `Color`, `kColorOn`, `kColorOff`, `kColorEsc`, `kColorInv`, `kColorAddr`, `kColorAddrSize` |
 | `ida::ui` | User interface | `Widget`, `Chooser`, `WaitBox`, `Progress`, `FormBuilder`, typed form bindings, `Event`, `ShowWidgetOptions`, `ScopedSubscription` |
+| `ida::decompiler` | Decompilation, semantic persisted comments, pseudocode-switch events, and owned graphs with copied register identities plus destination-modification semantics | `ScopedSession`, `DecompiledFunction` (pseudocode+formatted microcode), `CommentPosition`, `PseudocodeComment`, `LvarSnapshot`, `DecompileFailure`, `MaturityEvent`, `PseudocodeEvent`, `PopulatingPopupEvent`, `MicrocodeOpcode`, `MicrocodeOperandKind`, `MicrocodeOperand`, `MicrocodeInstruction`, `MicrocodeMaturity`, `MicrocodeGenerationOptions`, `MicrocodeFunctionArgument`, `MicrocodeBlock`, `MicrocodeFunction`, `MicrocodeInsertPolicy`, `MicrocodeFunctionRole`, `MicrocodeArgumentFlag`, `MicrocodeValue`, `MicrocodeLocationPart`, `MicrocodeValueLocation`, `MicrocodeRegisterRange`, `MicrocodeMemoryRange`, `MicrocodeCallOptions`, `MicrocodeFilter`, `MicrocodeContext`, `ScopedSubscription`, `ScopedMicrocodeFilter` |
+| `ida::lines` | Tagged text/color plus source mappings | `SourceFile`, `Color`, `kColorOn`, `kColorOff`, `kColorEsc`, `kColorInv`, `kColorAddr`, `kColorAddrSize` |
+| `ida::ui` | User interface and current-widget polling | `Widget`, `Chooser`, `WaitBox`, `Progress`, `FormBuilder`, typed form bindings, `Event`, `ShowWidgetOptions`, `ScopedSubscription` |
 | `ida::graph` | Graph visualization | `Graph`, `BasicBlock`, `GraphCallback` |
-| `ida::event` | IDB event routing | `Event`, `EventKind`, `ScopedSubscription` |
+| `ida::event` | Mutation-safe IDB event routing | `Event`, `EventKind`, `SegmentMovedEvent`, `ItemCreatedEvent`, `ItemsDestroyedEvent`, `ExtraCommentChangedEvent`, `LocalTypesChangedEvent`, `ScopedSubscription` |
 | `ida::storage` | Persistent key-value | `Node` |
 
 ## Header Dependency Map

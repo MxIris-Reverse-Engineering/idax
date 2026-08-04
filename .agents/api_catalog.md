@@ -13,7 +13,24 @@ This section captures the intended public API semantics at a concrete level so i
 - Write family: `write_byte`, `write_word`, `write_dword`, `write_qword`, `write_bytes`
 - Typed value facade: `read_typed`, `write_typed`, `TypedValue`, `TypedValueKind`
 - Patch family: `patch_byte`, `patch_word`, `patch_dword`, `patch_qword`, `patch_bytes`, `revert_patch`
-- Define family: `define_byte`, `define_word`, `define_dword`, `define_qword`, `define_string`, `define_struct`, `undefine`
+- Fixed-width define family: `define_byte`, `define_word`, `define_dword`,
+  `define_qword`, `define_oword`, `define_yword`, `define_zword`,
+  `define_float`, `define_double`; `count` is a positive element count with
+  checked conversion to the SDK byte length
+- Processor-sized extended-real family: `tbyte_element_size`, `define_tbyte`,
+  `packed_real_element_size`, `define_packed_real`; availability is specific
+  to the active assembler and both use the active processor's tbyte width
+- Variable-width define family: `define_string`, `define_struct`, `undefine`;
+  lengths/counts remain byte-based
+- Custom data lifecycle: `CustomDataTypeId`, `CustomDataFormatId`, owned
+  type/format definitions, copied metadata snapshots, register/unregister/find/list,
+  custom/standard attachment queries, fixed or callback-derived item sizing,
+  explicit/inferred creation, and stored item identity
+- Custom format invocation: `render_custom_data`, `scan_custom_data`, and
+  `analyze_custom_data` with opaque `CustomDataFormatContext`; callback state is
+  retained until explicit unregister and exceptions do not cross the SDK ABI
+- Shared string inventory: copied `StringListOptions`/`StringLiteral` values,
+  explicit configure/rebuild/clear operations, and owned enumeration results
 - Search helpers: binary pattern and typed immediate searches
 
 ### 17.3 `ida::segment`
@@ -34,15 +51,26 @@ This section captures the intended public API semantics at a concrete level so i
 - Decode/create operations with explicit DB mutation distinction
 - `Instruction` view object (mnemonic, size, flow)
 - `Operand` view object with typed categories and representation controls
+- Processor-reported operand read/write access preserved in C++, Node
+  (`isRead`/`isWritten`), and Rust (`is_read`/`is_written`) snapshots
 - Struct-offset operand helpers (`set_operand_struct_offset`, `set_operand_based_struct_offset`)
 - Struct-offset readback/introspection helpers (`operand_struct_offset_path`, `operand_struct_offset_path_names`)
+- Named enum representation helpers (`set_operand_enum`, `operand_enum`) with copied names/serials and no public TIDs
 - Xref conveniences for refs-from and flow semantics
 
 ### 17.6 `ida::name`
 - Core naming: set/get/force/remove
 - Resolution: symbol-to-address and expression rendering
 - Properties: public/weak/auto/user name states
-- Demangling forms: short/long/full
+- Demangling forms: short/long/full for both address-owned names and arbitrary
+  in-memory mangled symbols
+- Filtered copied inventories through `ListOptions`, preserving user-defined
+  and auto-generated origin metadata across C++, Node, and Rust
+
+### 17.6.1 `ida::lines`
+- Tagged-text color helpers and address-tag encoding/decoding
+- Copied source-file metadata with half-open `address::Range` values
+- Checked add/query/remove operations without borrowed SDK filenames
 
 ### 17.7 `ida::xref`
 - Unified xref object model
@@ -57,6 +85,12 @@ This section captures the intended public API semantics at a concrete level so i
 
 ### 17.9 `ida::type`
 - `TypeInfo` value object with constructor helpers (primitive/pointer/array/function)
+- Copied exact pointer metadata (`PointerDetails`) and immutable shifted-parent/delta construction (`with_shifted_parent`)
+- Explicit local forward-declaration state/kind and ordinal-preserving copied complete-UDT replacement (`is_forward_declaration`, `forward_declaration_kind`, `replace_forward_declaration`)
+- Immutable indexed function-argument replacement that preserves the native prototype record (`with_function_argument_type`)
+- Immutable indexed function-argument renaming that preserves the native prototype record (`with_function_argument_name`)
+- Immutable function-return replacement that preserves the native prototype record (`with_function_return_type`)
+- Metadata-preserving mutually exclusive C++ object/vftable UDT semantics (`set_udt_semantics`)
 - Struct/union/member APIs with byte-based offsets
 - Apply/retrieve type operations
 - Type library access wrappers and import/export helpers
@@ -98,8 +132,14 @@ This section captures the intended public API semantics at a concrete level so i
 - Plugin base classes and lifecycle abstraction
 - Multi-instance support
 - Action/menu/toolbar/popup helper APIs
+- Counted wrapper-managed menu/toolbar attachment state with deterministic
+  missing/already-detached `NotFound` results
 - Registration helpers with type-safe callback signatures
 - Action-context Local Types `TypeRef` snapshots
+- Wrapper-owned action adapters with deterministic unregister reclamation and
+  activation/update exception barriers
+- Programmatic action activation and move-only `ScopedHotkey` one-call
+  shortcut registration with explicit/drop teardown
 
 ### 17.16 `ida::loader`
 - Loader base class with accept/load/save lifecycle
@@ -129,6 +169,8 @@ This section captures the intended public API semantics at a concrete level so i
   `clipboard_backend`) behind `IDAX_ENABLE_QT_CLIPBOARD`; enabling the Qt
   backend requires an IDA-compatible `QT_NAMESPACE=QT` Qt package
 - Wait-box progress/cancellation RAII helpers
+- Stable opaque widget identity and `current_widget()` polling; closed-widget
+  identities are retired on `ui_widget_closing`
 - Chooser abstractions
 - Notification/event wrappers with clear ownership
 
@@ -138,9 +180,14 @@ This section captures the intended public API semantics at a concrete level so i
 - Layout and event helpers
 
 ### 17.21 `ida::event`
-- Typed subscription API
+- Typed subscription API for segment/function lifecycle, renames, patches,
+  regular/extra comments, segment moves, function/type/operand updates,
+  code/data creation, item destruction, and local-type changes
+- Opaque owned payload snapshots (`SegmentMovedEvent`, `ItemCreatedEvent`,
+  `ItemsDestroyedEvent`, `ExtraCommentChangedEvent`, `LocalTypesChangedEvent`)
 - RAII scoped subscription helpers
 - Event filtering and routing helpers
+- Callback-side subscribe/unsubscribe isolation with deferred listener/context teardown
 
 ### 17.22 `ida::decompiler`
 - Availability and decompile entrypoints
@@ -154,6 +201,14 @@ This section captures the intended public API semantics at a concrete level so i
 - Hex-Rays event subscriptions including popup-population callbacks for dynamic decompiler menus
 - Microcode-filter lifecycle (`register_microcode_filter`, `unregister_microcode_filter`)
 - `MicrocodeContext` typed block/introspection read-back (`instruction`, `instruction_at_index`, `last_emitted_instruction`)
+- Hex-Rays event subscriptions including pseudocode-function-switch and
+  popup-population callbacks for dynamic decompiler menus
+- Microcode-filter lifecycle (`register_microcode_filter`, `unregister_microcode_filter`)
+- `MicrocodeContext` typed block/introspection read-back (`instruction`, `instruction_at_index`, `last_emitted_instruction`)
+- Maturity-explicit owned function graph generation (`generate_microcode`) with
+  copied argument/return locations, CFG adjacency, addressed recursive
+  instructions/operands, optional call-information analysis, and C++/Node/Rust
+  value parity
 
 ### 17.23 `ida::storage` (advanced)
 - Opaque node abstraction
@@ -180,5 +235,119 @@ This section captures the intended public API semantics at a concrete level so i
 - Single-item loading: `load_module`, `load_section` (auto-detected region kind), `load_dyld_header`
 - Bulk loading: `load_branch_islands`, `load_branch_mappings`, `load_global_offset_tables`, `load_gaps`, `load_cache_data` — IDA 9.4 uses the public `dscu_svc_t` region service; IDA 9.3 source builds retain the headless legacy dscu backend, and `load_cache_data` reports Unsupported there
 - Companion `ida::plugin` invocation helpers: `is_plugin_available`, `run_plugin` (wrap SDK `find_plugin` / `load_and_run_plugin`)
+### 17.25 `ida::database` processor-context metadata extensions
+- Verified `ProcessorId` enum + checked `processor()` helper
+- `processor_id_from_raw()` converts only the verified public `PLFM_*` range through `PLFM_NDS32`; legacy `Mcore = 77` remains source-only compatibility and is never normalized
+- `ProcessorProfile`/`processor_profile()` preserve authoritative raw IDs while exposing optional typed identity, name, address bitness, endianness, and optional ABI in one value
+- Architecture-shaping helpers: `address_bitness()`, `set_address_bitness(bits)`, `is_big_endian()`, `abi_name()`
+- Port-driven metadata closure for external ISA-semantics integrations (e.g., idapcode + Sleigh)
+
+### 17.26 Opaque UDT Member References
+- `TypeInfo::member_references(byte_offset)` enumerates only source addresses of persistent user informational references to one exact saved local UDT member.
+- `TypeInfo::ensure_member_reference(byte_offset, source_address)` creates `dr_I | XREF_USER` without exposing the member TID and returns whether a new reference was added.
+- Exact offset uniqueness, stable local identity, item-head source validation, incompatible-reference rejection, and C++/Node/Rust parity.
+
+### 17.27 Opaque Exact Operand Struct-Offset Paths
+- `StructOffsetPath` copies the root structure name, ordered selected member names, and signed delta; no native type/member ID crosses the public boundary.
+- `ensure_operand_struct_member_offset(address, operand_index, structure_name, member_byte_offset, delta)` applies one exact `[root, member]` path idempotently and conflict-safely.
+- `MicrocodeOperand::processor_register_id` carries the owned processor-register identity derived from a register microoperand and its width, enabling exact source-audited machine-operand correlation.
+- C++/Node/Rust parity includes copied path readback, exact added/reused state, signed deltas, and unavailable-register sentinel `-1`.
+
+### 17.28 Owned Microcode Destination Semantics
+- `MicrocodeInstruction::modifies_destination` copies the SDK instruction's destination-modification result without exposing `minsn_t` or a callback-scoped lifetime.
+- Node `modifiesDestination` and Rust `modifies_destination` preserve the same boolean through the owned graph and recursive nested-instruction transfer.
+- Store-address operands remain readable sources, while true result destinations can be identified for exact after-instruction state injection.
+
+### 17.29 Operand Encoded-Value Byte Positions
+- `Operand::encoded_value_byte_offset()` copies the processor module's primary encoded-value position as `std::optional<std::size_t>`.
+- `Operand::secondary_encoded_value_byte_offset()` copies the optional secondary/outer position used by split operand encodings.
+- Node maps absence to `null`; the generated C ABI uses `-1`; safe Rust uses `Option<usize>`. Every consumer validates a present position against `Instruction::size()` before byte slicing.
+
+### 17.30 Cross-Binding Function Declaration Readback
+- Existing C++ `function::declaration(address, name_override)` prints an applied function prototype with an optional declarator-name replacement.
+- Node `function.declaration(address, nameOverride?)`, generated C `idax_function_declaration`, and Rust `function::declaration(address, Option<&str>)` return owned UTF-8 copies with the same error semantics.
+- Conservative import treats successful nonempty target readback as metadata to preserve.
+
+### 17.31 Semantic Persisted Pseudocode Comments
+- `CommentPosition` models default, argument separator `0..63`, every named Hex-Rays inner/outer location, and signed switch-case values in `[-0x1fffffff, 0x1fffffff]` without exposing `item_preciser_t`.
+- `PseudocodeComment` owns one persisted `(Address, CommentPosition, std::string)` record; `DecompiledFunction::comments()` and `DecompilerView::comments()` enumerate all nonempty records deterministically.
+- `set_comment`/`get_comment` use semantic positions, reject embedded NUL, and require explicit `save_comments()` persistence. `has_orphan_comments()` and `remove_orphan_comments()` remain explicit operations; enumeration and import never delete orphans.
+- Node uses semantic strings or `{ kind: 'argument'|'switchCase', ... }`; the C ABI uses a validated kind/detail pair; safe Rust uses `CommentPosition` variants and owned `PseudocodeComment` values.
+
+### 17.32 Opaque Named Undo/Redo
+- `ida::undo::create_point(action_name, label)` serializes the SDK-private checkpoint record and returns whether the host accepted it; embedded NUL bytes are rejected.
+- `undo_action_label()` and `redo_action_label()` return copied optional display labels without exposing `qstring` or native history objects.
+- `perform_undo()` and `perform_redo()` return `false` when the requested transition is unavailable rather than manufacturing an SDK error.
+- Node, Rust, and Python preserve the same five operations, optional-label state, boolean availability state, and owned-string boundary.
+
+### 17.33 Typed Analysis-Problem Lists
+- `ida::problem::Kind` assigns semantic names to all 16 pinned problem-list categories without exposing `problist_id_t` or accepting raw numeric values.
+- `description()` and `next()` return copied optional values; `remember()` preserves absent versus explicitly empty messages and rejects embedded NUL.
+- `remove()`, `contains()`, and `name()` preserve exact host state while returning owned values. Node, Rust, and Python expose the same six operations.
+
+### 17.34 Opaque Architecture-Independent Exception Regions
+- `BlockDefinition` owns sorted fragmented protected ranges and a discriminated `CppHandlers` or `SehHandler` payload; retrieved `Block` values add the host-calculated nesting level.
+- C++ catches use semantic typed, catch-all, and cleanup selectors with optional stack, frame-register, and exception-object metadata. SEH handlers use fragmented filter ranges or a closed disposition.
+- `list`, `remove`, `add`, `system_region_start`, and `contains` cover all five pinned runtime operations without exposing `tryblk_t`, `catch_t`, `seh_t`, SDK containers, selector sentinels, or raw masks.
+- Node, safe Rust, and Python preserve the same owned range graph and semantic location classes. The generated C ABI is private transport with explicit recursive allocation/free ownership.
+
+### 17.35 Opaque Third-Party Source Parsers
+- `Language` is a closed six-bit semantic set and `InputKind` distinguishes in-memory source from a file path without exposing `srclang_t` or a native boolean convention.
+- `select`, `select_for`, `selected_name`, and `set_arguments` preserve parser registry identity and native not-found/unsupported states using copied strings and structured errors.
+- `parse_for`, `parse_with`, and `parse_with_options` import into the current local type library and return `ParseReport{error_count}`; `ParseOptions` names every supported extended behavior and accepts only portable pack alignments.
+- `option` and `set_option` preserve parser-defined string configuration without inventing a cross-parser option enum. Node, safe Rust, and Python expose the same nine operations and four public value types.
+
+### 17.36 Opaque Standard Directory Trees
+- `Kind` selects exactly one of the eight host-owned standard trees without retaining a `dirtree_t*`; a copyable `Tree` reacquires current state by semantic kind.
+- `Entry` copies absolute path, full name, display name, attributes, and directory/item classification. Direct children, recursive descendants, and wildcard item search return owned collections.
+- Directory create/remove/rename/fold, item link/unlink, cwd/absolute-path conversion, natural/manual ordering, and rank changes preserve host semantics through validated text and structured errors.
+- `BulkReport` retains successful affected paths plus per-source `BulkFailure` values at original caller indices. Pre-resolution and native failures merge deterministically without erasing partial success.
+- Node, safe Rust, and Python expose the same tree kinds, entries, operations, and reports. Native trees, directory specifications, inodes, cursors, directory indexes, visitors, vectors, and raw `dterr_t` values remain private.
+
+### 17.37 Opaque Scoped Persistent Registry
+- `Store::open(nonempty_key)` owns only scoped key text; `child()` derives one validated component without retaining a native handle or changing the process-global registry root.
+- Typed optional string, binary, signed 32-bit integer, and boolean reads preserve absence and reject kind mismatch. Writes verify exact typed readback; `ValueKind` exposes only the three pinned semantic storage kinds.
+- Child/value inventories and ordered string lists return copied collections. Value, nonrecursive-key, and recursive-tree deletion return explicit host state.
+- `StringListUpdate` performs deterministic removal, addition-specific deduplication, front insertion, and trimming with a `1..1000` record limit. Compound updates are not atomic across writers because the SDK exposes no registry transaction token.
+- Node, safe Rust, and Python preserve the same store identity, types, copied values, list behavior, and cleanup operations. SDK strings/vectors, raw buffers and kinds, storage backend details, and `set_registry_name` remain private.
+
+### 17.38 Opaque Register-Value Tracking
+- `TrackingState` names undefined, dead-end, aborted, bad-instruction, unsupported-instruction, function-input, loop-variant, incompatible-value, excessive-reference/value, constant, and stack-pointer-delta outcomes without exposing the native state byte.
+- `TrackedValue` owns rendered state, optional cause/abort metadata, and every constant or signed stack-delta candidate with copied defining address, processor instruction code, and short/PC-relative/GOT-like attributes.
+- `track`, `constant_at`, `stack_delta_at`, and `nearest_at` accept register names and preserve unsupported versus unknown versus optional-no-value semantics. Native register numbers and alias parsing remain private.
+- Semantic cache clear/change notifications translate added/removed control-flow or data-reference state without exposing `cref_t`, `dref_t`, tracker objects, or cache pointers. Node, safe Rust, and Python preserve the same owned model.
+
+### 17.39 Opaque Address Bookmarks
+- `Bookmark` owns an address, exact `0..1023` slot, and copied description. `all`, `at`, and `at_slot` return current snapshots in ascending slot order without exposing `place_t`, `lochist_entry_t`, renderers, widgets, user data, directory-tree identities, or native sentinels.
+- `set` updates an existing address in place, rejects identity or slot conflicts before mutation, and otherwise selects the lowest free slot deterministically unless an explicit slot is supplied.
+- `remove` and `remove_slot` preserve the exact address, slot, and description of every survivor despite native interior-erase compaction. The implementation snapshots state, clears from the tail, rebuilds exact survivors, verifies equality, and attempts restoration of the original snapshot on failure.
+- Node, safe Rust, and Python preserve the same six operations, `1024`-slot capacity, owned values, optional lookup state, conflict semantics, and boolean removal state. The C ABI is private transport with explicit string/array ownership.
+
+### 17.40 Opaque Persistent Address Navigation
+- `Entry` owns one address, semantic channel, and metadata string. Copyable `History` owns only a validated logical stream name, immutable recovery entry, and creation observation; native places, renderer state, widget identities, stream keys, netnodes, containers, and serialization remain private.
+- Stack and current-channel state remain distinct. `entries`, `size`, `index`, `current`, `current_for`, and `all_current` copy exact public state; `set_current`, `push`, `seek`, `back`, `forward`, `replace`, and `clear` expose the proven headless persistent subset with checked bounds and exact postcondition verification.
+- `transfer_channel_to` rejects identity, missing-source, destination-conflict, and empty-source cases before mutation. Retained matching entries append in source order, the source cursor normalizes to its nearest retained predecessor, and the destination cursor stays fixed. Representable mismatches trigger restoration attempts.
+- Native initialization uses a reserved filtered bootstrap channel because `navstack_t::init` inserts its default when that channel-current record is missing. Public channels cannot enter the reserved namespace, preventing caller-default resurrection after transfer.
+- Node, safe Rust, and Python preserve owned entries, optional boundary/current state, default movement/transfer controls where supported, and RAII/native lifetime containment. The generated C ABI has explicit history-handle and entry/string/array ownership.
+
+### 17.41 Opaque Segment-Register State and Ranges
+- `SegmentRegisterDescriptor` owns a canonical active-processor name, bit width, and semantic code/data roles; callers never receive a processor ordinal.
+- Effective and default values use `std::optional<std::uint64_t>`. `SegmentRegisterRange` owns a half-open address interval, optional value, and closed `SegmentRegisterSource`; native unknown sentinels, tags, records, and containers remain private.
+- Name-based query, enumeration/indexing, split/delete, per-segment/all-segment/data defaults, next-code containment, and range copying cover all 12 current pinned `segregs.hpp` operations. Mutations propagate native rejection and verify observable post-state.
+- Node, safe Rust, and Python preserve the same owned/optional model. The two numeric default setters remain legacy source-compatibility overloads and route through the current address-based SDK operation.
+
+### 17.42 Opaque Operand Offset and Reference Semantics
+- `ReferenceType` selects ten stable standard formats or one registered custom format by copied name; live descriptors add copied display name/description and whether a target is optional.
+- `ReferenceInfo` owns optional target/base addresses, signed target delta, and nine named behavioral options. `OperandLocation` represents a validated main or processor-supported outer operand without exposing encoded native indices.
+- Query/default discovery, stored/explicit plain expression rendering, candidate/base/target calculations, and reference-aware operand data-xref creation cover the current stable helper family while keeping native records, flags, sentinels, strings/tags, instructions, and operands private.
+- Apply refuses competing non-offset display state, preflights outer capability, verifies normalized exact readback, and restores prior/empty state after rejection or mismatch. Removal deletes both metadata and representation, verifies absence, and restores on partial failure.
+- Node, safe Rust, and Python preserve the same owned/optional semantic model; the generated C ABI separates borrowed input records from explicitly freed owned outputs.
+
+### 17.43 Opaque IDC Values and Synchronous Script Execution
+- `Value` privately owns one IDC value. Ordinary copies allocate independently and preserve native shallow object identity; `deep_copy` requests recursive object isolation. Exact integer/floating/string access never coerces, while explicit `coerce_*` operations retain SDK conversion behavior.
+- Default objects expose copied class/attribute inventories, checked attribute mutation/removal, and half-open string/object slices. Global reads return copied optionals; assignment reports creation; references can be traversed once or recursively without exposing native global storage.
+- `evaluate`, `evaluate_idc`, and `evaluate_integer` distinguish wrapper transport from interpreter success. Failed evaluation retains copied diagnostic text and the native exception value; successful falsey results remain successful.
+- File/text/snippet compilation, named calls, file execution, IDC snippet execution, include-path replacement/append, filename resolution, system-script execution, and registered/built-in function enumeration cover the synchronous execution family. Resolver maps are caller-owned copied names/values and reject duplicates plus the native unresolved sentinel.
+- Node, safe Rust, and Python preserve the same owned model. The generated C ABI uses pointer-plus-length value strings, explicit result destructors, borrowed argument arrays, and owned returned value handles. External IDC-function and third-party-language registration remain separate callback-lifecycle domains.
 
 ---

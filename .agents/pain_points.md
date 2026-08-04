@@ -20,6 +20,13 @@ This section records concrete friction points discovered during SDK review so wr
 16. Manual memory and ownership conventions still appear in several API families.
 17. Numeric and representation controls are spread across low-level helper patterns.
 18. Migration requires broad knowledge of legacy naming and bitflag semantics.
+19. Undo-point creation requires callers to discover and reproduce an undocumented serialized-record convention, while label queries expose SDK strings and unavailable transitions use bare booleans.
+20. Analysis-problem lists use unscoped byte identifiers, SDK strings, `BADADDR`/`-1` absence sentinels, and operation names that obscure ordered traversal and removal semantics.
+21. Source-parser APIs combine raw language/behavior masks, nullable parser/TIL pointers, SDK strings, implementation-defined option keys, file-vs-memory booleans, and overloaded negative integer outcomes across selection, configuration, and parsing.
+22. Standard directory trees require callers to combine registry IDs, borrowed tree/specification pointers, inodes, directory indexes, cursors, visitors, SDK containers, presentation-vs-full names, raw ordering conventions, and per-source bulk errors whose indices can refer to a compact native input sequence.
+23. Persistent plugin configuration mixes platform-specific global storage, nullable subkeys, void/bare-boolean writes, raw buffers, SDK vectors/strings, integer-encoded booleans and value kinds, and an unrestorable process-global root switch.
+24. Register-value tracking combines processor-specific register numbers, protected native state bytes, signed/unsigned width rules, borrowed candidate iterators, raw reference-type invalidation sentinels, and overloaded unsupported/no-value outcomes.
+25. Navigation history combines polymorphic place clones, renderer/widget identities, native persistent stream keys, mutable current-channel and stack state, void mutations, overloaded creation/existing initialization, cursor side effects, and transfer behavior whose Boolean result does not prove the requested mutation.
 
 Wrapper response requirements derived from these pain points:
 - Convert encoded flags to typed enums/options in public API.

@@ -19,6 +19,39 @@ mod error_tests {
     }
 
     #[test]
+    fn test_ffi_error_category_decode() {
+        assert_eq!(decode_ffi_error_category(0), None);
+        assert_eq!(
+            decode_ffi_error_category(idax_sys::IDAX_ERROR_VALIDATION as i32),
+            Some(ErrorCategory::Validation)
+        );
+        assert_eq!(
+            decode_ffi_error_category(idax_sys::IDAX_ERROR_NOT_FOUND as i32),
+            Some(ErrorCategory::NotFound)
+        );
+        assert_eq!(
+            decode_ffi_error_category(idax_sys::IDAX_ERROR_CONFLICT as i32),
+            Some(ErrorCategory::Conflict)
+        );
+        assert_eq!(
+            decode_ffi_error_category(idax_sys::IDAX_ERROR_UNSUPPORTED as i32),
+            Some(ErrorCategory::Unsupported)
+        );
+        assert_eq!(
+            decode_ffi_error_category(idax_sys::IDAX_ERROR_SDK_FAILURE as i32),
+            Some(ErrorCategory::SdkFailure)
+        );
+        assert_eq!(
+            decode_ffi_error_category(idax_sys::IDAX_ERROR_INTERNAL as i32),
+            Some(ErrorCategory::Internal)
+        );
+        assert_eq!(
+            decode_ffi_error_category(i32::MAX),
+            Some(ErrorCategory::Internal)
+        );
+    }
+
+    #[test]
     fn test_error_category_equality() {
         assert_eq!(ErrorCategory::Validation, ErrorCategory::Validation);
         assert_ne!(ErrorCategory::Validation, ErrorCategory::NotFound);
@@ -243,6 +276,39 @@ mod error_tests {
         assert_eq!(errors.len(), 10000);
         assert_eq!(errors[0].message, "error 0");
         assert_eq!(errors[9999].message, "error 9999");
+    }
+}
+
+#[cfg(test)]
+mod exception_tests {
+    use crate::address::Range;
+    use crate::exception::*;
+
+    #[test]
+    fn exception_models_preserve_semantic_variants() {
+        let metadata = HandlerMetadata {
+            regions: vec![Range::new(0x20, 0x24)],
+            stack_displacement: Some(-16),
+            frame_register: Some(5),
+        };
+        let definition = BlockDefinition {
+            protected_regions: vec![Range::new(0x10, 0x18)],
+            handlers: HandlerSet::Cpp(vec![CatchHandler {
+                metadata: metadata.clone(),
+                object_displacement: Some(-8),
+                selector: CatchSelector::Typed(7),
+            }]),
+        };
+        assert_eq!(definition.protected_regions[0].end, 0x18);
+        assert!(matches!(definition.handlers, HandlerSet::Cpp(_)));
+
+        let seh = SehHandler {
+            metadata,
+            filter_regions: Vec::new(),
+            disposition: Some(SehDisposition::ContinueSearch),
+        };
+        assert_eq!(seh.disposition, Some(SehDisposition::ContinueSearch));
+        assert_ne!(Location::CppTry, Location::SehTry);
     }
 }
 
@@ -658,7 +724,21 @@ mod search_tests {
 
 #[cfg(test)]
 mod lines_tests {
+    use crate::address::{Address, Range};
+    use crate::error::{Result, Status};
     use crate::lines::*;
+
+    #[test]
+    fn test_source_file_types_and_signatures() {
+        let _: fn(Range, &str) -> Status = add_source_file;
+        let _: fn(Address) -> Result<SourceFile> = source_file_at;
+        let _: fn(Address) -> Status = remove_source_file;
+        let source = SourceFile {
+            filename: "/src/example.cpp".to_owned(),
+            range: Range::new(0x1000, 0x1100),
+        };
+        assert!(source.range.contains(0x1080));
+    }
 
     #[test]
     fn test_color_enum_values() {
@@ -847,6 +927,103 @@ mod segment_tests {
 }
 
 #[cfg(test)]
+mod data_tests {
+    use crate::address::{Address, AddressSize};
+    use crate::data::*;
+    use crate::error::{Result, Status};
+
+    #[test]
+    fn test_string_list_types_and_signatures() {
+        let options = StringListOptions::default();
+        assert_eq!(options.string_types, vec![0]);
+        assert_eq!(options.minimum_length, 5);
+        let literal = StringLiteral {
+            address: 0x1000,
+            byte_length: 6,
+            string_type: 0,
+            text: "hello".to_owned(),
+        };
+        assert_eq!(literal.byte_length, 6);
+
+        let _: fn() -> Result<StringListOptions> = string_list_options;
+        let _: fn(&StringListOptions) -> Status = configure_string_list;
+        let _: fn() -> Status = rebuild_string_list;
+        let _: fn() -> Status = clear_string_list;
+        let _: fn(bool) -> Result<Vec<StringLiteral>> = string_literals;
+    }
+
+    #[test]
+    fn test_element_definition_function_signatures() {
+        let functions: [fn(Address, AddressSize) -> Status; 11] = [
+            define_byte,
+            define_word,
+            define_dword,
+            define_qword,
+            define_oword,
+            define_yword,
+            define_zword,
+            define_tbyte,
+            define_packed_real,
+            define_float,
+            define_double,
+        ];
+        assert_eq!(functions.len(), 11);
+
+        let size_functions: [fn() -> crate::error::Result<AddressSize>; 2] =
+            [tbyte_element_size, packed_real_element_size];
+        assert_eq!(size_functions.len(), 2);
+    }
+
+    #[test]
+    fn test_custom_data_lifecycle_types_and_signatures() {
+        let context = CustomDataFormatContext::default();
+        assert_eq!(context.type_id, CustomDataTypeId(0));
+        assert_eq!(context.operand_index, -1);
+        let type_definition = CustomDataTypeDefinition::default();
+        assert!(type_definition.allow_duplicates);
+        assert!(type_definition.may_create_at.is_none());
+        assert!(type_definition.calculate_size.is_none());
+        let format_definition = CustomDataFormatDefinition::default();
+        assert_eq!(format_definition.value_size, 0);
+        assert!(format_definition.render.is_none());
+
+        let _: fn(&CustomDataTypeDefinition) -> Result<CustomDataTypeId> =
+            register_custom_data_type;
+        let _: fn(CustomDataTypeId) -> Status = unregister_custom_data_type;
+        let _: fn(CustomDataTypeId) -> Result<CustomDataTypeInfo> = custom_data_type;
+        let _: fn(&str) -> Result<CustomDataTypeId> = find_custom_data_type;
+        let _: fn(AddressSize, AddressSize) -> Result<Vec<CustomDataTypeInfo>> = custom_data_types;
+        let _: fn(&CustomDataFormatDefinition) -> Result<CustomDataFormatId> =
+            register_custom_data_format;
+        let _: fn(CustomDataFormatId) -> Status = unregister_custom_data_format;
+        let _: fn(CustomDataFormatId) -> Result<CustomDataFormatInfo> = custom_data_format;
+        let _: fn(&str) -> Result<CustomDataFormatId> = find_custom_data_format;
+        let _: fn(CustomDataTypeId) -> Result<Vec<CustomDataFormatInfo>> = custom_data_formats;
+        let _: fn() -> Result<Vec<CustomDataFormatInfo>> = standard_custom_data_formats;
+        let _: fn(CustomDataTypeId, CustomDataFormatId) -> Status = attach_custom_data_format;
+        let _: fn(CustomDataTypeId, CustomDataFormatId) -> Status = detach_custom_data_format;
+        let _: fn(CustomDataTypeId, CustomDataFormatId) -> Result<bool> =
+            is_custom_data_format_attached;
+        let _: fn(CustomDataFormatId) -> Status = attach_custom_data_format_to_standard_types;
+        let _: fn(CustomDataFormatId) -> Status = detach_custom_data_format_from_standard_types;
+        let _: fn(CustomDataFormatId) -> Result<bool> =
+            is_custom_data_format_attached_to_standard_types;
+        let _: fn(CustomDataTypeId, Address, AddressSize) -> Result<AddressSize> =
+            custom_data_item_size;
+        let _: fn(Address, AddressSize, CustomDataTypeId, CustomDataFormatId) -> Status =
+            define_custom;
+        let _: fn(Address, CustomDataTypeId, CustomDataFormatId, AddressSize) -> Status =
+            define_custom_inferred;
+        let _: fn(Address) -> Result<CustomDataItemInfo> = custom_data_at;
+        let _: fn(CustomDataFormatId, &[u8], CustomDataFormatContext) -> Result<String> =
+            render_custom_data;
+        let _: fn(CustomDataFormatId, &str, CustomDataFormatContext) -> Result<Vec<u8>> =
+            scan_custom_data;
+        let _: fn(CustomDataFormatId, CustomDataFormatContext) -> Status = analyze_custom_data;
+    }
+}
+
+#[cfg(test)]
 mod instruction_tests {
     use crate::instruction::*;
 
@@ -874,13 +1051,55 @@ mod instruction_tests {
         assert_eq!(RegisterCategory::Vector as i32, 4);
         assert_eq!(RegisterCategory::Other as i32, 8);
     }
+
+    #[test]
+    fn test_operand_access_mode_signatures() {
+        let _: fn(&Operand) -> bool = Operand::is_read;
+        let _: fn(&Operand) -> bool = Operand::is_written;
+    }
+
+    #[test]
+    fn test_operand_enum_signatures() {
+        let value = OperandEnum {
+            name: "sample".to_string(),
+            serial: 2,
+        };
+        assert_eq!(value.name, "sample");
+        assert_eq!(value.serial, 2);
+        let _: fn(crate::address::Address, i32, &str, u8) -> crate::error::Status =
+            set_operand_enum;
+        let _: fn(crate::address::Address, i32) -> crate::error::Result<OperandEnum> = operand_enum;
+    }
+
+    #[test]
+    fn test_opaque_struct_offset_signatures() {
+        let path = StructOffsetPath {
+            structure_name: "root".to_string(),
+            member_names: vec!["member".to_string()],
+            delta: -4,
+        };
+        assert_eq!(path.structure_name, "root");
+        assert_eq!(path.member_names, vec!["member"]);
+        assert_eq!(path.delta, -4);
+        let _: fn(
+            crate::address::Address,
+            i32,
+            &str,
+            usize,
+            crate::address::AddressDelta,
+        ) -> crate::error::Result<bool> = ensure_operand_struct_member_offset;
+        let _: fn(crate::address::Address, i32) -> crate::error::Result<StructOffsetPath> =
+            operand_struct_offset_path;
+    }
 }
 
 #[cfg(test)]
 mod types_tests {
     use crate::error::Result;
     use crate::types::{
-        self, CallingConvention, ParseDeclarationsOptions, ParseDeclarationsReport,
+        self, CallingConvention, EnumDetails, EnumRadix, FunctionArgument, FunctionDetails, Member,
+        ParseDeclarationsOptions, ParseDeclarationsReport, PointerDetails, TypeInfo, TypeKind,
+        UdtDetails,
     };
 
     #[test]
@@ -894,6 +1113,87 @@ mod types_tests {
         assert_eq!(CallingConvention::Swift as i32, 6);
         assert_eq!(CallingConvention::Golang as i32, 7);
         assert_eq!(CallingConvention::UserDefined as i32, 8);
+    }
+
+    #[test]
+    fn test_rich_type_metadata_discriminants() {
+        assert_eq!(TypeKind::Unknown as i32, 0);
+        assert_eq!(TypeKind::Void as i32, 1);
+        assert_eq!(TypeKind::Bool as i32, 2);
+        assert_eq!(TypeKind::Character as i32, 3);
+        assert_eq!(TypeKind::SignedInteger as i32, 4);
+        assert_eq!(TypeKind::UnsignedInteger as i32, 5);
+        assert_eq!(TypeKind::FloatingPoint as i32, 6);
+        assert_eq!(TypeKind::Pointer as i32, 7);
+        assert_eq!(TypeKind::Array as i32, 8);
+        assert_eq!(TypeKind::Function as i32, 9);
+        assert_eq!(TypeKind::Struct as i32, 10);
+        assert_eq!(TypeKind::Union as i32, 11);
+        assert_eq!(TypeKind::Enum as i32, 12);
+        assert_eq!(TypeKind::Typedef as i32, 13);
+
+        assert_eq!(EnumRadix::Unknown as i32, 0);
+        assert_eq!(EnumRadix::Binary as i32, 1);
+        assert_eq!(EnumRadix::Octal as i32, 2);
+        assert_eq!(EnumRadix::Decimal as i32, 3);
+        assert_eq!(EnumRadix::Hexadecimal as i32, 4);
+    }
+
+    #[test]
+    fn test_rich_type_metadata_function_signatures() {
+        let _: fn(&TypeInfo) -> bool = TypeInfo::is_bool;
+        let _: fn(&TypeInfo) -> bool = TypeInfo::is_char;
+        let _: fn(&TypeInfo) -> bool = TypeInfo::is_unsigned_char;
+        let _: fn(&TypeInfo) -> bool = TypeInfo::is_signed;
+        let _: fn(&TypeInfo) -> bool = TypeInfo::is_forward_declaration;
+        let _: fn(&TypeInfo) -> Result<TypeKind> = TypeInfo::forward_declaration_kind;
+        let _: fn(&TypeInfo) -> Result<TypeKind> = TypeInfo::kind;
+        let _: fn(&TypeInfo) -> Result<String> = TypeInfo::name;
+        let _: fn(&TypeInfo, Option<&str>) -> Result<String> = TypeInfo::declaration;
+        let _: fn(&TypeInfo) -> Result<PointerDetails> = TypeInfo::pointer_details;
+        let _: fn(&TypeInfo, &TypeInfo, i64) -> Result<TypeInfo> = TypeInfo::with_shifted_parent;
+        let _: fn(&TypeInfo) -> Result<FunctionDetails> = TypeInfo::function_details;
+        let _: fn(&TypeInfo, usize, &TypeInfo) -> Result<TypeInfo> =
+            TypeInfo::with_function_argument_type;
+        let _: fn(&TypeInfo, usize, &str) -> Result<TypeInfo> =
+            TypeInfo::with_function_argument_name;
+        let _: fn(&TypeInfo, &TypeInfo) -> Result<TypeInfo> = TypeInfo::with_function_return_type;
+        let _: fn(&TypeInfo) -> Result<EnumDetails> = TypeInfo::enum_details;
+        let _: fn(&TypeInfo) -> Result<UdtDetails> = TypeInfo::udt_details;
+        let _: fn(&TypeInfo, bool, bool) -> crate::error::Status = TypeInfo::set_udt_semantics;
+        let _: fn(&TypeInfo, &str) -> Result<TypeInfo> = TypeInfo::replace_forward_declaration;
+        let _: fn(&TypeInfo, usize) -> Result<Vec<crate::address::Address>> =
+            TypeInfo::member_references;
+        let _: fn(&TypeInfo, usize, crate::address::Address) -> Result<bool> =
+            TypeInfo::ensure_member_reference;
+
+        let member = Member {
+            name: "field".to_string(),
+            r#type: TypeInfo::from_raw(std::ptr::null_mut()),
+            byte_offset: 4,
+            bit_size: 3,
+            bit_offset: 32,
+            storage_byte_width: 4,
+            is_baseclass: false,
+            is_vftable: false,
+            is_gap: false,
+            is_bitfield: true,
+            comment: String::new(),
+        };
+        assert_eq!(member.bit_offset, 32);
+        assert!(member.is_bitfield);
+
+        let argument = FunctionArgument {
+            name: "arg".to_string(),
+            r#type: TypeInfo::from_raw(std::ptr::null_mut()),
+        };
+        let details = FunctionDetails {
+            return_type: TypeInfo::from_raw(std::ptr::null_mut()),
+            arguments: vec![argument],
+            calling_convention: CallingConvention::Cdecl,
+            variadic: false,
+        };
+        assert_eq!(details.arguments.len(), 1);
     }
 
     #[test]
@@ -919,7 +1219,7 @@ mod types_tests {
 #[cfg(test)]
 mod function_tests {
     use crate::address::Address;
-    use crate::error::Status;
+    use crate::error::{Result, Status};
     use crate::function;
     use crate::types::TypeInfo;
 
@@ -927,7 +1227,10 @@ mod function_tests {
     fn test_prototype_apply_function_signatures() {
         let _: fn(Address, &TypeInfo) -> Status = function::set_prototype;
         let _: fn(Address, &str) -> Status = function::apply_decl;
+        let _: fn(Address, Option<&str>) -> Result<String> = function::declaration;
     }
+
+    use crate::error::Status;
 }
 
 #[cfg(test)]
@@ -946,6 +1249,7 @@ mod fixup_tests {
 
 #[cfg(test)]
 mod decompiler_tests {
+    use crate::address::Address;
     use crate::decompiler::*;
     use crate::error::{Result, Status};
 
@@ -954,6 +1258,25 @@ mod decompiler_tests {
         assert_eq!(Maturity::Zero as i32, 0);
         assert_eq!(Maturity::Built as i32, 1);
         assert_eq!(Maturity::Final as i32, 8);
+    }
+
+    #[test]
+    fn test_owned_microcode_graph_surface() {
+        assert_eq!(MicrocodeMaturity::Generated as i32, 1);
+        assert_eq!(MicrocodeMaturity::Preoptimized as i32, 2);
+        assert_eq!(MicrocodeMaturity::LocalVariables as i32, 8);
+        assert_eq!(
+            MicrocodeGenerationOptions::default().maturity,
+            MicrocodeMaturity::Preoptimized
+        );
+        assert!(!MicrocodeGenerationOptions::default().analyze_calls);
+        assert_eq!(MicrocodeOpcode::SignedExtend as i32, 20);
+        assert_eq!(MicrocodeOpcode::Other as i32, 26);
+        assert_eq!(MicrocodeOperandKind::AddressReference as i32, 11);
+        assert_eq!(MicrocodeOperandKind::Other as i32, 15);
+        assert_eq!(MicrocodeValueLocationKind::Scattered as i32, 7);
+        let _: fn(Address, MicrocodeGenerationOptions) -> Result<MicrocodeFunction> =
+            generate_microcode;
     }
 
     #[test]
@@ -1005,6 +1328,12 @@ mod decompiler_tests {
     }
 
     #[test]
+    fn test_switch_pseudocode_signature() {
+        let _: fn(fn(PseudocodeEvent)) -> Result<Token> =
+            on_switch_pseudocode::<fn(PseudocodeEvent)>;
+    }
+
+    #[test]
     fn test_scoped_session_function_signatures() {
         let _: fn() -> Result<ScopedSession> = initialize;
         let _: fn(&ScopedSession) -> Result<bool> = ScopedSession::valid;
@@ -1029,8 +1358,41 @@ mod decompiler_tests {
             DecompilerView::set_variable_comment_by_name;
         let _: fn(&DecompilerView, usize, &str) -> Status =
             DecompilerView::set_variable_comment_by_index;
+        let _: fn(&DecompiledFunction, Address, &str, CommentPosition) -> Status =
+            DecompiledFunction::set_comment;
+        let _: fn(&DecompiledFunction, Address, CommentPosition) -> Result<String> =
+            DecompiledFunction::get_comment;
+        let _: fn(&DecompiledFunction) -> Result<Vec<PseudocodeComment>> =
+            DecompiledFunction::comments;
+        let _: fn(&DecompiledFunction) -> Status = DecompiledFunction::save_comments;
+        let _: fn(&DecompiledFunction) -> Result<bool> = DecompiledFunction::has_orphan_comments;
+        let _: fn(&DecompiledFunction) -> Result<usize> =
+            DecompiledFunction::remove_orphan_comments;
         let _: fn(&LvarSnapshot) -> Result<bool> = LvarSnapshot::empty;
         let _: fn(&LvarSnapshot) -> Result<usize> = LvarSnapshot::saved_variable_count;
+    }
+
+    #[test]
+    fn test_semantic_comment_position_values() {
+        assert_eq!(CommentPosition::default(), CommentPosition::Default);
+        assert_eq!(CommentPosition::Argument(0), CommentPosition::Argument(0));
+        assert_ne!(CommentPosition::Argument(0), CommentPosition::Argument(63));
+        assert_eq!(
+            CommentPosition::SwitchCase(-0x1fff_ffff),
+            CommentPosition::SwitchCase(-0x1fff_ffff),
+        );
+        assert_eq!(
+            CommentPosition::SwitchCase(0x1fff_ffff),
+            CommentPosition::SwitchCase(0x1fff_ffff),
+        );
+
+        let copied = PseudocodeComment {
+            address: 0x401000,
+            position: CommentPosition::Semicolon,
+            text: "semantic".to_owned(),
+        };
+        assert_eq!(copied.position, CommentPosition::Semicolon);
+        assert_eq!(copied.text, "semantic");
     }
 
     #[test]
@@ -1118,7 +1480,28 @@ mod debugger_tests {
 }
 
 #[cfg(test)]
+mod name_tests {
+    use crate::error::Result;
+    use crate::name::{self, DemangleForm};
+
+    #[test]
+    fn test_arbitrary_demangle_signature() {
+        let _: fn(&str, DemangleForm) -> Result<String> = name::demangle;
+    }
+
+    #[test]
+    fn test_name_inventory_signature() {
+        let options = name::ListOptions::default();
+        assert!(options.include_user_defined);
+        assert!(options.include_auto_generated);
+        let _: fn(&name::ListOptions) -> Result<Vec<name::Entry>> = name::all;
+    }
+}
+
+#[cfg(test)]
 mod event_tests {
+    use crate::address::Address;
+    use crate::error::Result;
     use crate::event::*;
 
     #[test]
@@ -1130,6 +1513,17 @@ mod event_tests {
         assert_eq!(EventKind::Renamed as i32, 4);
         assert_eq!(EventKind::BytePatched as i32, 5);
         assert_eq!(EventKind::CommentChanged as i32, 6);
+        assert_eq!(EventKind::SegmentMoved as i32, 7);
+        assert_eq!(EventKind::FunctionUpdated as i32, 8);
+        assert_eq!(EventKind::ItemTypeChanged as i32, 9);
+        assert_eq!(EventKind::OperandTypeChanged as i32, 10);
+        assert_eq!(EventKind::CodeCreated as i32, 11);
+        assert_eq!(EventKind::DataCreated as i32, 12);
+        assert_eq!(EventKind::ItemsDestroyed as i32, 13);
+        assert_eq!(EventKind::ExtraCommentChanged as i32, 14);
+        assert_eq!(EventKind::LocalTypesChanged as i32, 15);
+        assert_eq!(ExtraCommentPlacement::Anterior as i32, 1);
+        assert_eq!(LocalTypeChangeKind::OrdinalsCompacted as i32, 8);
     }
 
     #[test]
@@ -1138,6 +1532,27 @@ mod event_tests {
         assert_eq!(e.kind, EventKind::SegmentAdded);
         assert!(e.new_name.is_empty());
         assert!(e.old_name.is_empty());
+        assert_eq!(e.operand_index, -1);
+        assert_eq!(e.line_index, -1);
+        assert_eq!(e.extra_comment_placement, ExtraCommentPlacement::Unknown);
+        assert_eq!(e.local_type_change, LocalTypeChangeKind::None);
+    }
+
+    #[test]
+    fn test_change_tracking_event_function_signatures() {
+        let _: fn(fn(SegmentMovedEvent)) -> Result<Token> =
+            on_segment_moved::<fn(SegmentMovedEvent)>;
+        let _: fn(fn(Address)) -> Result<Token> = on_function_updated::<fn(Address)>;
+        let _: fn(fn(Address)) -> Result<Token> = on_item_type_changed::<fn(Address)>;
+        let _: fn(fn(Address, i32)) -> Result<Token> = on_operand_type_changed::<fn(Address, i32)>;
+        let _: fn(fn(ItemCreatedEvent)) -> Result<Token> = on_code_created::<fn(ItemCreatedEvent)>;
+        let _: fn(fn(ItemCreatedEvent)) -> Result<Token> = on_data_created::<fn(ItemCreatedEvent)>;
+        let _: fn(fn(ItemsDestroyedEvent)) -> Result<Token> =
+            on_items_destroyed::<fn(ItemsDestroyedEvent)>;
+        let _: fn(fn(ExtraCommentChangedEvent)) -> Result<Token> =
+            on_extra_comment_changed::<fn(ExtraCommentChangedEvent)>;
+        let _: fn(fn(LocalTypesChangedEvent)) -> Result<Token> =
+            on_local_types_changed::<fn(LocalTypesChangedEvent)>;
     }
 
     #[test]
@@ -1230,18 +1645,259 @@ mod database_tests {
         assert_eq!(ProcessorId::from_raw(12), Some(ProcessorId::Mips));
         assert_eq!(ProcessorId::from_raw(72), Some(ProcessorId::RiscV));
         assert_eq!(ProcessorId::from_raw(-1), None);
+        assert_eq!(ProcessorId::from_raw(77), None);
         assert_eq!(ProcessorId::from_raw(78), None);
+        assert_eq!(ProcessorId::from_raw(0x8001), None);
         assert_eq!(ProcessorId::from_raw(i32::MAX), None);
     }
 
     #[test]
     fn test_processor_id_boundary() {
-        // Test all valid values don't return None
-        for i in 0..=77 {
-            let _result = ProcessorId::from_raw(i);
-            // Some values may not have a mapping (gaps in the enum)
-            // This is OK - from_raw just checks the range
+        for i in 0..=76 {
+            assert!(ProcessorId::from_raw(i).is_some());
         }
+        assert!(ProcessorId::from_raw(77).is_none());
+    }
+}
+
+#[cfg(test)]
+mod processor_tests {
+    use crate::processor::{AnalyzeDetails, InstructionFeature, ProcessorFlag, ProcessorFlag2};
+
+    #[test]
+    fn test_processor_sdk_flag_discriminants() {
+        assert_eq!(ProcessorFlag::DefaultSeg32 as u32, 0x000004);
+        assert_eq!(ProcessorFlag::Use64 as u32, 0x002000);
+        assert_eq!(ProcessorFlag::TypeInfo as u32, 0x001000);
+        assert_eq!(ProcessorFlag::UseArgTypes as u32, 0x200000);
+        assert_eq!(ProcessorFlag::ConditionalInsns as u32, 0x4000000);
+        assert_eq!(ProcessorFlag::HEX_NUMBERS, 0);
+        assert_eq!(ProcessorFlag2::Code16Bit as u32, 0x000008);
+    }
+
+    #[test]
+    fn test_eight_operand_feature_discriminants() {
+        assert_eq!(InstructionFeature::Change7 as u32, 0x020000);
+        assert_eq!(InstructionFeature::Change8 as u32, 0x040000);
+        assert_eq!(InstructionFeature::Use7 as u32, 0x080000);
+        assert_eq!(InstructionFeature::Use8 as u32, 0x100000);
+    }
+
+    #[test]
+    fn test_analyze_details_default_instruction_code() {
+        assert_eq!(AnalyzeDetails::default().instruction_code, 0);
+    }
+}
+
+#[cfg(test)]
+mod plugin_tests {
+    use crate::address::BAD_ADDRESS;
+    use crate::plugin::{ActionContext, TypeRef};
+    use crate::types::TypeInfo;
+
+    #[test]
+    fn test_action_context_type_ref_default() {
+        let context = ActionContext::default();
+        assert_eq!(context.current_address, BAD_ADDRESS);
+        assert!(context.type_ref.is_none());
+    }
+
+    #[test]
+    fn test_action_context_type_ref_construction() {
+        let context = ActionContext {
+            type_ref: Some(TypeRef {
+                name: "idax_test_type".to_string(),
+                r#type: TypeInfo::from_raw(std::ptr::null_mut()),
+            }),
+            ..ActionContext::default()
+        };
+
+        let type_ref = context.type_ref.as_ref().expect("type ref present");
+        assert_eq!(type_ref.name, "idax_test_type");
+        assert!(type_ref.r#type.as_raw().is_null());
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use crate::error::{ErrorCategory, Result};
+    use crate::path;
+
+    #[test]
+    fn test_path_function_signatures() {
+        let _: fn(&str) -> Result<String> = path::basename;
+        let _: fn(&str) -> Result<String> = path::dirname;
+        let _: fn(&str) -> Result<bool> = path::is_directory;
+    }
+
+    #[test]
+    fn test_path_helpers_validate_before_ffi() {
+        assert_eq!(
+            path::basename("bad\0path").unwrap_err().category,
+            ErrorCategory::Validation
+        );
+        assert_eq!(
+            path::dirname("bad\0path").unwrap_err().category,
+            ErrorCategory::Validation
+        );
+        assert_eq!(
+            path::is_directory("bad\0path").unwrap_err().category,
+            ErrorCategory::Validation
+        );
+    }
+}
+
+#[cfg(test)]
+mod ui_tests {
+    use crate::error::{ErrorCategory, Result, Status};
+    use crate::ui::{
+        self, PathBitsetFormResult, RadioSvalPathBitsetFormResult, SvalBitsetFormResult,
+        SvalPathBitsetFormResult, ThreeSvalsPathTwoBitsetsFormResult,
+    };
+
+    #[test]
+    fn test_current_widget_signature() {
+        let _: fn() -> Result<Option<ui::WidgetRef>> = ui::current_widget;
+    }
+
+    #[test]
+    fn test_codedump_typed_form_result_shapes() {
+        let simple = SvalBitsetFormResult {
+            accepted: true,
+            sval: 3,
+            bitset: 1,
+        };
+        assert!(simple.accepted);
+        assert_eq!(simple.sval, 3);
+        assert_eq!(simple.bitset, 1);
+
+        let with_path = SvalPathBitsetFormResult {
+            accepted: false,
+            sval: 4,
+            path: "out.json".to_string(),
+            bitset: 2,
+        };
+        assert!(!with_path.accepted);
+        assert_eq!(with_path.path, "out.json");
+
+        let path_only = PathBitsetFormResult {
+            accepted: true,
+            path: "metadata.json".to_string(),
+            bitset: 3,
+        };
+        assert_eq!(path_only.bitset, 3);
+
+        let radio = RadioSvalPathBitsetFormResult {
+            accepted: true,
+            radio: 1,
+            sval: 5,
+            path: "graph.dot".to_string(),
+            bitset: 4,
+        };
+        assert_eq!(radio.radio, 1);
+        assert_eq!(radio.sval, 5);
+
+        let full = ThreeSvalsPathTwoBitsetsFormResult {
+            accepted: true,
+            first: 1,
+            second: 2,
+            third: 3,
+            path: "dump.json".to_string(),
+            first_bitset: 4,
+            second_bitset: 5,
+        };
+        assert_eq!(full.first + full.second + full.third, 6);
+        assert_eq!(full.first_bitset, 4);
+        assert_eq!(full.second_bitset, 5);
+    }
+
+    #[test]
+    fn test_codedump_typed_form_function_signatures() {
+        let _: fn(&str, i64, u16) -> Result<SvalBitsetFormResult> = ui::ask_form_sval_bitset;
+        let _: fn(&str, i64, &str, u16, bool) -> Result<SvalPathBitsetFormResult> =
+            ui::ask_form_sval_path_bitset;
+        let _: fn(&str, &str, u16, bool) -> Result<PathBitsetFormResult> = ui::ask_form_path_bitset;
+        let _: fn(&str, u16, i64, &str, u16, bool) -> Result<RadioSvalPathBitsetFormResult> =
+            ui::ask_form_radio_sval_path_bitset;
+        let _: fn(
+            &str,
+            i64,
+            i64,
+            i64,
+            &str,
+            u16,
+            u16,
+            bool,
+        ) -> Result<ThreeSvalsPathTwoBitsetsFormResult> = ui::ask_form_three_svals_path_two_bitsets;
+    }
+
+    fn expect_validation_error<T>(result: Result<T>) {
+        match result {
+            Ok(_) => panic!("expected validation error"),
+            Err(error) => assert_eq!(error.category, ErrorCategory::Validation),
+        }
+    }
+
+    #[test]
+    fn test_codedump_typed_forms_reject_empty_markup_without_modal_ui() {
+        expect_validation_error(ui::ask_form_sval_bitset("", 1, 0));
+        expect_validation_error(ui::ask_form_sval_path_bitset(
+            "",
+            1,
+            "/tmp/out.json",
+            0,
+            true,
+        ));
+        expect_validation_error(ui::ask_form_path_bitset("", "/tmp/out.json", 0, true));
+        expect_validation_error(ui::ask_form_radio_sval_path_bitset(
+            "",
+            0,
+            1,
+            "/tmp/out.json",
+            0,
+            true,
+        ));
+        expect_validation_error(ui::ask_form_three_svals_path_two_bitsets(
+            "",
+            1,
+            2,
+            3,
+            "/tmp/out.json",
+            0,
+            0,
+            true,
+        ));
+    }
+
+    #[test]
+    fn test_clipboard_function_signatures() {
+        let _: fn(&str) -> Result<ui::WaitBox> = ui::WaitBox::new;
+        let _: fn(&mut ui::WaitBox, &str) -> Status = ui::WaitBox::update;
+        let _: fn(&ui::WaitBox) -> Result<bool> = ui::WaitBox::cancelled;
+        let _: fn(&ui::WaitBox) -> Result<bool> = ui::WaitBox::active;
+        let _: fn(&mut ui::WaitBox) = ui::WaitBox::dismiss;
+        let _: fn(&str, &str, ui::AskTextOptions) -> Result<String> = ui::ask_text;
+        let _: fn(&str) -> Status = ui::copy_to_clipboard;
+        let _: fn() -> Result<String> = ui::read_clipboard;
+        let _: fn() -> String = ui::clipboard_backend;
+    }
+
+    #[test]
+    fn test_clipboard_validation_is_local() {
+        let invalid = ui::copy_to_clipboard("bad\0clipboard").unwrap_err();
+        assert_eq!(invalid.category, ErrorCategory::Validation);
+    }
+
+    #[test]
+    fn test_ask_text_options_are_plain_value() {
+        let options = ui::AskTextOptions {
+            max_size: 4096,
+            accept_tabs: true,
+            normal_font: false,
+        };
+        assert_eq!(options.max_size, 4096);
+        assert!(options.accept_tabs);
+        assert_eq!(ui::AskTextOptions::default().max_size, 0);
     }
 }
 

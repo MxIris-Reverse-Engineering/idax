@@ -47,10 +47,93 @@ export interface IdaxError extends Error {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// script namespace
+// ═══════════════════════════════════════════════════════════════════════════
+
+export namespace script {
+    type ValueKind =
+        | 'integer' | 'floatingPoint' | 'object' | 'function' | 'string'
+        | 'opaquePointer' | 'reference';
+    type DereferenceMode = 'once' | 'recursive';
+
+    class Value {
+        /** Construct the default IDC integer value (zero). */
+        constructor();
+        kind(): ValueKind;
+        asInteger(): bigint;
+        asFloating(): number;
+        asString(): string;
+        coerceInteger(): bigint;
+        coerceFloating(): number;
+        coerceString(): string;
+        render(name?: string | null, indent?: number): string;
+        /** Shallow-copy the value; object attributes remain shared. */
+        copy(): Value;
+        /** Deep-copy object attributes; scalar values use ordinary copy semantics. */
+        deepCopy(): Value;
+        className(): string;
+        attribute(name: string, useHandler?: boolean): Value;
+        setAttribute(name: string, value: Value, useHandler?: boolean): void;
+        attributeNames(): string[];
+        removeAttribute(name: string): boolean;
+        slice(begin: number, end: number): Value;
+        replaceSlice(begin: number, end: number, replacement: Value): void;
+        dereference(mode?: DereferenceMode): Value;
+    }
+
+    interface ResolvedName { name: string; value: bigint; }
+    interface CompileOptions {
+        onlySafeFunctions?: boolean;
+        resolvedNames?: ResolvedName[];
+    }
+    interface FileCompileOptions {
+        deleteMacrosAfterCompilation?: boolean;
+        allowProgramLabels?: boolean;
+        onlySafeFunctions?: boolean;
+    }
+    interface CompilationResult { succeeded: boolean; error: string; }
+    interface ExecutionResult { succeeded: boolean; value: Value; error: string; }
+    interface IntegerExecutionResult { succeeded: boolean; value: bigint; error: string; }
+
+    function integer(value: bigint | number): Value;
+    function floating(value: number): Value;
+    function string(value: string): Value;
+    function object(): Value;
+    function evaluate(expression: string, where?: Address): ExecutionResult;
+    function evaluateIdc(expression: string, where?: Address): ExecutionResult;
+    function evaluateInteger(expression: string, where?: Address): IntegerExecutionResult;
+    function compileFile(path: string, options?: FileCompileOptions): CompilationResult;
+    function compileText(source: string, options?: CompileOptions): CompilationResult;
+    function compileSnippet(name: string, body: string, options?: CompileOptions): CompilationResult;
+    function call(name: string, args?: Value[], resolvedNames?: ResolvedName[]): ExecutionResult;
+    function executeScript(path: string, name: string, args?: Value[], options?: FileCompileOptions): ExecutionResult;
+    function evaluateSnippet(source: string, resolvedNames?: ResolvedName[]): ExecutionResult;
+    function setIncludePaths(paths: string[]): void;
+    function appendIncludePaths(paths: string[]): void;
+    function resolveFile(file: string): string | null;
+    function executeSystemScript(file: string, complainIfMissing?: boolean): void;
+    function functionNames(prefix?: string, maximum?: number): string[];
+    function global(name: string): Value | null;
+    function setGlobal(name: string, value: Value): boolean;
+    function referenceGlobal(name: string): Value;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ui namespace
 // ═══════════════════════════════════════════════════════════════════════════
 
 export namespace ui {
+    interface CurrentWidget {
+        /** Stable identity token for the active IDA widget. */
+        id: bigint;
+        title: string;
+        /** Numeric IDA widget type (`BWN_*`), or -1 when unknown. */
+        type: number;
+    }
+
+    /** Snapshot the currently active IDA widget, or null in a headless session. */
+    function currentWidget(): CurrentWidget | null;
+
     class WaitBox {
         constructor(message: string);
         update(message: string): void;
@@ -119,13 +202,13 @@ export namespace ui {
     function askText(prompt: string, defaultValue?: string, options?: AskTextOptions): string;
     function askText(prompt: string, options?: AskTextOptions): string;
 
-    /** Copy text to the host clipboard. Requires Qt clipboard support in native idax. */
+    /** Copy text to the host clipboard via Qt or a host clipboard command. */
     function copyToClipboard(text: string): void;
 
     /** Read text from the host clipboard. */
     function readClipboard(): string;
 
-    /** Clipboard backend name, e.g. "Qt" or "unsupported". */
+    /** Clipboard backend name, e.g. "Qt", "external:xclip", or "unsupported". */
     function clipboardBackend(): string;
 }
 
@@ -172,6 +255,18 @@ export namespace database {
         description: string;
         filename: string;
         children: Snapshot[];
+    }
+
+    interface ProcessorProfile {
+        /** Authoritative raw SDK processor ID. */
+        rawId: number;
+        /** Verified current public SDK identity, or null when unknown. */
+        knownId: number | null;
+        name: string;
+        addressBitness: number;
+        bigEndian: boolean;
+        /** Active ABI name, or null when absent. */
+        abiName: string | null;
     }
 
     type OpenMode = 'analyze' | 'skipAnalysis';
@@ -260,8 +355,14 @@ export namespace database {
     /** Numeric processor ID. */
     function processorId(): number;
 
+    /** Convert a raw ID to a verified current public SDK identity. */
+    function processorIdFromRaw(rawId: number): number | null;
+
     /** Processor type enumeration value. */
     function processor(): number;
+
+    /** Normalized processor identity and architecture metadata. */
+    function processorProfile(): ProcessorProfile;
 
     /** Short processor name string (e.g. "metapc", "ARM"). */
     function processorName(): string;
@@ -412,6 +513,23 @@ export namespace segment {
         execute: boolean;
     }
 
+    type SegmentRegisterSource =
+        | 'inherited' | 'user' | 'analysis' | 'analysisAtSegmentStart';
+
+    interface SegmentRegisterDescriptor {
+        name: string;
+        bitWidth: number;
+        isCode: boolean;
+        isData: boolean;
+    }
+
+    interface SegmentRegisterRange {
+        start: Address;
+        end: Address;
+        value: bigint | null;
+        source: SegmentRegisterSource;
+    }
+
     interface Segment {
         start: Address;
         end: Address;
@@ -463,11 +581,59 @@ export namespace segment {
     /** Set the bitness (16, 32, or 64) of the segment. */
     function setBitness(address: Address, bits: number): boolean;
 
-    /** Set a default segment register value for a specific segment. */
+    /** Discover the active processor's semantic segment registers. */
+    function segmentRegisters(): SegmentRegisterDescriptor[];
+
+    /** Effective value at an address, or null when unknown. */
+    function segmentRegisterValue(address: Address, registerName: string): bigint | null;
+
+    /** Default value for the containing segment, or null when unknown. */
+    function defaultSegmentRegisterValue(address: Address, registerName: string): bigint | null;
+
+    /** Copied half-open range containing an address. */
+    function segmentRegisterRange(address: Address, registerName: string): SegmentRegisterRange;
+
+    /** Copied range preceding the containing range, or null. */
+    function previousSegmentRegisterRange(address: Address, registerName: string): SegmentRegisterRange | null;
+
+    /** All copied ranges for a named segment register. */
+    function segmentRegisterRanges(registerName: string): SegmentRegisterRange[];
+
+    /** Range index containing an address, or null. */
+    function segmentRegisterRangeIndex(address: Address, registerName: string): number | null;
+
+    /** Start or replace a range and verify its exact post-state. */
+    function splitSegmentRegisterRange(address: Address, registerName: string,
+        value: bigint | number | null,
+        source?: SegmentRegisterSource): boolean;
+
+    /** Remove the range that starts exactly at an address. */
+    function removeSegmentRegisterRange(rangeStart: Address, registerName: string): boolean;
+
+    /** Set or clear a named default for a specific segment. */
+    function setDefaultSegmentRegister(address: Address, registerName: string,
+        value: bigint | number | null): boolean;
+
+    /** Set a default through the legacy processor ordinal. */
     function setDefaultSegmentRegister(address: Address, regIndex: number, value: bigint | number): boolean;
 
-    /** Set a default segment register value for all segments. */
+    /** Set or clear a named default for all segments. */
+    function setDefaultSegmentRegisterForAll(registerName: string,
+        value: bigint | number | null): boolean;
+
+    /** Set a default through the legacy processor ordinal for all segments. */
     function setDefaultSegmentRegisterForAll(regIndex: number, value: bigint | number): boolean;
+
+    /** Set or clear the semantic data-register default for all segments. */
+    function setDefaultDataSegment(value: bigint | number | null): boolean;
+
+    /** Assign a value at the next instruction within the inclusive bound. */
+    function setSegmentRegisterAtNextCode(searchStart: Address, maximum: Address,
+        registerName: string, value: bigint | number | null): boolean;
+
+    /** Replace destination ranges with copied source ranges. */
+    function copySegmentRegisterRanges(destinationRegister: string,
+        sourceRegister: string, mapSelectorsToAddresses?: boolean): boolean;
 
     // ── Comments ────────────────────────────────────────────────────────
 
@@ -656,6 +822,9 @@ export namespace function_ {
     /** Parse and apply a C declaration as the function prototype. */
     function applyDecl(funcAddr: Address, cDecl: string): boolean;
 
+    /** Print the applied function declaration, optionally replacing its declarator name. */
+    function declaration(funcAddr: Address, nameOverride?: string): string;
+
     // ── Register variables ──────────────────────────────────────────────
 
     /** Define a register variable mapping for a range. */
@@ -726,8 +895,12 @@ export namespace instruction {
         targetAddress: Address;
         displacement: bigint;
         byteWidth: number;
+        encodedValueByteOffset: number | null;
+        secondaryEncodedValueByteOffset: number | null;
         registerName: string;
         registerCategory: RegisterCategory;
+        isRead: boolean;
+        isWritten: boolean;
     }
 
     interface Instruction {
@@ -740,8 +913,14 @@ export namespace instruction {
     }
 
     interface StructOffsetPath {
-        structureIds: bigint[];
+        structureName: string;
+        memberNames: string[];
         delta: AddressDelta;
+    }
+
+    interface OperandEnum {
+        name: string;
+        serial: number;
     }
 
     // ── Decode / create ─────────────────────────────────────────────────
@@ -781,10 +960,19 @@ export namespace instruction {
     /** Set operand n to an offset from an optional base address. */
     function setOperandOffset(address: Address, n?: number, base?: Address): void;
 
+    /** Apply a named enum representation; n=-1 selects all operands. */
+    function setOperandEnum(address: Address, n: number, enumName: string, serial?: number): void;
+
+    /** Read the copied enum name and serial for an operand. */
+    function operandEnum(address: Address, n?: number): OperandEnum;
+
     // ── Struct offset operations ────────────────────────────────────────
 
-    /** Set operand n to a structure offset by name or ID. */
-    function setOperandStructOffset(address: Address, n: number, structNameOrId: string | bigint | number, delta?: bigint | number): void;
+    /** Set operand n to a root structure offset by name. */
+    function setOperandStructOffset(address: Address, n: number, structureName: string, delta?: bigint | number): void;
+
+    /** Idempotently apply an exact named-structure member path selected by byte offset. */
+    function ensureOperandStructMemberOffset(address: Address, n: number, structureName: string, memberByteOffset: number | bigint, delta?: bigint | number): boolean;
 
     /** Set operand n to a based structure offset. */
     function setOperandBasedStructOffset(address: Address, n: number, operandValue: Address, base: Address): void;
@@ -909,6 +1097,8 @@ export namespace name {
 
     /** Get the demangled name at the address. */
     function demangled(address: Address, form?: DemangleForm): string;
+    /** Demangle an arbitrary mangled symbol without a database address. */
+    function demangled(symbol: string, form?: DemangleForm): string;
 
     /** Resolve a name string to its address. */
     function resolve(name: string, context?: Address): Address;
@@ -1030,6 +1220,99 @@ export namespace xref {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// offset namespace
+// ═══════════════════════════════════════════════════════════════════════════
+
+export namespace offset {
+
+    type ReferenceKind =
+        | 'offset8' | 'offset16' | 'offset32' | 'offset64'
+        | 'low8' | 'low16' | 'low32'
+        | 'high8' | 'high16' | 'high32' | 'custom';
+
+    interface ReferenceType {
+        kind: ReferenceKind;
+        customName?: string;
+    }
+
+    interface ReferenceTypeDescriptor {
+        type: ReferenceType;
+        name: string;
+        description: string;
+        targetOptional: boolean;
+    }
+
+    interface OperandLocation {
+        index: number;
+        outer?: boolean;
+    }
+
+    interface ReferenceOptions {
+        relativeVirtualAddress?: boolean;
+        allowPastEnd?: boolean;
+        suppressBaseReference?: boolean;
+        subtractOperand?: boolean;
+        signExtendOperand?: boolean;
+        acceptZero?: boolean;
+        rejectAllOnes?: boolean;
+        selfRelative?: boolean;
+        ignoreFixup?: boolean;
+    }
+
+    interface ReferenceInfo {
+        type: ReferenceType;
+        target?: Address | null;
+        base?: Address | null;
+        targetDelta?: AddressDelta | number;
+        options?: ReferenceOptions;
+    }
+
+    interface RenderOptions {
+        appendZeroField?: boolean;
+        avoidDummyNames?: boolean;
+    }
+
+    interface RenderedExpression {
+        text: string;
+        complexity: 'simple' | 'complex';
+    }
+
+    interface ReferenceCalculation {
+        target: Address | null;
+        base: Address | null;
+    }
+
+    function referenceTypes(): ReferenceTypeDescriptor[];
+    function defaultReferenceType(address: Address): ReferenceType;
+    function referenceInfo(address: Address,
+                           location: OperandLocation): ReferenceInfo | null;
+    function applyReference(address: Address, location: OperandLocation,
+                            info: ReferenceInfo): void;
+    function removeReference(address: Address,
+                             location: OperandLocation): boolean;
+    function renderStoredExpression(address: Address,
+                                    location: OperandLocation,
+                                    from: Address,
+                                    operandValue: AddressDelta | number,
+                                    options?: RenderOptions): RenderedExpression;
+    function renderExpression(address: Address, location: OperandLocation,
+                              info: ReferenceInfo, from: Address,
+                              operandValue: AddressDelta | number,
+                              options?: RenderOptions): RenderedExpression;
+    function possibleOffset32Target(address: Address): Address | null;
+    function calculateOffsetBase(address: Address,
+                                 location: OperandLocation): Address | null;
+    function probableBase(address: Address,
+                          operandValue: Address): Address | null;
+    function calculateReference(from: Address, info: ReferenceInfo,
+                                operandValue: AddressDelta | number): ReferenceCalculation;
+    function addOperandDataReferences(address: Address,
+                                      location: OperandLocation,
+                                      type?: xref.DataType): Address;
+    function calculateBaseValue(target: Address, base: Address): Address | null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // comment namespace
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1043,7 +1326,7 @@ export namespace comment {
     /** Set the comment at the address. */
     function set(address: Address, text: string, repeatable?: boolean): void;
 
-    /** Append text to the existing comment at the address. */
+    /** Append text as a new line, creating the comment when none exists. */
     function append(address: Address, text: string, repeatable?: boolean): void;
 
     /** Remove the comment at the address. */
@@ -1107,6 +1390,32 @@ export namespace comment {
 
 export namespace data {
 
+    /** Owned snapshot of IDA's process-global string-list configuration. */
+    interface StringListOptions {
+        stringTypes: number[];
+        minimumLength: bigint;
+        only7Bit: boolean;
+        ignoreInstructions: boolean;
+        displayOnlyExistingStrings: boolean;
+    }
+
+    /** Fields accepted when replacing the shared string-list configuration. */
+    interface StringListConfiguration {
+        stringTypes?: readonly number[];
+        minimumLength?: number | bigint;
+        only7Bit?: boolean;
+        ignoreInstructions?: boolean;
+        displayOnlyExistingStrings?: boolean;
+    }
+
+    /** Owned string-list entry; byteLength is measured in octets. */
+    interface StringLiteral {
+        address: Address;
+        byteLength: AddressSize;
+        stringType: number;
+        text: string;
+    }
+
     // ── Read ────────────────────────────────────────────────────────────
 
     /** Read a single byte (uint8). */
@@ -1126,6 +1435,21 @@ export namespace data {
 
     /** Read a string at the address. */
     function readString(address: Address, maxLength?: number, stringType?: number, conversionFlags?: number): string;
+
+    /** Return a copied snapshot of the shared string-list configuration. */
+    function stringListOptions(): StringListOptions;
+
+    /** Replace the shared string-list configuration and rebuild its cache. */
+    function configureStringList(options: StringListConfiguration): void;
+
+    /** Rebuild the cached string list using the shared configuration. */
+    function rebuildStringList(): void;
+
+    /** Clear IDA's persisted string-list cache. */
+    function clearStringList(): void;
+
+    /** Enumerate copied string-list entries, rebuilding by default. */
+    function stringLiterals(rebuild?: boolean): StringLiteral[];
 
     // ── Write ───────────────────────────────────────────────────────────
 
@@ -1185,37 +1509,197 @@ export namespace data {
 
     // ── Define / undefine items ─────────────────────────────────────────
 
-    /** Define byte(s) at the address. */
-    function defineByte(address: Address, count?: number): void;
+    /** Define byte item(s); count is a positive element count and defaults to 1. */
+    function defineByte(address: Address, count?: number | bigint): void;
 
-    /** Define word(s) at the address. */
-    function defineWord(address: Address, count?: number): void;
+    /** Define 16-bit word item(s); count is a positive element count. */
+    function defineWord(address: Address, count?: number | bigint): void;
 
-    /** Define dword(s) at the address. */
-    function defineDword(address: Address, count?: number): void;
+    /** Define 32-bit dword item(s); count is a positive element count. */
+    function defineDword(address: Address, count?: number | bigint): void;
 
-    /** Define qword(s) at the address. */
-    function defineQword(address: Address, count?: number): void;
+    /** Define 64-bit qword item(s); count is a positive element count. */
+    function defineQword(address: Address, count?: number | bigint): void;
 
-    /** Define oword(s) (128-bit) at the address. */
-    function defineOword(address: Address, count?: number): void;
+    /** Define 128-bit oword item(s); count is a positive element count. */
+    function defineOword(address: Address, count?: number | bigint): void;
 
-    /** Define tbyte(s) (80-bit) at the address. */
-    function defineTbyte(address: Address, count?: number): void;
+    /** Define 256-bit yword item(s); count is a positive element count. */
+    function defineYword(address: Address, count?: number | bigint): void;
 
-    /** Define float(s) (32-bit) at the address. */
-    function defineFloat(address: Address, count?: number): void;
+    /** Define 512-bit zword item(s); count is a positive element count. */
+    function defineZword(address: Address, count?: number | bigint): void;
 
-    /** Define double(s) (64-bit) at the address. */
-    function defineDouble(address: Address, count?: number): void;
+    /** Return the active processor's tbyte element size in bytes. */
+    function tbyteElementSize(): bigint;
 
-    /** Define a string at the address. */
+    /** Define active-processor-sized tbyte item(s); count is a positive element count. */
+    function defineTbyte(address: Address, count?: number | bigint): void;
+
+    /** Return the active processor's packed-real element size in bytes. */
+    function packedRealElementSize(): bigint;
+
+    /** Define active-processor-sized packed-real item(s); count is a positive element count. */
+    function definePackedReal(address: Address, count?: number | bigint): void;
+
+    /** Define 32-bit floating-point item(s); count is a positive element count. */
+    function defineFloat(address: Address, count?: number | bigint): void;
+
+    /** Define 64-bit floating-point item(s); count is a positive element count. */
+    function defineDouble(address: Address, count?: number | bigint): void;
+
+    /** Define a string using an explicit byte length. */
     function defineString(address: Address, length: number, stringType?: number): void;
 
-    /** Define a structure at the address. */
+    /** Define a structure using an explicit byte length. */
     function defineStruct(address: Address, length: number, structureId: bigint | number): void;
 
-    /** Undefine (mark as unknown) the item(s) at the address. */
+    // ── Custom data type / format lifecycle ────────────────────────────
+
+    /** Opaque ID in the kernel-supported range 1..65534. */
+    type CustomDataTypeId = number;
+
+    /** Opaque ID in the kernel-supported range 1..65534. */
+    type CustomDataFormatId = number;
+
+    interface CustomDataFormatContext {
+        address?: Address;
+        operandIndex?: number;
+        /** Zero denotes a standard or unavailable type identity. */
+        typeId?: CustomDataTypeId | 0;
+    }
+
+    interface CustomDataTypeDefinition {
+        name: string;
+        menuName?: string;
+        hotkey?: string;
+        assemblerKeyword?: string;
+        /** Exact fixed width, or minimum width when calculateSize is present. */
+        valueSize: number | bigint;
+        allowDuplicates?: boolean;
+        mayCreateAt?: (address: Address, byteLength: AddressSize) => boolean;
+        calculateSize?: (address: Address, maximumSize: AddressSize) => AddressSize;
+    }
+
+    interface CustomDataTypeInfo {
+        id: CustomDataTypeId;
+        name: string;
+        menuName: string;
+        hotkey: string;
+        assemblerKeyword: string;
+        valueSize: AddressSize;
+        allowDuplicates: boolean;
+        visibleInMenu: boolean;
+        hasCreationFilter: boolean;
+        variableSize: boolean;
+    }
+
+    interface CustomDataFormatDefinition {
+        name: string;
+        menuName?: string;
+        hotkey?: string;
+        /** Zero accepts any value width. */
+        valueSize?: number | bigint;
+        textWidth?: number;
+        render?: (value: Buffer, context: CustomDataFormatContext) => string;
+        scan?: (text: string, context: CustomDataFormatContext) => Buffer | Uint8Array;
+        analyze?: (context: CustomDataFormatContext) => void;
+    }
+
+    interface CustomDataFormatInfo {
+        id: CustomDataFormatId;
+        name: string;
+        menuName: string;
+        hotkey: string;
+        valueSize: AddressSize;
+        textWidth: number;
+        visibleInMenu: boolean;
+        canRender: boolean;
+        canScan: boolean;
+        canAnalyze: boolean;
+    }
+
+    interface CustomDataItemInfo {
+        typeId: CustomDataTypeId;
+        formatId: CustomDataFormatId;
+        byteLength: AddressSize;
+    }
+
+    /** Register an owned type definition; explicitly unregister before addon unload. */
+    function registerCustomDataType(definition: CustomDataTypeDefinition): CustomDataTypeId;
+
+    /** Unregister an idax-owned type and release retained callbacks. */
+    function unregisterCustomDataType(typeId: CustomDataTypeId): void;
+
+    function customDataType(typeId: CustomDataTypeId): CustomDataTypeInfo;
+    function findCustomDataType(name: string): CustomDataTypeId;
+    function customDataTypes(
+        minimumSize?: number | bigint,
+        maximumSize?: number | bigint,
+    ): CustomDataTypeInfo[];
+
+    /** Register an owned format definition; explicitly unregister before addon unload. */
+    function registerCustomDataFormat(definition: CustomDataFormatDefinition): CustomDataFormatId;
+
+    /** Unregister an idax-owned format and release retained callbacks. */
+    function unregisterCustomDataFormat(formatId: CustomDataFormatId): void;
+
+    function customDataFormat(formatId: CustomDataFormatId): CustomDataFormatInfo;
+    function findCustomDataFormat(name: string): CustomDataFormatId;
+    function customDataFormats(typeId: CustomDataTypeId): CustomDataFormatInfo[];
+    function standardCustomDataFormats(): CustomDataFormatInfo[];
+
+    function attachCustomDataFormat(
+        typeId: CustomDataTypeId,
+        formatId: CustomDataFormatId,
+    ): void;
+    function detachCustomDataFormat(
+        typeId: CustomDataTypeId,
+        formatId: CustomDataFormatId,
+    ): void;
+    function isCustomDataFormatAttached(
+        typeId: CustomDataTypeId,
+        formatId: CustomDataFormatId,
+    ): boolean;
+    function attachCustomDataFormatToStandardTypes(formatId: CustomDataFormatId): void;
+    function detachCustomDataFormatFromStandardTypes(formatId: CustomDataFormatId): void;
+    function isCustomDataFormatAttachedToStandardTypes(formatId: CustomDataFormatId): boolean;
+
+    function customDataItemSize(
+        typeId: CustomDataTypeId,
+        address: Address,
+        maximumSize: number | bigint,
+    ): AddressSize;
+    function defineCustom(
+        address: Address,
+        byteLength: number | bigint,
+        typeId: CustomDataTypeId,
+        formatId: CustomDataFormatId,
+    ): void;
+    function defineCustomInferred(
+        address: Address,
+        typeId: CustomDataTypeId,
+        formatId: CustomDataFormatId,
+        maximumSize: number | bigint,
+    ): void;
+    function customDataAt(address: Address): CustomDataItemInfo;
+
+    function renderCustomData(
+        formatId: CustomDataFormatId,
+        value: Buffer | Uint8Array,
+        context?: CustomDataFormatContext,
+    ): string;
+    function scanCustomData(
+        formatId: CustomDataFormatId,
+        text: string,
+        context?: CustomDataFormatContext,
+    ): Buffer;
+    function analyzeCustomData(
+        formatId: CustomDataFormatId,
+        context?: CustomDataFormatContext,
+    ): void;
+
+    /** Undefine a byte count beginning at the address; count defaults to 1 byte. */
     function undefine(address: Address, count?: number): void;
 
     // ── Binary pattern search ───────────────────────────────────────────
@@ -1350,6 +1834,13 @@ export namespace type {
         | 'unknown' | 'cdecl' | 'stdcall' | 'pascal' | 'fastcall'
         | 'thiscall' | 'swift' | 'golang' | 'userDefined';
 
+    type TypeKind =
+        | 'unknown' | 'void' | 'bool' | 'character' | 'signedInteger'
+        | 'unsignedInteger' | 'floatingPoint' | 'pointer' | 'array'
+        | 'function' | 'struct' | 'union' | 'enum' | 'typedef';
+
+    type EnumRadix = 'unknown' | 'binary' | 'octal' | 'decimal' | 'hexadecimal';
+
     interface EnumMember {
         name: string;
         value: bigint;
@@ -1360,8 +1851,48 @@ export namespace type {
         name: string;
         type: TypeInfo;
         byteOffset: number;
+        bitOffset: number;
         bitSize: number;
+        storageByteWidth: number;
+        isBaseclass: boolean;
+        isVftable: boolean;
+        isGap: boolean;
+        isBitfield: boolean;
         comment: string;
+    }
+
+    interface FunctionArgument {
+        name: string;
+        type: TypeInfo;
+    }
+
+    interface FunctionDetails {
+        returnType: TypeInfo;
+        arguments: FunctionArgument[];
+        callingConvention: CallingConvention;
+        variadic: boolean;
+    }
+
+    interface UdtDetails {
+        totalSize: number;
+        isUnion: boolean;
+        isCppObject: boolean;
+        isVftable: boolean;
+        members: Member[];
+    }
+
+    interface PointerDetails {
+        pointeeType: TypeInfo;
+        shiftedParent: TypeInfo | null;
+        shiftDelta: number;
+        isShifted: boolean;
+    }
+
+    interface EnumDetails {
+        byteWidth: number;
+        signedValues: boolean;
+        radix: EnumRadix;
+        members: EnumMember[];
     }
 
     interface ParseDeclarationsOptions {
@@ -1394,6 +1925,16 @@ export namespace type {
         isUnion(): boolean;
         isEnum(): boolean;
         isTypedef(): boolean;
+        isBool(): boolean;
+        isChar(): boolean;
+        isUnsignedChar(): boolean;
+        isSigned(): boolean;
+        /** Whether this value denotes a local-type forward declaration. */
+        isForwardDeclaration(): boolean;
+        /** Declared kind of a forward declaration, or `unknown`. */
+        forwardDeclarationKind(): TypeKind;
+        kind(): TypeKind;
+        name(): string;
 
         /** Size of the type in bytes. */
         size(): number;
@@ -1401,9 +1942,18 @@ export namespace type {
         /** C-style string representation. */
         toString(): string;
 
+        /** C-style declaration with an optional declarator/member name. */
+        declaration(declaratorName?: string): string;
+
         // ── Pointer / Array ─────────────────────────────────────────────
         /** For pointer types: the pointed-to type. */
         pointeeType(): TypeInfo;
+
+        /** Complete pointer metadata, including an exact shifted parent and signed byte delta. */
+        pointerDetails(): PointerDetails;
+
+        /** Return a pointer copy marked as shifted relative to a struct parent. */
+        withShiftedParent(parent: TypeInfo, byteDelta: number): TypeInfo;
 
         /** For array types: the element type. */
         arrayElementType(): TypeInfo;
@@ -1421,15 +1971,30 @@ export namespace type {
         /** For function types: the argument types. */
         functionArgumentTypes(): TypeInfo[];
 
+        /** Return a copy with one argument type replaced and prototype metadata preserved. */
+        withFunctionArgumentType(index: number, replacement: TypeInfo): TypeInfo;
+
+        /** Return a copy with one argument name replaced and prototype metadata preserved. */
+        withFunctionArgumentName(index: number, name: string): TypeInfo;
+
+        /** Return a copy with its return type replaced and prototype metadata preserved. */
+        withFunctionReturnType(replacement: TypeInfo): TypeInfo;
+
         /** For function types: the calling convention. */
         callingConvention(): CallingConvention;
 
         /** For function types: whether it is variadic. */
         isVariadicFunction(): boolean;
 
+        /** For function types: return type, named arguments, CC, and varargs flag. */
+        functionDetails(): FunctionDetails;
+
         // ── Enum introspection ──────────────────────────────────────────
         /** For enum types: all enum member entries. */
         enumMembers(): EnumMember[];
+
+        /** For enum types: width, signedness/radix metadata, and members. */
+        enumDetails(): EnumDetails;
 
         // ── Struct / Union members ──────────────────────────────────────
         /** Number of members (struct/union). */
@@ -1438,11 +2003,23 @@ export namespace type {
         /** All members (struct/union). */
         members(): Member[];
 
+        /** Complete struct/union layout metadata. */
+        udtDetails(): UdtDetails;
+
+        /** Set mutually exclusive C++ object/vftable semantics without changing layout. */
+        setUdtSemantics(isCppObject: boolean, isVftable: boolean): void;
+
         /** Look up a member by name. */
         memberByName(name: string): Member;
 
         /** Look up a member by byte offset. */
         memberByOffset(byteOffset: number): Member;
+
+        /** Source item heads with persistent informational references to the exact member. */
+        memberReferences(byteOffset: number): Address[];
+
+        /** Ensure a persistent informational reference to the exact member; true if added. */
+        ensureMemberReference(byteOffset: number, sourceAddress: Address): boolean;
 
         /** Add a member to a struct or union being built. */
         addMember(name: string, type: TypeInfo, byteOffset?: number): void;
@@ -1453,6 +2030,9 @@ export namespace type {
 
         /** Save this type to the local type library under the given name. */
         saveAs(name: string): void;
+
+        /** Replace an exact local same-name struct/union forward while preserving its ordinal. */
+        replaceForwardDeclaration(name: string): TypeInfo;
     }
 
     // ── Primitive type factories ────────────────────────────────────────
@@ -1638,7 +2218,52 @@ export namespace event {
     type EventKind =
         | 'segmentAdded' | 'segmentDeleted'
         | 'functionAdded' | 'functionDeleted'
-        | 'renamed' | 'bytePatched' | 'commentChanged';
+        | 'renamed' | 'bytePatched' | 'commentChanged'
+        | 'segmentMoved' | 'functionUpdated' | 'itemTypeChanged'
+        | 'operandTypeChanged' | 'codeCreated' | 'dataCreated'
+        | 'itemsDestroyed' | 'extraCommentChanged' | 'localTypesChanged';
+
+    type ExtraCommentPlacement = 'unknown' | 'anterior' | 'posterior';
+    type LocalTypeChangeKind =
+        | 'none' | 'added' | 'deleted' | 'edited' | 'aliased'
+        | 'compilerChanged' | 'libraryLoaded' | 'libraryUnloaded'
+        | 'ordinalsCompacted';
+
+    interface SegmentMovedEvent {
+        kind: 'segmentMoved';
+        from: Address;
+        to: Address;
+        size: bigint;
+        addressMappingChanged: boolean;
+    }
+
+    interface ItemCreatedEvent {
+        kind: 'codeCreated' | 'dataCreated';
+        address: Address;
+        size: bigint;
+    }
+
+    interface ItemsDestroyedEvent {
+        kind: 'itemsDestroyed';
+        start: Address;
+        end: Address;
+        willDisableRange: boolean;
+    }
+
+    interface ExtraCommentChangedEvent {
+        kind: 'extraCommentChanged';
+        address: Address;
+        placement: ExtraCommentPlacement;
+        lineIndex: number;
+        text: string;
+    }
+
+    interface LocalTypesChangedEvent {
+        kind: 'localTypesChanged';
+        change: LocalTypeChangeKind;
+        ordinal: number;
+        name: string;
+    }
 
     interface Event {
         kind: EventKind;
@@ -1648,6 +2273,16 @@ export namespace event {
         oldName: string;
         oldValue: number;
         repeatable: boolean;
+        size: bigint;
+        operandIndex: number;
+        lineIndex: number;
+        text: string;
+        willDisableRange: boolean;
+        addressMappingChanged: boolean;
+        extraCommentPlacement: ExtraCommentPlacement;
+        localTypeChange: LocalTypeChangeKind;
+        typeOrdinal: number;
+        typeName: string;
     }
 
     /** Subscribe to segment creation events. Returns a token for unsubscribing. */
@@ -1670,6 +2305,33 @@ export namespace event {
 
     /** Subscribe to comment change events. */
     function onCommentChanged(callback: (event: Pick<Event, 'kind' | 'address' | 'repeatable'>) => void): Token;
+
+    /** Subscribe to completed segment moves. */
+    function onSegmentMoved(callback: (event: SegmentMovedEvent) => void): Token;
+
+    /** Subscribe to function metadata updates. */
+    function onFunctionUpdated(callback: (event: Pick<Event, 'kind' | 'address'>) => void): Token;
+
+    /** Subscribe to applied item-type changes. */
+    function onItemTypeChanged(callback: (event: Pick<Event, 'kind' | 'address'>) => void): Token;
+
+    /** Subscribe to operand representation/type changes. */
+    function onOperandTypeChanged(callback: (event: Pick<Event, 'kind' | 'address' | 'operandIndex'>) => void): Token;
+
+    /** Subscribe to instruction creation. */
+    function onCodeCreated(callback: (event: ItemCreatedEvent & { kind: 'codeCreated' }) => void): Token;
+
+    /** Subscribe to data-item creation. */
+    function onDataCreated(callback: (event: ItemCreatedEvent & { kind: 'dataCreated' }) => void): Token;
+
+    /** Subscribe to item destruction in a half-open address range. */
+    function onItemsDestroyed(callback: (event: ItemsDestroyedEvent) => void): Token;
+
+    /** Subscribe to anterior/posterior comment-line changes. */
+    function onExtraCommentChanged(callback: (event: ExtraCommentChangedEvent) => void): Token;
+
+    /** Subscribe to local type-library changes. */
+    function onLocalTypesChanged(callback: (event: LocalTypesChangedEvent) => void): Token;
 
     /** Subscribe to all supported IDB events. */
     function onEvent(callback: (event: Event) => void): Token;
@@ -1784,6 +2446,363 @@ export namespace diagnostics {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// undo namespace
+// ═══════════════════════════════════════════════════════════════════════════
+
+export namespace undo {
+    /** Create a named restore point. Returns false when undo is unavailable. */
+    function createPoint(actionName: string, label: string): boolean;
+
+    /** Display label of the next undo action, or null when none is available. */
+    function undoActionLabel(): string | null;
+
+    /** Display label of the next redo action, or null when none is available. */
+    function redoActionLabel(): string | null;
+
+    /** Perform the next undo action. Returns false when none is available. */
+    function performUndo(): boolean;
+
+    /** Perform the next redo action. Returns false when none is available. */
+    function performRedo(): boolean;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// registers namespace
+// ═══════════════════════════════════════════════════════════════════════════
+
+export namespace registers {
+    type TrackingState =
+        | 'undefined'
+        | 'deadEnd'
+        | 'aborted'
+        | 'badInstruction'
+        | 'unknownInstruction'
+        | 'functionInput'
+        | 'loopVariant'
+        | 'incompatibleValues'
+        | 'tooManyReferences'
+        | 'tooManyValues'
+        | 'constant'
+        | 'stackPointerDelta';
+
+    type ReferenceMutation = 'added' | 'removed';
+
+    interface ValueOrigin {
+        address: Address;
+        instructionCode: number;
+        shortInstruction: boolean;
+        programCounterBased: boolean;
+        globalOffsetTableLike: boolean;
+    }
+
+    interface ValueCandidate {
+        constant: bigint | null;
+        stackPointerDelta: bigint | null;
+        origin: ValueOrigin;
+    }
+
+    interface TrackedValue {
+        state: TrackingState;
+        candidates: ValueCandidate[];
+        cause: ValueOrigin | null;
+        abortingDepth: number | null;
+        description: string;
+        known: boolean;
+    }
+
+    interface NearestValue {
+        selectedIndex: number;
+        registerName: string;
+        value: TrackedValue;
+    }
+
+    /** Track a named register before executing the instruction at address. */
+    function track(address: Address, registerName: string, maxDepth?: number): TrackedValue;
+
+    /** Return a unique constant, or null when no unique constant is known. */
+    function constantAt(address: Address, registerName: string, maxDepth?: number): bigint | null;
+
+    /** Return the default or named stack-pointer-relative delta, or null. */
+    function stackDeltaAt(address: Address, registerName?: string | null): bigint | null;
+
+    /** Select the nearest known value from two distinct base registers. */
+    function nearestAt(
+        address: Address,
+        firstRegister: string,
+        secondRegister: string,
+    ): NearestValue | null;
+
+    function clearControlFlowCache(): void;
+    function clearDataReferenceCache(): void;
+    function controlFlowReferenceChanged(
+        from: Address,
+        to: Address,
+        mutation: ReferenceMutation,
+    ): void;
+    function dataReferenceChanged(to: Address, mutation: ReferenceMutation): void;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// problem namespace
+// ═══════════════════════════════════════════════════════════════════════════
+
+export namespace problem {
+    type Kind =
+        | 'missingOffsetBase'
+        | 'missingName'
+        | 'missingForcedOperand'
+        | 'missingComment'
+        | 'missingReferences'
+        | 'ignoredJumpTable'
+        | 'disassemblyFailure'
+        | 'alreadyItemHead'
+        | 'flowBeyondLimits'
+        | 'tooManyLines'
+        | 'stackTraceFailure'
+        | 'attention'
+        | 'analysisDecision'
+        | 'rolledBackDecision'
+        | 'flairCollision'
+        | 'flairIndecision';
+
+    /** Return a copied problem description, or null when none is recorded. */
+    function description(kind: Kind, address: Address): string | null;
+
+    /** Record a typed problem. Null/omitted selects the SDK default message. */
+    function remember(kind: Kind, address: Address, message?: string | null): void;
+
+    /** Return the first problem address at or after the bound, or null. */
+    function next(kind: Kind, atOrAfter?: Address | null): Address | null;
+
+    /** Remove a problem marker, returning whether it existed. */
+    function remove(kind: Kind, address: Address): boolean;
+
+    /** Return the copied short or long display name for a kind. */
+    function name(kind: Kind, longForm?: boolean): string;
+
+    /** Return whether a typed problem exists at an address. */
+    function contains(kind: Kind, address: Address): boolean;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// bookmark namespace
+// ═══════════════════════════════════════════════════════════════════════════
+
+export namespace bookmark {
+    /** Exact number of address-bookmark slots supported by IDA. */
+    const maxSlots: number;
+
+    /** Owned snapshot of one address bookmark. */
+    interface Bookmark {
+        address: Address;
+        slot: number;
+        description: string;
+    }
+
+    /** Copy every address bookmark in ascending slot order. */
+    function all(): Bookmark[];
+
+    /** Find the bookmark at an address, or null. */
+    function at(address: Address): Bookmark | null;
+
+    /** Find the bookmark occupying a slot, or null. */
+    function atSlot(slot: number): Bookmark | null;
+
+    /** Create or update a bookmark; omitted slot selects the lowest free slot. */
+    function set(address: Address, description: string,
+                 slot?: number | null): Bookmark;
+
+    /** Remove the bookmark at an address, returning whether it existed. */
+    function remove(address: Address): boolean;
+
+    /** Remove the bookmark occupying a slot, returning whether it existed. */
+    function removeSlot(slot: number): boolean;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// navigation namespace
+// ═══════════════════════════════════════════════════════════════════════════
+
+export namespace navigation {
+    /** Owned snapshot of one semantic address-navigation location. */
+    interface Entry {
+        address: Address;
+        channel: string;
+        metadata: string;
+    }
+
+    /** Opaque copyable handle to one persistent IDAX-private history stream. */
+    interface History {
+        name(): string;
+        created(): boolean;
+        entries(): Entry[];
+        size(): number;
+        index(): number;
+        current(): Entry;
+        currentFor(channel: string): Entry | null;
+        allCurrent(): Entry[];
+        setCurrent(entry: Entry, recordInHistory?: boolean): void;
+        push(entry: Entry): Entry;
+        seek(index: number): Entry;
+        back(count?: number): Entry | null;
+        forward(count?: number): Entry | null;
+        replace(index: number, entry: Entry): void;
+        clear(newTip: Entry): void;
+        transferChannelTo(destination: History, channel: string,
+                          retainHistory?: boolean): void;
+    }
+
+    /** Open or create a logical persistent history with one initial tip. */
+    function open(name: string, initial: Entry): History;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// parser namespace
+// ═══════════════════════════════════════════════════════════════════════════
+
+export namespace parser {
+    type Language =
+        | 'c' | 'cpp' | 'objectiveC' | 'swift' | 'go' | 'objectiveCpp';
+    type InputKind = 'sourceText' | 'filePath';
+
+    interface ParseOptions {
+        inputKind?: InputKind;
+        discardResult?: boolean;
+        defineBaseMacros?: boolean;
+        suppressWarnings?: boolean;
+        ignoreErrors?: boolean;
+        allowRedeclarations?: boolean;
+        noDecorate?: boolean;
+        assumeHighLevel?: boolean;
+        lowerPrototypes?: boolean;
+        rawArgumentNames?: boolean;
+        relaxedNamespaces?: boolean;
+        excludeBaseTypes?: boolean;
+        allowMissingSemicolon?: boolean;
+        standaloneDeclaration?: boolean;
+        allowVoid?: boolean;
+        noMangle?: boolean;
+        packAlignment?: 0 | 1 | 2 | 4 | 8 | 16;
+    }
+
+    interface ParseReport {
+        errorCount: number;
+        ok: boolean;
+    }
+
+    /** Select a named parser; null/omitted selects the default parser. */
+    function select(name?: string | null): void;
+    /** Select a parser supporting every requested language. */
+    function selectFor(languages: Language | readonly Language[]): void;
+    /** Return the copied current parser name, or null for unnamed default state. */
+    function selectedName(): string | null;
+    /** Configure command-line arguments for a named parser. */
+    function setArguments(parserName: string, arguments: string): void;
+    /** Parse source text or a file using a language-compatible parser. */
+    function parseFor(
+        languages: Language | readonly Language[],
+        input: string,
+        inputKind?: InputKind,
+    ): ParseReport;
+    /** Parse source text or a file using a named parser. */
+    function parseWith(
+        parserName: string,
+        input: string,
+        inputKind?: InputKind,
+    ): ParseReport;
+    /** Parse with a named parser and semantic extended options. */
+    function parseWithOptions(
+        parserName: string,
+        input: string,
+        options?: ParseOptions,
+    ): ParseReport;
+    /** Return one copied parser-defined option value. */
+    function option(parserName: string, optionName: string): string;
+    /** Set one parser-defined option value. */
+    function setOption(parserName: string, optionName: string, value: string): void;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// exception namespace
+// ═══════════════════════════════════════════════════════════════════════════
+
+export namespace exception {
+    interface Range {
+        start: Address;
+        end: Address;
+    }
+
+    interface HandlerMetadata {
+        regions: Range[];
+        stackDisplacement: bigint | null;
+        frameRegister: number | null;
+    }
+
+    type CatchSelector =
+        | { kind: 'typed'; typeIdentifier: bigint }
+        | { kind: 'catchAll' }
+        | { kind: 'cleanup' };
+
+    interface CatchHandler {
+        metadata: HandlerMetadata;
+        objectDisplacement: bigint | null;
+        selector: CatchSelector;
+    }
+
+    type SehDisposition =
+        | 'continueExecution'
+        | 'continueSearch'
+        | 'executeHandler';
+
+    interface SehHandler {
+        metadata: HandlerMetadata;
+        filterRegions: Range[];
+        disposition: SehDisposition | null;
+    }
+
+    type HandlerSet =
+        | { kind: 'cpp'; catches: CatchHandler[] }
+        | { kind: 'seh'; handler: SehHandler };
+
+    interface BlockDefinition {
+        protectedRegions: Range[];
+        handlers: HandlerSet;
+    }
+
+    interface Block {
+        definition: BlockDefinition;
+        nestingLevel: number;
+    }
+
+    type Location =
+        | 'cppTry'
+        | 'cppHandler'
+        | 'sehTry'
+        | 'sehHandler'
+        | 'sehFilter'
+        | 'any'
+        | 'unwindFallthrough';
+
+    /** Retrieve copied exception regions intersecting a range. */
+    function list(range: Range): Block[];
+
+    /** Delete every exception-region record intersecting a range. */
+    function remove(range: Range): void;
+
+    /** Add one validated C++ or SEH exception-region definition. */
+    function add(block: BlockDefinition): void;
+
+    /** Return a surrounding system-EH start, or null when absent. */
+    function systemRegionStart(address: Address): Address | null;
+
+    /** Test one or more semantic exception-location classes. */
+    function contains(
+        address: Address,
+        locations?: Location | readonly Location[] | null,
+    ): boolean;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // lumina namespace
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1844,6 +2863,25 @@ export namespace lumina {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export namespace lines {
+
+    interface SourceFileRange {
+        start: Address;
+        end: Address;
+    }
+
+    interface SourceFile {
+        filename: string;
+        range: SourceFileRange;
+    }
+
+    /** Associate a half-open address range with one source filename. */
+    function addSourceFile(range: SourceFileRange, filename: string): void;
+
+    /** Return the source filename and complete mapped range containing an address. */
+    function sourceFileAt(address: Address): SourceFile;
+
+    /** Remove the source-file mapping containing an address. */
+    function removeSourceFile(address: Address): void;
 
     /** Named color constants for use with colstr(). */
     const Color: {
@@ -1940,6 +2978,106 @@ export namespace lines {
 // decompiler namespace
 // ═══════════════════════════════════════════════════════════════════════════
 
+export namespace directory {
+    type Kind =
+        | 'localTypes' | 'functions' | 'names' | 'imports'
+        | 'idaPlaceBookmarks' | 'breakpoints' | 'localTypeBookmarks'
+        | 'snippets';
+
+    type EntryKind = 'directory' | 'item';
+
+    type OperationError =
+        | 'alreadyExists' | 'notFound' | 'notDirectory' | 'notEmpty'
+        | 'badPath' | 'cannotRename' | 'ownChild' | 'directoryLimit'
+        | 'notOrderable' | 'sdkFailure';
+
+    interface Entry {
+        path: string;
+        name: string;
+        displayName: string;
+        attributes: string;
+        kind: EntryKind;
+    }
+
+    interface BulkFailure {
+        inputIndex: number;
+        path: string;
+        error: OperationError;
+        message: string;
+    }
+
+    interface BulkReport {
+        affectedPaths: string[];
+        failures: BulkFailure[];
+        ok: boolean;
+    }
+
+    interface Tree {
+        kind(): Kind;
+        isOrderable(): boolean;
+        currentDirectory(): string;
+        changeDirectory(path: string): void;
+        absolutePath(relativePath: string): string;
+        contains(path: string): boolean;
+        entry(path: string): Entry;
+        children(path?: string): Entry[];
+        snapshot(path?: string): Entry[];
+        findItems(pattern: string): Entry[];
+        createDirectory(path: string): void;
+        removeDirectory(path: string): void;
+        link(path: string): void;
+        unlink(path: string): void;
+        rename(from: string, to: string): void;
+        foldCommonPrefix(path?: string): void;
+        hasNaturalOrder(directoryPath: string): boolean;
+        setNaturalOrder(directoryPath: string, enable: boolean): void;
+        rank(path: string): number;
+        changeRank(path: string, delta: number): void;
+        move(paths: string[], destinationDirectory: string,
+             destinationRank?: number | null): BulkReport;
+        remove(paths: string[]): BulkReport;
+    }
+
+    function open(kind: Kind): Tree;
+}
+
+export namespace registry {
+    type ValueKind = 'string' | 'binary' | 'integer';
+
+    interface StringListUpdate {
+        add?: string | null;
+        remove?: string | null;
+        maxRecords?: number;
+        ignoreCase?: boolean;
+    }
+
+    interface Store {
+        key(): string;
+        child(name: string): Store;
+        exists(): boolean;
+        childKeys(): string[];
+        valueNames(): string[];
+        contains(name: string): boolean;
+        valueKind(name: string): ValueKind | null;
+        readString(name: string): string | null;
+        writeString(name: string, value: string): void;
+        readBinary(name: string): Buffer | null;
+        writeBinary(name: string, value: Buffer | Uint8Array): void;
+        readInteger(name: string): number | null;
+        writeInteger(name: string, value: number): void;
+        readBoolean(name: string): boolean | null;
+        writeBoolean(name: string, value: boolean): void;
+        eraseValue(name: string): boolean;
+        eraseKey(): boolean;
+        eraseTree(): boolean;
+        readStringList(): string[];
+        writeStringList(values: string[]): void;
+        updateStringList(update: StringListUpdate): void;
+    }
+
+    function open(key: string): Store;
+}
+
 export namespace decompiler {
 
     type VariableStorage = 'unknown' | 'register' | 'stack';
@@ -1996,6 +3134,32 @@ export namespace decompiler {
         savedVariableCount(): number;
     }
 
+    type SimplePseudocodeCommentPosition =
+        | 'default'
+        | 'parenthesisOpen'
+        | 'assembly'
+        | 'elseLine'
+        | 'doLine'
+        | 'semicolon'
+        | 'openBrace'
+        | 'closeBrace'
+        | 'parenthesisClose'
+        | 'labelColon'
+        | 'blockBefore'
+        | 'blockAfter'
+        | 'tryLine';
+
+    type PseudocodeCommentPosition =
+        | SimplePseudocodeCommentPosition
+        | { kind: 'argument'; index: number }
+        | { kind: 'switchCase'; value: number };
+
+    interface PseudocodeComment {
+        address: Address;
+        position: PseudocodeCommentPosition;
+        text: string;
+    }
+
     /**
      * A decompiled function. Returned by `decompile()`. Holds a reference
      * to the underlying Hex-Rays cfunc_t and supports pseudocode access,
@@ -2042,6 +3206,28 @@ export namespace decompiler {
         /** Set a persistent local-variable comment by 0-based index. */
         setVariableComment(index: number, comment: string): void;
 
+        /** Set or remove a pseudocode comment at one semantic location. */
+        setComment(
+            address: Address,
+            text: string,
+            position?: PseudocodeCommentPosition,
+        ): void;
+
+        /** Read a pseudocode comment at one semantic location. */
+        getComment(address: Address, position?: PseudocodeCommentPosition): string;
+
+        /** Enumerate copied persisted pseudocode comments. */
+        comments(): PseudocodeComment[];
+
+        /** Persist in-memory pseudocode comment changes. */
+        saveComments(): void;
+
+        /** Whether persisted/in-memory pseudocode comments contain orphans. */
+        hasOrphanComments(): boolean;
+
+        /** Explicitly remove orphan pseudocode comments; returns removed count. */
+        removeOrphanComments(): number;
+
         /** Visit ctree expressions synchronously. */
         forEachExpression(callback: (expression: ExpressionInfo) => VisitAction): number;
 
@@ -2087,16 +3273,19 @@ export namespace decompiler {
         | 'loadMemory' | 'storeMemory' | 'bitwiseOr' | 'bitwiseAnd' | 'bitwiseXor'
         | 'shiftLeft' | 'shiftRightLogical' | 'shiftRightArithmetic'
         | 'floatAdd' | 'floatSub' | 'floatMul' | 'floatDiv'
-        | 'integerToFloat' | 'floatToFloat';
+        | 'integerToFloat' | 'floatToFloat' | 'signedExtend'
+        | 'call' | 'indirectCall' | 'goto' | 'indirectJump' | 'return' | 'other';
 
     type MicrocodeOperandKind =
         | 'empty' | 'register' | 'localVariable' | 'registerPair' | 'globalAddress'
         | 'stackVariable' | 'helperReference' | 'blockReference' | 'nestedInstruction'
-        | 'unsignedImmediate' | 'signedImmediate';
+        | 'unsignedImmediate' | 'signedImmediate' | 'addressReference' | 'callArguments'
+        | 'stringConstant' | 'floatingPointConstant' | 'other';
 
     interface MicrocodeOperand {
         kind: MicrocodeOperandKind;
         registerId: number;
+        processorRegisterId: number;
         localVariableIndex: number;
         localVariableOffset: AddressDelta;
         secondRegisterId: number;
@@ -2109,6 +3298,10 @@ export namespace decompiler {
         signedImmediate: bigint;
         byteWidth: number;
         markUserDefinedType: boolean;
+        referencedOperand: MicrocodeOperand | null;
+        callArguments: MicrocodeOperand[];
+        callTarget: Address;
+        text: string;
     }
 
     interface MicrocodeInstruction {
@@ -2117,6 +3310,69 @@ export namespace decompiler {
         right: MicrocodeOperand;
         destination: MicrocodeOperand;
         floatingPointInstruction: boolean;
+        modifiesDestination: boolean;
+        address: Address;
+        text: string;
+    }
+
+    type MicrocodeMaturity =
+        | 'generated' | 'preoptimized' | 'locallyOptimized' | 'callsAnalyzed'
+        | 'globallyOptimized1' | 'globallyOptimized2' | 'globallyOptimized3'
+        | 'localVariables';
+
+    interface MicrocodeGenerationOptions {
+        maturity?: MicrocodeMaturity;
+        analyzeCalls?: boolean;
+    }
+
+    type MicrocodeValueLocationKind =
+        | 'unspecified' | 'register' | 'registerWithOffset' | 'registerPair'
+        | 'registerRelative' | 'stackOffset' | 'staticAddress' | 'scattered';
+
+    interface MicrocodeLocationPart {
+        kind: MicrocodeValueLocationKind;
+        registerId: number;
+        secondRegisterId: number;
+        registerOffset: number;
+        registerRelativeOffset: AddressDelta;
+        stackOffset: AddressDelta;
+        staticAddress: Address;
+        byteOffset: number;
+        byteSize: number;
+    }
+
+    interface MicrocodeValueLocation {
+        kind: MicrocodeValueLocationKind;
+        registerId: number;
+        secondRegisterId: number;
+        registerOffset: number;
+        registerRelativeOffset: AddressDelta;
+        stackOffset: AddressDelta;
+        staticAddress: Address;
+        scatteredParts: MicrocodeLocationPart[];
+    }
+
+    interface MicrocodeFunctionArgument {
+        name: string;
+        location: MicrocodeValueLocation;
+        byteWidth: number;
+    }
+
+    interface MicrocodeBlock {
+        index: number;
+        startAddress: Address;
+        endAddress: Address;
+        predecessors: number[];
+        successors: number[];
+        instructions: MicrocodeInstruction[];
+    }
+
+    interface MicrocodeFunction {
+        entryAddress: Address;
+        maturity: MicrocodeMaturity;
+        arguments: MicrocodeFunctionArgument[];
+        returnLocation: MicrocodeValueLocation | null;
+        blocks: MicrocodeBlock[];
     }
 
     interface MicrocodeContext {
@@ -2156,6 +3412,12 @@ export namespace decompiler {
     /** Decompile the function at the given address. */
     function decompile(address: Address): DecompiledFunction;
 
+    /** Generate a native-lifetime-independent function-level microcode graph. */
+    function generateMicrocode(
+        address: Address,
+        maturityOrOptions?: MicrocodeMaturity | MicrocodeGenerationOptions,
+    ): MicrocodeFunction;
+
     /** Register a microcode filter callback pair. */
     function registerMicrocodeFilter(
         matchCallback: (context: MicrocodeContext) => boolean,
@@ -2175,6 +3437,9 @@ export namespace decompiler {
 
     /** Subscribe to pseudocode refresh events. */
     function onRefreshPseudocode(callback: (event: PseudocodeEvent) => void): Token;
+
+    /** Subscribe when an existing pseudocode view switches to another function. */
+    function onSwitchPseudocode(callback: (event: PseudocodeEvent) => void): Token;
 
     /** Subscribe to Hex-Rays popup-population events. */
     function onPopulatingPopup(callback: (event: PopulatingPopupEvent) => void): Token;

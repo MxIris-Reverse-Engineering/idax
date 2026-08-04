@@ -13,6 +13,10 @@
 | `get_func_name(&buf, ea)` | `func.name()` |
 | `decode_insn(&insn, ea)` | `ida::instruction::decode(ea)` |
 | `create_insn(ea)` | `ida::instruction::create(ea)` |
+| `op_stroff(insn, n, path, path_len, delta)` for one exact UDT member | `ida::instruction::ensure_operand_struct_member_offset(ea, n, structure_name, member_byte_offset, delta)` |
+| `get_stroff_path(...)` / public `tid_t` path inspection | `ida::instruction::operand_struct_offset_path(ea, n)` returning copied root/member names and delta |
+| `mreg2reg(mop.r, mop.size)` while copying a graph | `MicrocodeOperand::processor_register_id` (`-1` when unavailable) |
+| `minsn_t::modifies_d()` while copying a graph | `MicrocodeInstruction::modifies_destination` |
 | `get_byte(ea)` | `ida::data::read_byte(ea)` |
 | `put_byte(ea, v)` | `ida::data::write_byte(ea, v)` |
 | `patch_byte(ea, v)` | `ida::data::patch_byte(ea, v)` |
@@ -24,13 +28,22 @@
 | `add_extra_cmt(ea, false, line)` | `ida::comment::set_posterior_lines(ea, lines)` |
 | `add_cref(from, to, fl_CN)` | `ida::xref::add_code(from, to, CodeType::CallNear)` |
 | `add_dref(from, to, dr_R)` | `ida::xref::add_data(from, to, DataType::Read)` |
+| `get_refinfo(&ri, ea, n)` / raw `refinfo_t` inspection | `ida::offset::reference_info(ea, OperandLocation{n})` returning copied semantic metadata |
+| `op_offset_ex(ea, n, &ri)` / `del_refinfo` / `clr_op_type` | `ida::offset::apply_reference(...)` / `remove_reference(...)` with verified layered mutation |
 | `find_text(...)` | `ida::search::text(query, start, options)` |
 | `find_text(..., SEARCH_REGEX)` | `ida::search::text(query, start, TextOptions{.regex=true})` |
 | `auto_wait()` | `ida::analysis::wait()` |
 | `plan_ea(ea)` | `ida::analysis::schedule(ea)` |
+| `eval_expr` / `eval_idc_expr` / `eval_expr_long` | `ida::script::evaluate` / `evaluate_idc` / `evaluate_integer` with structured outcomes |
+| `compile_idc_text` / `compile_idc_snippet` / `compile_idc_file` | `ida::script::compile_text` / `compile_snippet` / `compile_file` with semantic options |
+| `call_idc_func` / `exec_idc_script` / `eval_idc_snippet` | `ida::script::call` / `execute_script` / `evaluate_snippet` with owned values and retained exception results |
+| `idc_value_t`, `get_idcv_attr`, `set_idcv_attr`, `find_idc_gvar` | opaque `ida::script::Value` plus attribute/global/reference operations |
 | `open_linput(path, false)` | `ida::loader::InputFile` (provided in callbacks) |
 | `file2base(li, off, ea1, ea2, p)` | `ida::loader::file_to_database(handle, off, ea, size, p)` |
 | `mem2base(ptr, ea1, ea2, fpos)` | `ida::loader::memory_to_database(ptr, ea, size)` |
+| `PH.id` plus processor-name/bitness/endian/ABI queries | `ida::database::processor_profile()` |
+| IDAPython `ida_kernwin.add_hotkey(key, fn)` / `del_hotkey(ctx)` | `ida::plugin::register_hotkey(key, fn)` returning move-only `ScopedHotkey` |
+| `process_ui_action(name)` | `ida::plugin::activate_action(action_id)` |
 | `detach_action_from_menu(path, name)` | `ida::plugin::detach_from_menu(path, action_id)` |
 | `detach_action_from_toolbar(name, action)` | `ida::plugin::detach_from_toolbar(name, action_id)` |
 | `detach_action_from_popup(widget, action)` | `ida::plugin::detach_from_popup(widget_title, action_id)` |
@@ -82,9 +95,13 @@ class MyProc : public ida::processor::Processor {
 };
 IDAX_PROCESSOR(MyProc)
 
-// Segment-register default seeding (SDK set_default_sreg_value equivalent)
-ida::segment::set_default_segment_register_for_all(/*cs index*/ 3, 0);
-ida::segment::set_default_segment_register_for_all(/*ds index*/ 4, 0);
+// Segment-register default seeding (SDK set_default_sreg_value_ea equivalent)
+ida::segment::set_default_segment_register_for_all("cs", 0);
+ida::segment::set_default_segment_register_for_all("ds", 0);
+
+// Segment-register range lookup without ordinals, BADSEL, or sreg_range_t.
+auto ranges = ida::segment::segment_register_ranges("ds");
+auto value = ida::segment::segment_register_value(address, "ds");
 ```
 
 ---
@@ -120,6 +137,52 @@ auto ptr = ida::type::TypeInfo::pointer_to(ida::type::TypeInfo::int32());
 auto arr = ida::type::TypeInfo::array_of(ida::type::TypeInfo::uint8(), 256);
 ```
 
+### Shifted-pointer metadata
+
+```cpp
+// Legacy:
+// ptr_type_data_t details;
+// pointer.get_ptr_details(&details);
+// details.taptr_bits |= TAPTR_SHIFTED;
+// details.parent = parent;
+// details.delta = 8;
+// shifted.create_ptr(details);
+
+// idax: copied metadata in, opaque copy out.
+auto parent = ida::type::TypeInfo::by_name("object");
+auto pointer = ida::type::TypeInfo::pointer_to(*parent);
+auto shifted = pointer.with_shifted_parent(*parent, 8);
+auto details = shifted->pointer_details();
+// details->shifted_parent, details->shift_delta == 8, details->is_shifted
+```
+
+The delta is a nonzero signed 32-bit byte offset. The parent must be a struct.
+The source pointer remains unchanged.
+
+### Local forward declarations
+
+```cpp
+// Legacy:
+// auto ordinal = forward_tif.get_ordinal();
+// complete_tif.set_numbered_type(get_idati(), ordinal,
+//                                NTF_REPLACE | NTF_COPY);
+
+// idax: classify explicitly and replace only the exact local forward ordinal.
+auto target = ida::type::TypeInfo::by_name("object");
+if (target && target->is_forward_declaration()
+    && target->forward_declaration_kind() == ida::type::TypeKind::Struct) {
+    auto complete = ida::type::TypeInfo::create_struct();
+    complete.add_member("flags", ida::type::TypeInfo::uint32(), 0);
+    auto replaced = complete.replace_forward_declaration("object");
+}
+```
+
+`replace_forward_declaration` accepts only an exact local structure/union
+forward of the same kind. It copies the complete candidate into the existing
+ordinal and returns a fresh named handle. Complete definitions, sub-TIL types,
+enum forwards, mismatched kinds, and non-UDT candidates are preserved and
+reported as errors; the candidate remains unchanged.
+
 ### Struct creation and member access
 
 ```cpp
@@ -140,6 +203,27 @@ auto members = st.members();     // -> Result<vector<Member>>
 auto by_name = st.member_by_name("field_a");
 auto by_off  = st.member_by_offset(4);  // field_b
 ```
+
+### Persistent references to exact UDT members
+
+```cpp
+// Legacy:
+// auto member_tid = named_tif.get_udm_tid(member_index);
+// add_dref(instruction_ea, member_tid, dr_I | XREF_USER);
+
+// idax: the member identity never crosses the opaque TypeInfo boundary.
+auto named = ida::type::TypeInfo::by_name("my_struct");
+auto added = named->ensure_member_reference(4, instruction_ea);
+auto sources = named->member_references(4);
+```
+
+The byte offset must identify exactly one member of a complete saved local UDT,
+and the source must be a mapped item head. `ensure_member_reference` returns
+`true` only when it creates a persistent user informational reference and
+`false` for an exact existing reference. Missing/ambiguous members, ephemeral
+or external-library types, invalid sources, and incompatible existing
+source/member references fail before mutation. Public APIs return only source
+addresses; the SDK member TID remains internal.
 
 ### Applying types to addresses
 
@@ -401,15 +485,20 @@ ida::decompiler::for_each_expression(df, [&](auto expr) {
 // cf->set_user_cmt(loc, "note");
 // cf->save_user_cmts();
 
-// idax:
-df.set_comment(ea, "note");
+// idax — semantic position; no raw item_preciser_t:
+df.set_comment(ea, "note", ida::decompiler::CommentPosition::Semicolon);
 df.save_comments();
 
-auto cmt = df.get_comment(ea);  // -> Result<string>
-df.set_comment(ea, "");         // remove
+auto cmt = df.get_comment(
+    ea, ida::decompiler::CommentPosition::Semicolon); // -> Result<string>
+auto all = df.comments();        // copied persisted (address, position, text)
+df.set_comment(ea, "", ida::decompiler::CommentPosition::Semicolon); // remove
 df.save_comments();
 
-// Orphan comment cleanup workflow:
+auto arg0 = ida::decompiler::CommentPosition::argument(0); // Result, range 0..63
+auto case7 = ida::decompiler::CommentPosition::switch_case(7);
+
+// Orphan cleanup is explicit and is never performed by comments():
 auto has_orphans = df.has_orphan_comments();     // -> Result<bool>
 auto removed = df.remove_orphan_comments();      // -> Result<int>
 df.save_comments();

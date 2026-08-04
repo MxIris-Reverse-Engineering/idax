@@ -25,7 +25,7 @@ if(DEFINED ENV{IDADIR})
     set(IDA_INSTALL_DIR "$ENV{IDADIR}")
 elseif(APPLE)
     # Try common macOS locations.
-    foreach(_ver 9.3 9.2)
+    foreach(_ver 9.4)
         set(_try "/Applications/IDA Professional ${_ver}.app/Contents/MacOS")
         if(EXISTS "${_try}/${IDAX_IDALIB_LIB_NAME}")
             set(IDA_INSTALL_DIR "${_try}")
@@ -49,6 +49,12 @@ endif()
 # registers it as a CTest with the fixture binary as argument.
 function(idax_add_integration_test TEST_NAME SOURCE_FILE)
     set(TARGET_NAME "idax_${TEST_NAME}_test")
+    if(ARGC GREATER 2)
+        set(TEST_FIXTURE "${ARGV2}")
+    else()
+        set(TEST_FIXTURE
+            "${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/simple_appcall_linux64")
+    endif()
 
     # On macOS, we MUST link against the actual installation dylibs.
     # On other platforms we use the SDK's ida_add_idalib macro, which automatically
@@ -88,7 +94,11 @@ function(idax_add_integration_test TEST_NAME SOURCE_FILE)
     if(IDA_INSTALL_DIR)
         add_test(
             NAME ${TEST_NAME}
-            COMMAND ${TARGET_NAME} "${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/simple_appcall_linux64"
+            COMMAND ${CMAKE_COMMAND}
+                "-DIDAX_TEST_EXECUTABLE=$<TARGET_FILE:${TARGET_NAME}>"
+                "-DIDAX_TEST_FIXTURE=${TEST_FIXTURE}"
+                "-DIDAX_TEST_NAME=${TEST_NAME}"
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/run_with_temp_fixture.cmake"
         )
         set_tests_properties(${TEST_NAME} PROPERTIES
             ENVIRONMENT "IDADIR=${IDA_INSTALL_DIR}"
@@ -114,9 +124,25 @@ idax_add_integration_test(decompiler_edge_cases            decompiler_edge_cases
 idax_add_integration_test(decompiler_ctree_navigation_safety decompiler_ctree_navigation_safety_test.cpp)
 idax_add_integration_test(performance_benchmark            performance_benchmark_test.cpp)
 idax_add_integration_test(codedump_parity_host_gates        codedump_parity_host_gates_test.cpp)
+idax_add_integration_test(diaphora_referent_metadata        diaphora_referent_metadata_test.cpp)
+idax_add_integration_test(undo_roundtrip                    undo_roundtrip_test.cpp)
+idax_add_integration_test(problem_roundtrip                 problem_roundtrip_test.cpp)
+idax_add_integration_test(exception_roundtrip               exception_roundtrip_test.cpp)
+idax_add_integration_test(parser_roundtrip                  parser_roundtrip_test.cpp)
+idax_add_integration_test(directory_roundtrip               directory_roundtrip_test.cpp)
+idax_add_integration_test(registry_roundtrip                registry_roundtrip_test.cpp)
+idax_add_integration_test(register_tracking_roundtrip
+    register_tracking_roundtrip_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/register_tracking_aarch64")
+idax_add_integration_test(bookmark_roundtrip                bookmark_roundtrip_test.cpp)
+idax_add_integration_test(navigation_roundtrip              navigation_roundtrip_test.cpp)
+idax_add_integration_test(segment_register_roundtrip        segment_register_roundtrip_test.cpp)
+idax_add_integration_test(offset_reference_roundtrip        offset_reference_roundtrip_test.cpp)
+idax_add_integration_test(script_roundtrip                  script_roundtrip_test.cpp)
 
 # ── Torture tests (expanded coverage) ────────────────────────────────────
 idax_add_integration_test(analysis_entry_lines_torture     analysis_entry_lines_torture_test.cpp)
+idax_add_integration_test(string_source_metadata           string_source_metadata_test.cpp)
 idax_add_integration_test(cross_domain_torture             cross_domain_torture_test.cpp)
 idax_add_integration_test(type_data_comment_torture        type_data_comment_torture_test.cpp)
 idax_add_integration_test(operand_function_torture         operand_function_torture_test.cpp)

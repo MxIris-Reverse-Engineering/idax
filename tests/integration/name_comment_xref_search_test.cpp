@@ -178,6 +178,22 @@ void test_name_behaviors() {
             CHECK(*sanitized_valid);
     }
 
+    for (auto form : {ida::name::DemangleForm::Short,
+                      ida::name::DemangleForm::Long,
+                      ida::name::DemangleForm::Full}) {
+        auto arbitrary = ida::name::demangled("_Z3foov", form);
+        CHECK_VAL(arbitrary, _r->find("foo") != std::string::npos);
+    }
+    auto empty_symbol = ida::name::demangled("", ida::name::DemangleForm::Short);
+    CHECK(!empty_symbol.has_value());
+    if (!empty_symbol)
+        CHECK(empty_symbol.error().category == ida::ErrorCategory::Validation);
+    auto plain_symbol = ida::name::demangled("not_a_mangled_symbol",
+                                             ida::name::DemangleForm::Short);
+    CHECK(!plain_symbol.has_value());
+    if (!plain_symbol)
+        CHECK(plain_symbol.error().category == ida::ErrorCategory::NotFound);
+
     const bool was_public = ida::name::is_public(first_ea);
     CHECK_OK(ida::name::set_public(first_ea, !was_public));
     CHECK(ida::name::is_public(first_ea) == !was_public);
@@ -221,12 +237,16 @@ void test_comment_behaviors() {
     CHECK_OK(ida::comment::clear_anterior(ea));
     CHECK_OK(ida::comment::clear_posterior(ea));
 
+    CHECK_OK(ida::comment::append(ea, "idax created by append"));
+    CHECK_VAL(ida::comment::get(ea, false), *_r == "idax created by append");
+    CHECK_OK(ida::comment::remove(ea, false));
+
     CHECK_OK(ida::comment::set(ea, "idax regular"));
     CHECK_OK(ida::comment::append(ea, " +append"));
     auto regular = ida::comment::get(ea, false);
     CHECK_OK(regular);
     if (regular) {
-        CHECK(regular->find("idax regular") != std::string::npos);
+        CHECK(*regular == "idax regular\n +append");
     }
 
     CHECK_OK(ida::comment::set(ea, "idax repeatable", true));

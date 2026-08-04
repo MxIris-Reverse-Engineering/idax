@@ -76,9 +76,18 @@ endif()
 
 if(DEFINED ENV{IDASDK})
     set(IDASDK_DIR "$ENV{IDASDK}")
-    include_directories("${IDASDK_DIR}/include")
+    if(EXISTS "${IDASDK_DIR}/include/pro.h")
+        set(IDASDK_INCLUDE_ROOT "${IDASDK_DIR}")
+    elseif(EXISTS "${IDASDK_DIR}/src/include/pro.h")
+        set(IDASDK_INCLUDE_ROOT "${IDASDK_DIR}/src")
+    else()
+        message(FATAL_ERROR
+            "Could not find IDA SDK headers below IDASDK='${IDASDK_DIR}'. "
+            "Expected include/pro.h or src/include/pro.h.")
+    endif()
+    include_directories("${IDASDK_INCLUDE_ROOT}/include")
     add_compile_definitions(__EA64__)
-    message(STATUS "IDA SDK: ${IDASDK_DIR}")
+    message(STATUS "IDA SDK: ${IDASDK_DIR} (headers: ${IDASDK_INCLUDE_ROOT}/include)")
 
     get_filename_component(IDASDK_DIR_BASENAME "${IDASDK_DIR}" NAME)
     if(IDASDK_DIR_BASENAME STREQUAL "src" AND EXISTS "${IDASDK_DIR}/../lib")
@@ -107,21 +116,14 @@ endif()
 if(DEFINED ENV{IDADIR})
     set(IDA_INSTALL_DIR "$ENV{IDADIR}")
 elseif(APPLE)
-    # Try common macOS locations.
-    foreach(_ver 9.3 9.2 9.1 9.0)
+    # Automatic discovery must stay coherent with the exact 9.4 SDK contract.
+    foreach(_ver 9.4)
         set(_try "/Applications/IDA Professional ${_ver}.app/Contents/MacOS")
         if(EXISTS "${_try}/libidalib.dylib")
             set(IDA_INSTALL_DIR "${_try}")
             break()
         endif()
     endforeach()
-    # Also check the hexrays development build.
-    if(NOT IDA_INSTALL_DIR)
-        set(_dev_try "$ENV{HOME}/hexrays/ida/bin/arm64_mac_clang_opt/ida.app/Contents/MacOS")
-        if(EXISTS "${_dev_try}/libidalib.dylib")
-            set(IDA_INSTALL_DIR "${_dev_try}")
-        endif()
-    endif()
 endif()
 
 if(NOT IDA_INSTALL_DIR)
@@ -221,10 +223,21 @@ set(BINDING_SOURCES
     src/instruction_bind.cpp
     src/name_bind.cpp
     src/xref_bind.cpp
+    src/offset_bind.cpp
     src/comment_bind.cpp
     src/data_bind.cpp
     src/search_bind.cpp
     src/analysis_bind.cpp
+    src/undo_bind.cpp
+    src/problem_bind.cpp
+    src/bookmark_bind.cpp
+    src/navigation_bind.cpp
+    src/exception_bind.cpp
+    src/parser_bind.cpp
+    src/script_bind.cpp
+    src/directory_bind.cpp
+    src/registry_bind.cpp
+    src/registers_bind.cpp
     src/type_bind.cpp
     src/entry_bind.cpp
     src/fixup_bind.cpp
@@ -284,6 +297,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
 elseif(MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE /W4 /permissive-)
     target_compile_options(${PROJECT_NAME} PRIVATE /Zc:__cplusplus)
+    target_compile_definitions(${PROJECT_NAME} PRIVATE NOMINMAX)
 endif()
 
 # Suppress NAN deprecation warnings on newer V8

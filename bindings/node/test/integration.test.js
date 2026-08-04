@@ -12,13 +12,20 @@
 
 const { describe, it, expect, beforeAll } = require('./harness');
 
-const binaryPath = process.argv[2];
+const inputBinaryPath = process.argv[2];
 
-if (!binaryPath) {
+if (!inputBinaryPath) {
     console.log('Usage: node test/integration.test.js <binary_path>');
     console.log('Skipping integration tests (no binary specified)');
     process.exit(0);
 }
+
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const fixtureDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'idax-node-integration-'));
+const binaryPath = path.join(fixtureDirectory, path.basename(inputBinaryPath));
+fs.copyFileSync(inputBinaryPath, binaryPath);
 
 let idax;
 
@@ -27,6 +34,7 @@ try {
 } catch (e) {
     console.log('Native addon not built — skipping integration tests');
     console.log(`Error: ${e.message}`);
+    fs.rmSync(fixtureDirectory, { recursive: true, force: true });
     process.exit(0);
 }
 
@@ -115,6 +123,16 @@ describe('Database Metadata', () => {
             // Acceptable — ABI info not available for all binaries
         }
     });
+
+    it('should return a normalized processor profile', () => {
+        const profile = idax.database.processorProfile();
+        expect(profile.rawId).toBe(idax.database.processorId());
+        expect(profile.knownId).toBe(idax.database.processorIdFromRaw(profile.rawId));
+        expect(profile.name).toBe(idax.database.processorName());
+        expect(profile.addressBitness).toBe(idax.database.addressBitness());
+        expect(profile.bigEndian).toBe(idax.database.isBigEndian());
+        expect(profile.abiName === null || typeof profile.abiName === 'string').toBe(true);
+    });
 });
 
 // ── Segments ────────────────────────────────────────────────────────────
@@ -150,6 +168,43 @@ describe('Segments', () => {
         const last = idax.segment.last();
         expect(typeof first.start).toBe('bigint');
         expect(typeof last.start).toBe('bigint');
+    });
+
+    it('should expose opaque segment-register discovery and copied state', () => {
+        const registers = idax.segment.segmentRegisters();
+        expect(registers.length).toBeGreaterThan(0);
+        const register = registers[0];
+        expect(typeof register.name).toBe('string');
+        expect(register.name.length).toBeGreaterThan(0);
+        expect(register.bitWidth).toBeGreaterThan(0);
+        expect(typeof register.isCode).toBe('boolean');
+        expect(typeof register.isData).toBe('boolean');
+
+        const address = idax.segment.first().start;
+        const value = idax.segment.segmentRegisterValue(address, register.name);
+        expect(value === null || typeof value === 'bigint').toBe(true);
+        const defaultValue = idax.segment.defaultSegmentRegisterValue(
+            address, register.name);
+        expect(defaultValue === null || typeof defaultValue === 'bigint').toBe(true);
+        const range = idax.segment.segmentRegisterRange(address, register.name);
+        expect(typeof range.start).toBe('bigint');
+        expect(typeof range.end).toBe('bigint');
+        expect(range.value === null || typeof range.value === 'bigint').toBe(true);
+        expect(['inherited', 'user', 'analysis', 'analysisAtSegmentStart'])
+            .toContain(range.source);
+        const ranges = idax.segment.segmentRegisterRanges(register.name);
+        expect(ranges.length).toBeGreaterThan(0);
+        expect(idax.segment.segmentRegisterRangeIndex(
+            address, register.name) !== null).toBe(true);
+
+        expect(idax.segment.setDefaultSegmentRegister(
+            address, register.name, 0x234n)).toBe(true);
+        expect(idax.segment.defaultSegmentRegisterValue(
+            address, register.name)).toBe(0x234n);
+        expect(idax.segment.setDefaultSegmentRegister(
+            address, register.name, defaultValue)).toBe(true);
+        expect(() => idax.segment.segmentRegisterValue(
+            address, 'bad\0name')).toThrow();
     });
 });
 
@@ -202,6 +257,17 @@ describe('Functions', () => {
         expect(Array.isArray(addrs)).toBe(true);
         expect(addrs.length).toBeGreaterThan(0);
     });
+
+    it('should print an applied function declaration with a name override', () => {
+        const func = idax.function.byIndex(0);
+        expect(idax.function.applyDecl(func.start, 'int idax_node_decl_probe(void);')).toBe(true);
+        const declaration = idax.function.declaration(
+            func.start,
+            'idax_node_decl_readback',
+        );
+        expect(typeof declaration).toBe('string');
+        expect(declaration.includes('idax_node_decl_readback')).toBe(true);
+    });
 });
 
 // ── Instructions ────────────────────────────────────────────────────────
@@ -214,6 +280,175 @@ describe('Instructions', () => {
         expect(typeof insn.mnemonic).toBe('string');
         expect(insn.mnemonic.length).toBeGreaterThan(0);
         expect(typeof insn.size).toBe('bigint');
+    });
+
+    it('should preserve operand encoded-value byte offsets', () => {
+        let sawPresent = false;
+        let sawAbsent = false;
+        for (const func of idax.function.all()) {
+            for (const address of idax.function.codeAddresses(func.start)) {
+                const decoded = idax.instruction.decode(address);
+                for (const operand of decoded.operands) {
+                    const primary = operand.encodedValueByteOffset;
+                    const secondary = operand.secondaryEncodedValueByteOffset;
+                    expect(primary === null || typeof primary === 'number').toBe(true);
+                    expect(secondary === null || typeof secondary === 'number').toBe(true);
+                    if (primary === null) {
+                        sawAbsent = true;
+                    } else {
+                        sawPresent = true;
+                        expect(primary).toBeGreaterThan(0);
+                        expect(BigInt(primary) < decoded.size).toBe(true);
+                    }
+                    if (secondary !== null) {
+                        expect(secondary).toBeGreaterThan(0);
+                        expect(BigInt(secondary) < decoded.size).toBe(true);
+                    }
+                }
+                if (sawPresent && sawAbsent) break;
+            }
+            if (sawPresent && sawAbsent) break;
+        }
+        expect(sawPresent).toBe(true);
+        expect(sawAbsent).toBe(true);
+    });
+
+    it('should preserve operand access modes', () => {
+        let sawRead = false;
+        let sawWritten = false;
+        let sawWrittenMemory = false;
+
+        for (const func of idax.function.all()) {
+            for (const address of idax.function.codeAddresses(func.start)) {
+                const decoded = idax.instruction.decode(address);
+                for (const operand of decoded.operands) {
+                    expect(typeof operand.isRead).toBe('boolean');
+                    expect(typeof operand.isWritten).toBe('boolean');
+                    sawRead ||= operand.isRead;
+                    sawWritten ||= operand.isWritten;
+                    sawWrittenMemory ||= operand.isMemory && operand.isWritten;
+                }
+                if (sawRead && sawWritten && sawWrittenMemory) break;
+            }
+            if (sawRead && sawWritten && sawWrittenMemory) break;
+        }
+
+        expect(sawRead).toBe(true);
+        expect(sawWritten).toBe(true);
+        expect(sawWrittenMemory).toBe(true);
+    });
+
+    it('should apply and read back a named operand enum', () => {
+        idax.type.parseDeclarations(
+            'enum idax_node_operand_enum { IDAX_NODE_ZERO = 0, IDAX_NODE_ONE = 1 };',
+        );
+
+        let candidate = null;
+        for (const func of idax.function.all()) {
+            for (const address of idax.function.codeAddresses(func.start)) {
+                const decoded = idax.instruction.decode(address);
+                const operand = decoded.operands.find(
+                    value => value.type === 'immediate' && value.value !== 0n,
+                );
+                if (operand) {
+                    candidate = { address, index: operand.index };
+                    break;
+                }
+            }
+            if (candidate) break;
+        }
+        if (!candidate) return;
+
+        try {
+            idax.instruction.setOperandEnum(
+                candidate.address,
+                candidate.index,
+                'idax_node_operand_enum',
+            );
+            const exact = idax.instruction.operandEnum(candidate.address, candidate.index);
+            expect(exact.name).toBe('idax_node_operand_enum');
+            expect(exact.serial).toBe(0);
+            const any = idax.instruction.operandEnum(candidate.address, -1);
+            expect(any.name).toBe('idax_node_operand_enum');
+        } finally {
+            idax.instruction.clearOperandRepresentation(candidate.address, candidate.index);
+        }
+    });
+
+    it('should apply an opaque exact-member struct-offset path idempotently', () => {
+        const structure = idax.type.createStruct();
+        structure.addMember('first', idax.type.uint32(), 0);
+        structure.addMember('second', idax.type.uint32(), 4);
+        structure.saveAs('idax_node_operand_struct_offset');
+
+        let candidate = null;
+        for (const func of idax.function.all()) {
+            for (const address of idax.function.codeAddresses(func.start)) {
+                const decoded = idax.instruction.decode(address);
+                const operand = decoded.operands.find(value => value.type === 'immediate');
+                if (operand) {
+                    candidate = { address, index: operand.index };
+                    break;
+                }
+            }
+            if (candidate) break;
+        }
+        if (!candidate) return;
+
+        idax.instruction.clearOperandRepresentation(candidate.address, candidate.index);
+        try {
+            idax.instruction.setOperandDecimal(candidate.address, candidate.index);
+            const before = idax.instruction.operandText(
+                candidate.address, candidate.index);
+            expect(() => idax.instruction.ensureOperandStructMemberOffset(
+                candidate.address,
+                candidate.index,
+                'idax_node_operand_struct_offset',
+                4,
+                -4,
+            )).toThrow();
+            expect(idax.instruction.operandText(
+                candidate.address, candidate.index)).toBe(before);
+            idax.instruction.clearOperandRepresentation(
+                candidate.address, candidate.index);
+
+            expect(idax.instruction.ensureOperandStructMemberOffset(
+                candidate.address,
+                candidate.index,
+                'idax_node_operand_struct_offset',
+                4,
+                -4,
+            )).toBe(true);
+            const path = idax.instruction.operandStructOffsetPath(
+                candidate.address, candidate.index);
+            expect(path.structureName).toBe('idax_node_operand_struct_offset');
+            expect(path.memberNames.length).toBe(1);
+            expect(path.memberNames[0]).toBe('second');
+            expect(path.delta).toBe(-4n);
+            const names = idax.instruction.operandStructOffsetPathNames(
+                candidate.address, candidate.index);
+            expect(names.length).toBe(2);
+            expect(names[0]).toBe('idax_node_operand_struct_offset');
+            expect(names[1]).toBe('second');
+            expect(idax.instruction.ensureOperandStructMemberOffset(
+                candidate.address,
+                candidate.index,
+                'idax_node_operand_struct_offset',
+                4,
+                -4,
+            )).toBe(false);
+            expect(() => idax.instruction.ensureOperandStructMemberOffset(
+                candidate.address,
+                candidate.index,
+                'idax_node_operand_struct_offset',
+                0,
+                -4,
+            )).toThrow();
+            expect(() => idax.instruction.setOperandStructOffset(
+                candidate.address, candidate.index, 1234n)).toThrow();
+        } finally {
+            idax.instruction.clearOperandRepresentation(candidate.address, candidate.index);
+        }
     });
 
     it('should get instruction text', () => {
@@ -266,9 +501,31 @@ describe('Names', () => {
             expect(typeof addr).toBe('bigint');
         }
     });
+
+    it('should demangle arbitrary symbols without an address', () => {
+        for (const form of ['short', 'long', 'full']) {
+            const demangled = idax.name.demangled('_Z3foov', form);
+            expect(typeof demangled).toBe('string');
+            expect(demangled.includes('foo')).toBe(true);
+        }
+        expect(() => idax.name.demangled('not_a_mangled_symbol')).toThrow();
+    });
 });
 
-// ── Comments ────────────────────────────────────────────────────────────
+// ── UI ────────────────────────────────────────────────────────────────────
+
+describe('UI', () => {
+    it('should expose the current widget without assuming a GUI host', () => {
+        const widget = idax.ui.currentWidget();
+        expect(widget === null || typeof widget.id === 'bigint').toBe(true);
+        if (widget !== null) {
+            expect(typeof widget.title).toBe('string');
+            expect(typeof widget.type).toBe('number');
+        }
+    });
+});
+
+// ── Comments ──────────────────────────────────────────────────────────────
 
 describe('Comments', () => {
     it('should set and get regular comment', () => {
@@ -291,6 +548,481 @@ describe('Comments', () => {
         expect(cmt).toBe('repeatable test');
 
         idax.comment.remove(addr, true);
+    });
+
+    it('should append a new line at a function start', () => {
+        const funcs = idax.function.all();
+        const addr = funcs[0].start;
+
+        idax.comment.set(addr, 'first', false);
+        idax.comment.append(addr, ' second', false);
+        expect(idax.comment.get(addr, false)).toBe('first\n second');
+
+        idax.comment.remove(addr, false);
+    });
+});
+
+// ── Undo / Redo ─────────────────────────────────────────────────────────
+
+describe('Undo / Redo', () => {
+    it('should round-trip a repeatable comment and preserve labels', () => {
+        const address = idax.function.byIndex(0).start;
+        let original = null;
+        try {
+            original = idax.comment.get(address, true);
+        } catch (error) {
+            expect(error.category).toBe('NotFound');
+        }
+
+        const label = 'IDAX Node undo round-trip π';
+        expect(idax.undo.createPoint('idax.node.undo', label)).toBe(true);
+        idax.comment.set(address, 'idax node undo mutation', true);
+        expect(idax.undo.undoActionLabel()).toBe(label);
+        expect(idax.undo.performUndo()).toBe(true);
+        if (original === null) {
+            expect(() => idax.comment.get(address, true)).toThrow(/No comment/);
+        } else {
+            expect(idax.comment.get(address, true)).toBe(original);
+        }
+
+        expect(idax.undo.redoActionLabel()).toBe(label);
+        expect(idax.undo.performRedo()).toBe(true);
+        expect(idax.comment.get(address, true)).toBe('idax node undo mutation');
+        expect(idax.undo.performUndo()).toBe(true);
+        if (original === null) {
+            expect(() => idax.comment.get(address, true)).toThrow(/No comment/);
+        } else {
+            expect(idax.comment.get(address, true)).toBe(original);
+        }
+    });
+});
+
+// ── Analysis Problems ───────────────────────────────────────────────────
+
+describe('Analysis Problems', () => {
+    it('should remember, describe, traverse, and remove a typed problem', () => {
+        const address = idax.function.byIndex(0).start;
+        const kind = 'attention';
+        idax.problem.remove(kind, address);
+
+        expect(idax.problem.contains(kind, address)).toBe(false);
+        expect(idax.problem.description(kind, address)).toBeNull();
+        expect(idax.problem.name(kind, true).length).toBeGreaterThan(0);
+        expect(idax.problem.name(kind, false).length).toBeGreaterThan(0);
+
+        const message = 'IDAX Node problem round-trip π';
+        idax.problem.remember(kind, address, message);
+        expect(idax.problem.contains(kind, address)).toBe(true);
+        expect(idax.problem.description(kind, address)).toBe(message);
+        expect(idax.problem.next(kind, address)).toBe(address);
+
+        expect(idax.problem.remove(kind, address)).toBe(true);
+        expect(idax.problem.remove(kind, address)).toBe(false);
+        expect(idax.problem.contains(kind, address)).toBe(false);
+        expect(idax.problem.description(kind, address)).toBeNull();
+        expect(idax.problem.next(kind, address) === address).toBe(false);
+    });
+});
+
+// ── Address Bookmarks ───────────────────────────────────────────────────
+
+describe('Address Bookmarks', () => {
+    it('should create, update, enumerate, and remove an opaque bookmark', () => {
+        const addresses = idax.function.codeAddresses(idax.function.byIndex(0).start);
+        expect(addresses.length).toBeGreaterThanOrEqual(2);
+        const address = addresses.find(value => idax.bookmark.at(value) === null);
+        expect(address).toBeDefined();
+        const baseline = idax.bookmark.all();
+        const occupied = new Set(baseline.map(value => value.slot));
+        let slot = 23;
+        while (occupied.has(slot)) ++slot;
+        expect(slot).toBeLessThan(idax.bookmark.maxSlots);
+
+        try {
+            const created = idax.bookmark.set(address, 'IDAX Node bookmark π', slot);
+            expect(created.address).toBe(address);
+            expect(created.slot).toBe(slot);
+            expect(created.description).toBe('IDAX Node bookmark π');
+            const byAddress = idax.bookmark.at(address);
+            expect(byAddress.address).toBe(created.address);
+            expect(byAddress.slot).toBe(created.slot);
+            expect(byAddress.description).toBe(created.description);
+            const bySlot = idax.bookmark.atSlot(slot);
+            expect(bySlot.address).toBe(created.address);
+            expect(bySlot.slot).toBe(created.slot);
+            expect(bySlot.description).toBe(created.description);
+            expect(idax.bookmark.all().some(value => value.slot === slot)).toBe(true);
+
+            const updated = idax.bookmark.set(address, 'IDAX Node updated λ');
+            expect(updated.slot).toBe(slot);
+            expect(updated.description).toBe('IDAX Node updated λ');
+            const conflictSlot = slot === 0 ? 1 : 0;
+            expect(() => idax.bookmark.set(address, 'conflict', conflictSlot))
+                .toThrow(/different slot/);
+            expect(idax.bookmark.removeSlot(slot)).toBe(true);
+            expect(idax.bookmark.removeSlot(slot)).toBe(false);
+            expect(idax.bookmark.at(address)).toBeNull();
+        } finally {
+            idax.bookmark.remove(address);
+        }
+    });
+});
+
+// ── Address Navigation History ──────────────────────────────────────────
+
+describe('Address Navigation History', () => {
+    it('should preserve opaque stack, cursor, current channels, and transfer', () => {
+        const expectEntry = (actual, expected) => {
+            expect(actual.address).toBe(expected.address);
+            expect(actual.channel).toBe(expected.channel);
+            expect(actual.metadata).toBe(expected.metadata);
+        };
+        const expectEntries = (actual, expected) => {
+            expect(actual.length).toBe(expected.length);
+            for (let index = 0; index < expected.length; ++index)
+                expectEntry(actual[index], expected[index]);
+        };
+        const expectNull = (actual, operation) => {
+            if (actual !== null)
+                throw new Error(`${operation} returned a navigation entry`);
+        };
+        const addresses = idax.function.codeAddresses(idax.function.byIndex(0).start);
+        expect(addresses.length).toBeGreaterThanOrEqual(5);
+        const alpha0 = { address: addresses[0], channel: 'alpha', metadata: 'a0 π' };
+        const alpha1 = { address: addresses[1], channel: 'alpha', metadata: 'a1' };
+        const beta0 = { address: addresses[2], channel: 'beta', metadata: 'b0' };
+        const other0 = { address: addresses[3], channel: 'other', metadata: 'o0' };
+        const gamma0 = { address: addresses[4], channel: 'gamma', metadata: 'g0' };
+
+        const history = idax.navigation.open('node-phase68-main', alpha0);
+        expect(history.created()).toBe(true);
+        expect(history.name()).toBe('node-phase68-main');
+        expectEntries(history.entries(), [alpha0]);
+        expectEntry(history.current(), alpha0);
+        expect(history.index()).toBe(0);
+        history.setCurrent(beta0);
+        expectEntry(history.currentFor('beta'), beta0);
+        expectEntries(history.entries(), [alpha0]);
+        expectEntry(history.push(alpha1), alpha1);
+        expectEntry(history.back(), alpha0);
+        expectEntry(history.forward(), alpha1);
+        expectNull(history.forward(), 'forward boundary');
+        history.replace(0, other0);
+        expectEntry(history.seek(0), other0);
+
+        const destination = idax.navigation.open('node-phase68-destination', gamma0);
+        try {
+            history.transferChannelTo(destination, 'alpha', true);
+        } catch (error) {
+            throw new Error(`${error.message} [${error.context || ''}]`);
+        }
+        expectEntries(history.entries(), [other0]);
+        expectNull(history.currentFor('alpha'), 'transferred source current');
+        expectEntries(destination.entries(), [gamma0, alpha1]);
+        expectEntry(destination.currentFor('alpha'), alpha1);
+        destination.clear(gamma0);
+        expectEntries(destination.entries(), [gamma0]);
+
+        const reopened = idax.navigation.open('node-phase68-main', alpha0);
+        expect(reopened.created()).toBe(false);
+        expectEntries(reopened.entries(), [other0]);
+    });
+});
+
+// ── Exception Regions ───────────────────────────────────────────────────
+
+describe('Exception Regions', () => {
+    it('should add, list, classify, and remove a semantic C++ region', () => {
+        let heads = null;
+        for (const func of idax.function.all()) {
+            const addresses = idax.function.codeAddresses(func.start);
+            if (addresses.length >= 5) {
+                heads = addresses.slice(0, 5);
+                break;
+            }
+        }
+        expect(heads).toBeTruthy();
+        const scope = { start: heads[0], end: heads[4] };
+        idax.exception.remove(scope);
+
+        const definition = {
+            protectedRegions: [{ start: heads[0], end: heads[1] }],
+            handlers: {
+                kind: 'cpp',
+                catches: [{
+                    metadata: {
+                        regions: [{ start: heads[2], end: heads[3] }],
+                        stackDisplacement: 16n,
+                        frameRegister: 5,
+                    },
+                    objectDisplacement: 24n,
+                    selector: { kind: 'typed', typeIdentifier: 7n },
+                }],
+            },
+        };
+
+        try {
+            idax.exception.add(definition);
+            const blocks = idax.exception.list(scope);
+            const block = blocks.find(
+                item => item.definition.protectedRegions[0].start === heads[0]);
+            expect(block).toBeTruthy();
+            expect(block.definition.handlers.kind).toBe('cpp');
+            expect(block.definition.handlers.catches[0].selector.kind).toBe('typed');
+            expect(block.definition.handlers.catches[0].selector.typeIdentifier).toBe(7n);
+            expect(idax.exception.contains(heads[0], 'cppTry')).toBe(true);
+            expect(idax.exception.contains(heads[2], ['cppHandler'])).toBe(true);
+            const systemStart = idax.exception.systemRegionStart(heads[0]);
+            expect(systemStart === null || typeof systemStart === 'bigint').toBe(true);
+        } finally {
+            idax.exception.remove(scope);
+        }
+        expect(idax.exception.contains(heads[0], 'any')).toBe(false);
+    });
+});
+
+// ── Source Parsers ──────────────────────────────────────────────────────
+
+describe('Source Parsers', () => {
+    it('should select, configure, parse source/file inputs, and persist local types', () => {
+        idax.parser.selectFor(['c', 'cpp']);
+        const parserName = idax.parser.selectedName();
+        expect(typeof parserName).toBe('string');
+        expect(parserName.length).toBeGreaterThan(0);
+        idax.parser.setArguments(parserName, '');
+
+        const syntax = idax.parser.parseWith(
+            parserName, 'struct idax_node_parser_syntax_error {');
+        expect(syntax.ok).toBe(false);
+        expect(syntax.errorCount).toBeGreaterThan(0);
+
+        const memory = idax.parser.parseFor(
+            'c', 'struct idax_node_parser_memory { int value; };');
+        expect(memory.ok).toBe(true);
+        expect(idax.type.byName('idax_node_parser_memory').isStruct()).toBe(true);
+
+        const named = idax.parser.parseWith(
+            parserName, 'struct idax_node_parser_named { unsigned value; };');
+        expect(named.ok).toBe(true);
+        expect(idax.type.byName('idax_node_parser_named').isStruct()).toBe(true);
+
+        const extended = idax.parser.parseWithOptions(
+            parserName,
+            'struct idax_node_parser_extended { char value; };',
+            { suppressWarnings: true, allowRedeclarations: true, packAlignment: 4 },
+        );
+        expect(extended.ok).toBe(true);
+        expect(idax.type.byName('idax_node_parser_extended').isStruct()).toBe(true);
+
+        const sourcePath = path.join(fixtureDirectory, 'idax_node_parser_input.hpp');
+        fs.writeFileSync(
+            sourcePath,
+            'struct idax_node_parser_file { long long value; };\n',
+            'utf8',
+        );
+        const file = idax.parser.parseFor('cpp', sourcePath, 'filePath');
+        fs.rmSync(sourcePath, { force: true });
+        expect(file.ok).toBe(true);
+        expect(idax.type.byName('idax_node_parser_file').isStruct()).toBe(true);
+
+        const option = idax.parser.option(parserName, 'CLANG_APPLY_TINFO');
+        idax.parser.setOption(parserName, 'CLANG_APPLY_TINFO', option);
+        expect(idax.parser.option(parserName, 'CLANG_APPLY_TINFO')).toBe(option);
+        idax.parser.select();
+        const defaultName = idax.parser.selectedName();
+        expect(defaultName === null || typeof defaultName === 'string').toBe(true);
+    });
+});
+
+// ── Standard Directory Trees ───────────────────────────────────────────
+
+describe('Standard Directory Trees', () => {
+    it('should open all kinds and round-trip directory bulk operations', () => {
+        const kinds = [
+            'localTypes', 'functions', 'names', 'imports',
+            'idaPlaceBookmarks', 'breakpoints', 'localTypeBookmarks', 'snippets',
+        ];
+        for (const kind of kinds) {
+            const candidate = idax.directory.open(kind);
+            expect(candidate.kind()).toBe(kind);
+            expect(candidate.entry('/').kind).toBe('directory');
+            expect(Array.isArray(candidate.children('/'))).toBe(true);
+        }
+
+        const tree = idax.directory.open('functions');
+        expect(() => tree.contains('bad\0path')).toThrow(/embedded NUL/);
+        expect(() => tree.move([], '/')).toThrow(/cannot be empty/);
+        tree.changeDirectory('/');
+        expect(tree.currentDirectory()).toBe('/');
+        expect(tree.absolutePath('idax_node_directory_probe'))
+            .toBe('/idax_node_directory_probe');
+
+        const alpha = '/idax_node_directory_alpha';
+        const child = `${alpha}/child`;
+        const renamed = `${alpha}/renamed`;
+        const beta = '/idax_node_directory_beta';
+        const destination = '/idax_node_directory_destination';
+        const empty = '/idax_node_directory_empty';
+        const nativeParent = '/idax_node_directory_native_parent';
+        const nativeValid = '/idax_node_directory_native_valid';
+        const nativeDestination = `${nativeParent}/child`;
+        const foldRoot = '/idax_node_directory_fold';
+        const foldChild = `${foldRoot}/a`;
+        const foldGrandchild = `${foldChild}/b`;
+        tree.createDirectory(alpha);
+        tree.createDirectory(child);
+        tree.createDirectory(beta);
+        tree.createDirectory(destination);
+        tree.createDirectory(empty);
+        tree.removeDirectory(empty);
+        expect(tree.contains(empty)).toBe(false);
+        tree.createDirectory(nativeParent);
+        tree.createDirectory(nativeValid);
+        tree.createDirectory(nativeDestination);
+        const nativeRejected = tree.move(
+            [
+                '/__idax_node_directory_missing_native_reject__',
+                nativeParent,
+                nativeValid,
+            ],
+            nativeDestination,
+        );
+        expect(nativeRejected.affectedPaths).toEqual([
+            `${nativeDestination}/idax_node_directory_native_valid`,
+        ]);
+        expect(nativeRejected.failures.map(failure => failure.inputIndex))
+            .toEqual([0, 1]);
+        expect(nativeRejected.failures[0].error).toBe('notFound');
+        expect(nativeRejected.failures[1].error).toBe('ownChild');
+        expect(tree.remove([nativeParent]).ok).toBe(true);
+        tree.createDirectory(foldRoot);
+        tree.createDirectory(foldChild);
+        tree.createDirectory(foldGrandchild);
+        tree.foldCommonPrefix(foldRoot);
+        const foldedChildren = tree.children(foldRoot);
+        expect(foldedChildren).toHaveLength(1);
+        expect(foldedChildren[0].kind).toBe('directory');
+        expect(foldedChildren[0].name).toContain('\x1d');
+        expect(tree.remove([foldRoot]).ok).toBe(true);
+        expect(() => tree.createDirectory(alpha)).toThrow(/already exists/i);
+        expect(tree.entry(alpha).kind).toBe('directory');
+        expect(tree.children(alpha).some(entry => entry.path === child)).toBe(true);
+        tree.rename(child, renamed);
+        expect(tree.contains(child)).toBe(false);
+        expect(tree.contains(renamed)).toBe(true);
+        expect(tree.snapshot(alpha).some(entry => entry.path === renamed)).toBe(true);
+        expect(tree.findItems('*').length).toBeGreaterThan(0);
+
+        const item = tree.children('/').find(entry => entry.kind === 'item');
+        expect(item).toBeDefined();
+        tree.unlink(item.path);
+        expect(tree.contains(item.path)).toBe(false);
+        tree.link(item.name);
+        expect(tree.contains(item.path)).toBe(true);
+
+        if (tree.isOrderable()) {
+            const natural = tree.hasNaturalOrder('/');
+            tree.setNaturalOrder('/', !natural);
+            tree.setNaturalOrder('/', natural);
+            expect(Number.isSafeInteger(tree.rank(alpha))).toBe(true);
+            tree.changeRank(alpha, 1);
+            tree.changeRank(alpha, -1);
+        }
+
+        const moved = tree.move(
+            [
+                '/__idax_node_directory_missing_move_a__',
+                alpha,
+                '/__idax_node_directory_missing_move_b__',
+                beta,
+            ],
+            destination,
+        );
+        expect(moved.ok).toBe(false);
+        expect(moved.affectedPaths.length).toBe(2);
+        expect(moved.failures).toHaveLength(2);
+        expect(moved.failures[0].inputIndex).toBe(0);
+        expect(moved.failures[0].error).toBe('notFound');
+        expect(moved.failures[1].inputIndex).toBe(2);
+        expect(moved.failures[1].error).toBe('notFound');
+
+        const removed = tree.remove(
+            [
+                '/__idax_node_directory_missing_remove_a__',
+                destination,
+                '/__idax_node_directory_missing_remove_b__',
+            ],
+        );
+        expect(removed.ok).toBe(false);
+        expect(removed.affectedPaths).toEqual([destination]);
+        expect(removed.failures).toHaveLength(2);
+        expect(removed.failures[0].inputIndex).toBe(0);
+        expect(removed.failures[1].inputIndex).toBe(2);
+        expect(tree.contains(destination)).toBe(false);
+    });
+});
+
+// ── Persistent Registry ────────────────────────────────────────────────
+
+describe('Persistent Registry', () => {
+    it('should round-trip typed values, lists, and recursive cleanup', () => {
+        const store = idax.registry.open(
+            `idax\\phase64\\node_${process.pid}_${Date.now()}`);
+        store.eraseTree();
+        expect(store.exists()).toBe(false);
+        expect(store.valueKind('missing')).toBeNull();
+        expect(store.readString('missing')).toBeNull();
+        expect(() => store.child('bad/path')).toThrow(/one path component/);
+        expect(() => store.writeInteger('bad', 2147483648))
+            .toThrow(/signed 32-bit/);
+
+        store.writeString('text', 'node registry π');
+        store.writeBinary('binary', Buffer.from([0, 1, 127, 128, 255]));
+        store.writeBinary('emptyBinary', Buffer.alloc(0));
+        store.writeInteger('integer', -2147483648);
+        store.writeBoolean('enabled', true);
+        store.writeBoolean('disabled', false);
+        expect(store.readString('text')).toBe('node registry π');
+        expect([...store.readBinary('binary')]).toEqual([0, 1, 127, 128, 255]);
+        expect(store.readBinary('emptyBinary').length).toBe(0);
+        expect(store.readInteger('integer')).toBe(-2147483648);
+        expect(store.readBoolean('enabled')).toBe(true);
+        expect(store.readBoolean('disabled')).toBe(false);
+        expect(() => store.readBinary('text')).toThrow(/kind/);
+        expect(store.valueKind('text')).toBe('string');
+        expect(store.valueKind('binary')).toBe('binary');
+        expect(store.valueKind('integer')).toBe('integer');
+        expect(store.valueKind('enabled')).toBe('integer');
+        const names = store.valueNames();
+        expect(names).toContain('text');
+        expect(names).toContain('binary');
+        expect(names).toContain('integer');
+        expect(names).toContain('enabled');
+
+        const child = store.child('child');
+        child.writeString('nested', 'value');
+        expect(store.childKeys()).toContain('child');
+        const list = store.child('list');
+        expect(() => list.writeStringList(['bad\0value']))
+            .toThrow(/embedded NUL/);
+        list.writeStringList(['alpha', 'beta', 'gamma']);
+        list.updateStringList({
+            add: 'delta', remove: 'beta', maxRecords: 3,
+        });
+        expect(list.readStringList()).toEqual(['delta', 'alpha', 'gamma']);
+        expect(() => list.updateStringList({
+            add: 'same', remove: 'SAME', ignoreCase: true,
+        })).toThrow(/same value/);
+        expect(() => list.updateStringList({ maxRecords: 0 }))
+            .toThrow(/1\.\.1000/);
+        list.writeStringList([]);
+        expect(list.readStringList()).toEqual([]);
+
+        expect(store.eraseKey()).toBe(false);
+        expect(store.eraseValue('text')).toBe(true);
+        expect(store.eraseValue('text')).toBe(false);
+        expect(store.eraseTree()).toBe(true);
+        expect(store.exists()).toBe(false);
     });
 });
 
@@ -324,6 +1056,84 @@ describe('Cross-References', () => {
 
 // ── Data Access ─────────────────────────────────────────────────────────
 
+describe('Offset/reference semantics', () => {
+    it('should round-trip copied reference metadata and rendering', () => {
+        const descriptors = idax.offset.referenceTypes();
+        expect(descriptors.length).toBeGreaterThanOrEqual(10);
+        for (const descriptor of descriptors) {
+            expect(descriptor.name.length).toBeGreaterThan(0);
+            expect(descriptor.description.length).toBeGreaterThan(0);
+        }
+
+        let candidate = null;
+        for (const func of idax.function.all()) {
+            for (const address of idax.function.codeAddresses(func.start)) {
+                const decoded = idax.instruction.decode(address);
+                const operand = decoded.operands.find(value => {
+                    if (value.type !== 'immediate') return false;
+                    return idax.offset.referenceInfo(address, {
+                        index: value.index,
+                    }) === null;
+                });
+                if (operand) {
+                    candidate = { address, operand };
+                    break;
+                }
+            }
+            if (candidate) break;
+        }
+        expect(candidate === null).toBe(false);
+
+        const { address, operand } = candidate;
+        const location = { index: operand.index };
+        const from = address + BigInt(operand.encodedValueByteOffset || 0);
+        const info = {
+            type: idax.offset.defaultReferenceType(address),
+            target: null,
+            base: 0n,
+            targetDelta: 0n,
+            options: { ignoreFixup: true },
+        };
+        idax.instruction.clearOperandRepresentation(address, operand.index);
+        idax.offset.applyReference(address, location, info);
+        try {
+            const observed = idax.offset.referenceInfo(address, location);
+            expect(observed.type.kind).toBe(info.type.kind);
+            expect(observed.target).toBeNull();
+            expect(observed.base).toBe(0n);
+            expect(observed.targetDelta).toBe(0n);
+            expect(observed.options.ignoreFixup).toBe(true);
+
+            const stored = idax.offset.renderStoredExpression(
+                address, location, from, operand.value);
+            const explicit = idax.offset.renderExpression(
+                address, location, info, from, operand.value);
+            expect(stored.text.length).toBeGreaterThan(0);
+            expect(stored.text).toBe(explicit.text);
+            expect(stored.complexity).toBe(explicit.complexity);
+
+            const calculated = idax.offset.calculateReference(
+                from, info, operand.value);
+            expect(calculated.target).toBe(operand.value);
+            idax.offset.calculateOffsetBase(address, location);
+            idax.offset.probableBase(address, operand.value);
+            idax.offset.possibleOffset32Target(address);
+            idax.offset.calculateBaseValue(operand.value, 0n);
+
+            const hadTarget = idax.instruction.dataRefsFrom(address)
+                .includes(operand.value);
+            const target = idax.offset.addOperandDataReferences(
+                address, location, 'offset');
+            expect(target).toBe(operand.value);
+            if (!hadTarget) idax.xref.removeData(address, target);
+        } finally {
+            expect(idax.offset.removeReference(address, location)).toBe(true);
+        }
+        expect(idax.offset.referenceInfo(address, location)).toBeNull();
+        expect(idax.offset.removeReference(address, location)).toBe(false);
+    });
+});
+
 describe('Data Access', () => {
     it('should read byte', () => {
         const segs = idax.segment.all();
@@ -346,6 +1156,259 @@ describe('Data Access', () => {
         expect(typeof d).toBe('number');
         const q = idax.data.readQword(segs[0].start);
         expect(typeof q).toBe('bigint');
+    });
+
+    it('should configure and enumerate the shared string list', () => {
+        const original = idax.data.stringListOptions();
+        try {
+            expect(typeof original.minimumLength).toBe('bigint');
+            expect(Array.isArray(original.stringTypes)).toBe(true);
+
+            let invalidError;
+            try {
+                idax.data.configureStringList({ stringTypes: [] });
+            } catch (error) {
+                invalidError = error;
+            }
+            expect(invalidError).toBeDefined();
+            expect(invalidError.category).toBe('Validation');
+
+            const configured = {
+                stringTypes: [0, 1],
+                minimumLength: 5n,
+                only7Bit: true,
+                ignoreInstructions: false,
+                displayOnlyExistingStrings: false,
+            };
+            idax.data.configureStringList(configured);
+            const roundtrip = idax.data.stringListOptions();
+            expect(roundtrip.stringTypes.join(',')).toBe('0,1');
+            expect(roundtrip.minimumLength).toBe(5n);
+            expect(roundtrip.only7Bit).toBe(true);
+            expect(roundtrip.ignoreInstructions).toBe(false);
+            expect(roundtrip.displayOnlyExistingStrings).toBe(false);
+
+            const literals = idax.data.stringLiterals(false);
+            expect(Array.isArray(literals)).toBe(true);
+            expect(literals.length).toBeGreaterThan(0);
+            const known = literals.find(
+                literal => literal.text.includes('ref4: entered with %d'),
+            );
+            expect(known).toBeDefined();
+            expect(typeof known.address).toBe('bigint');
+            expect(typeof known.byteLength).toBe('bigint');
+            expect(known.stringType).toBe(0);
+            idax.data.rebuildStringList();
+            idax.data.clearStringList();
+        } finally {
+            idax.data.configureStringList(original);
+        }
+    });
+
+    it('should define element arrays with processor-sized extended reals', () => {
+        const last = idax.segment.last();
+        const start = (last.end + 0xffffn) & ~0xffffn;
+        const end = start + 0x1000n;
+        idax.segment.create(start, end, '__idax_node_data_units', 'DATA', 'data');
+
+        try {
+            const definitions = [
+                ['Byte', 1n], ['Word', 2n], ['Dword', 4n], ['Qword', 8n],
+                ['Oword', 16n], ['Yword', 32n], ['Zword', 64n],
+                ['Float', 4n], ['Double', 8n],
+            ];
+
+            const addExtendedReal = (suffix, size) => {
+                try {
+                    const width = size();
+                    expect(typeof width).toBe('bigint');
+                    expect(width).toBeGreaterThan(0n);
+                    definitions.push([suffix, width]);
+                } catch (error) {
+                    expect(error.category).toBe('Unsupported');
+                    let defineError;
+                    try { idax.data[`define${suffix}`](start); } catch (e) { defineError = e; }
+                    expect(defineError).toBeDefined();
+                    expect(defineError.category).toBe('Unsupported');
+                }
+            };
+            addExtendedReal('Tbyte', idax.data.tbyteElementSize);
+            addExtendedReal('PackedReal', idax.data.packedRealElementSize);
+            for (const [suffix, width] of definitions) {
+                const define = idax.data[`define${suffix}`];
+                define(start);
+                expect(idax.address.itemSize(start)).toBe(width);
+                idax.data.undefine(start, Number(width));
+
+                define(start, 3);
+                expect(idax.address.itemSize(start)).toBe(width * 3n);
+                idax.data.undefine(start, Number(width * 3n));
+            }
+
+            let zeroError;
+            try { idax.data.defineDword(start, 0); } catch (error) { zeroError = error; }
+            expect(zeroError).toBeDefined();
+            expect(zeroError.category).toBe('Validation');
+
+            for (const define of [idax.data.defineTbyte, idax.data.definePackedReal]) {
+                let extendedZeroError;
+                try { define(start, 0); } catch (error) { extendedZeroError = error; }
+                expect(extendedZeroError).toBeDefined();
+                expect(extendedZeroError.category).toBe('Validation');
+            }
+
+            const overflowingCount = 0xffffffffffffffffn / 64n + 1n;
+            let overflowError;
+            try {
+                idax.data.defineZword(start, overflowingCount);
+            } catch (error) {
+                overflowError = error;
+            }
+            expect(overflowError).toBeDefined();
+            expect(overflowError.category).toBe('Validation');
+
+            let rangeOverflowError;
+            try {
+                idax.data.defineWord(idax.BadAddress - 1n, 1);
+            } catch (error) {
+                rangeOverflowError = error;
+            }
+            expect(rangeOverflowError).toBeDefined();
+            expect(rangeOverflowError.category).toBe('Validation');
+            expect(() => idax.data.defineDword(start, 1.5)).toThrow();
+        } finally {
+            idax.segment.remove(start);
+        }
+    });
+
+    it('should manage custom data type and format lifecycles', () => {
+        const last = idax.segment.last();
+        const start = (last.end + 0xffffn) & ~0xffffn;
+        const end = start + 0x1000n;
+        let typeId;
+        let formatId;
+        let typeAttached = false;
+        let standardAttached = false;
+        let segmentCreated = false;
+        let creationCalls = 0;
+        let sizeCalls = 0;
+        let renderCalls = 0;
+        let scanCalls = 0;
+        let analyzeCalls = 0;
+
+        try {
+            idax.segment.create(start, end, '__idax_node_custom_data', 'DATA', 'data');
+            segmentCreated = true;
+
+            typeId = idax.data.registerCustomDataType({
+                name: '__idax_node_var4',
+                assemblerKeyword: 'node_var4',
+                valueSize: 2n,
+                allowDuplicates: false,
+                mayCreateAt(address, byteLength) {
+                    creationCalls += 1;
+                    return address >= start && byteLength === 4n;
+                },
+                calculateSize(address, maximumSize) {
+                    sizeCalls += 1;
+                    expect(address >= start).toBe(true);
+                    return maximumSize >= 4n ? 4n : 0n;
+                },
+            });
+            expect(typeof typeId).toBe('number');
+
+            formatId = idax.data.registerCustomDataFormat({
+                name: '__idax_node_hex4',
+                valueSize: 4n,
+                textWidth: 11,
+                render(value, context) {
+                    renderCalls += 1;
+                    expect(Buffer.isBuffer(value)).toBe(true);
+                    expect(typeof context.address).toBe('bigint');
+                    return `node:${value.toString('hex')}`;
+                },
+                scan(text, context) {
+                    scanCalls += 1;
+                    expect(typeof context.operandIndex).toBe('number');
+                    return Buffer.from(text.replace(/^node:/, ''), 'hex');
+                },
+                analyze(context) {
+                    analyzeCalls += 1;
+                    expect(typeof context.address).toBe('bigint');
+                },
+            });
+            expect(typeof formatId).toBe('number');
+
+            expect(idax.data.findCustomDataType('__idax_node_var4')).toBe(typeId);
+            expect(idax.data.findCustomDataFormat('__idax_node_hex4')).toBe(formatId);
+            const typeInfo = idax.data.customDataType(typeId);
+            expect(typeInfo.id).toBe(typeId);
+            expect(typeInfo.valueSize).toBe(2n);
+            expect(typeInfo.allowDuplicates).toBe(false);
+            expect(typeInfo.hasCreationFilter).toBe(true);
+            expect(typeInfo.variableSize).toBe(true);
+            const formatInfo = idax.data.customDataFormat(formatId);
+            expect(formatInfo.id).toBe(formatId);
+            expect(formatInfo.valueSize).toBe(4n);
+            expect(formatInfo.canRender).toBe(true);
+            expect(formatInfo.canScan).toBe(true);
+            expect(formatInfo.canAnalyze).toBe(true);
+            expect(idax.data.customDataTypes(2n, 2n).some(type => type.id === typeId)).toBe(true);
+
+            idax.data.attachCustomDataFormat(typeId, formatId);
+            typeAttached = true;
+            expect(idax.data.isCustomDataFormatAttached(typeId, formatId)).toBe(true);
+            expect(idax.data.customDataFormats(typeId).some(format => format.id === formatId)).toBe(true);
+            idax.data.attachCustomDataFormatToStandardTypes(formatId);
+            standardAttached = true;
+            expect(idax.data.isCustomDataFormatAttachedToStandardTypes(formatId)).toBe(true);
+            expect(idax.data.standardCustomDataFormats().some(format => format.id === formatId)).toBe(true);
+
+            const context = { address: start, operandIndex: 1, typeId };
+            expect(idax.data.renderCustomData(
+                formatId, Buffer.from([1, 2, 3, 4]), context,
+            )).toBe('node:01020304');
+            const scanned = idax.data.scanCustomData(formatId, 'node:05060708', context);
+            expect(Buffer.isBuffer(scanned)).toBe(true);
+            expect(scanned.toString('hex')).toBe('05060708');
+            idax.data.analyzeCustomData(formatId, context);
+            expect(renderCalls).toBeGreaterThan(0);
+            expect(scanCalls).toBeGreaterThan(0);
+            expect(analyzeCalls).toBeGreaterThan(0);
+
+            expect(idax.data.customDataItemSize(typeId, start, 16n)).toBe(4n);
+            idax.data.defineCustom(start, 4n, typeId, formatId);
+            const explicit = idax.data.customDataAt(start);
+            expect(explicit.typeId).toBe(typeId);
+            expect(explicit.formatId).toBe(formatId);
+            expect(explicit.byteLength).toBe(4n);
+            idax.data.undefine(start, 4);
+
+            idax.data.defineCustomInferred(start + 0x10n, typeId, formatId, 16n);
+            const inferred = idax.data.customDataAt(start + 0x10n);
+            expect(inferred.typeId).toBe(typeId);
+            expect(inferred.formatId).toBe(formatId);
+            expect(inferred.byteLength).toBe(4n);
+            expect(creationCalls).toBeGreaterThan(0);
+            expect(sizeCalls).toBeGreaterThan(0);
+            idax.data.undefine(start + 0x10n, 4);
+        } finally {
+            if (standardAttached) {
+                try { idax.data.detachCustomDataFormatFromStandardTypes(formatId); } catch (_) { /* cleanup */ }
+            }
+            if (typeAttached) {
+                try { idax.data.detachCustomDataFormat(typeId, formatId); } catch (_) { /* cleanup */ }
+            }
+            if (formatId !== undefined) {
+                try { idax.data.unregisterCustomDataFormat(formatId); } catch (_) { /* cleanup */ }
+            }
+            if (typeId !== undefined) {
+                try { idax.data.unregisterCustomDataType(typeId); } catch (_) { /* cleanup */ }
+            }
+            if (segmentCreated) {
+                try { idax.segment.remove(start); } catch (_) { /* cleanup */ }
+            }
+        }
     });
 });
 
@@ -389,6 +1452,7 @@ describe('Search', () => {
 
 describe('Analysis', () => {
     it('should report idle after wait', () => {
+        idax.analysis.wait();
         expect(idax.analysis.isIdle()).toBe(true);
     });
 
@@ -436,17 +1500,268 @@ describe('Type System', () => {
         expect(ptr.isPointer()).toBe(true);
     });
 
+    it('should preserve exact shifted-pointer metadata immutably', () => {
+        const structure = idax.type.createStruct();
+        structure.addMember('head', idax.type.uint64(), 0);
+        structure.addMember('tail', idax.type.uint32(), 8);
+        structure.saveAs('idax_node_shifted_pointer_parent');
+        const parent = idax.type.byName('idax_node_shifted_pointer_parent');
+        const pointer = idax.type.pointerTo(parent);
+
+        expect(pointer.pointerDetails().isShifted).toBe(false);
+        expect(pointer.pointerDetails().shiftedParent).toBeNull();
+        expect(pointer.pointerDetails().shiftDelta).toBe(0);
+
+        const shifted = pointer.withShiftedParent(parent, 8);
+        const details = shifted.pointerDetails();
+        expect(details.isShifted).toBe(true);
+        expect(details.shiftDelta).toBe(8);
+        expect(details.shiftedParent.toString()).toBe(parent.toString());
+        expect(details.pointeeType.toString()).toBe(parent.toString());
+        expect(pointer.pointerDetails().isShifted).toBe(false);
+        expect(shifted.withShiftedParent(parent, -4).pointerDetails().shiftDelta).toBe(-4);
+
+        expect(() => pointer.withShiftedParent(parent, 0)).toThrow();
+        expect(() => pointer.withShiftedParent(parent, 2147483648)).toThrow();
+        expect(() => idax.type.uint32().withShiftedParent(parent, 8)).toThrow();
+        expect(() => pointer.withShiftedParent(idax.type.uint32(), 8)).toThrow();
+        expect(() => idax.type.uint32().pointerDetails()).toThrow();
+    });
+
+    it('should classify and replace exact local forward declarations', () => {
+        const report = idax.type.parseDeclarations(
+            'struct idax_node_forward_struct;\n' +
+            'union idax_node_forward_union;\n' +
+            'struct idax_node_forward_complete { unsigned int keep; };\n',
+        );
+        expect(report.ok).toBe(true);
+
+        const structForward = idax.type.byName('idax_node_forward_struct');
+        const unionForward = idax.type.byName('idax_node_forward_union');
+        const complete = idax.type.byName('idax_node_forward_complete');
+        expect(structForward.isForwardDeclaration()).toBe(true);
+        expect(structForward.forwardDeclarationKind()).toBe('struct');
+        expect(unionForward.isForwardDeclaration()).toBe(true);
+        expect(unionForward.forwardDeclarationKind()).toBe('union');
+        expect(complete.isForwardDeclaration()).toBe(false);
+        expect(complete.forwardDeclarationKind()).toBe('unknown');
+
+        const pointerBefore = idax.type.pointerTo(structForward);
+        expect(pointerBefore.pointeeType().isForwardDeclaration()).toBe(true);
+        expect(pointerBefore.pointeeType().forwardDeclarationKind()).toBe('struct');
+        const source = idax.type.createStruct();
+        source.addMember('first', idax.type.uint32(), 0);
+        source.addMember('second', idax.type.uint64(), 8);
+        source.saveAs('idax_node_forward_source');
+        const namedSource = idax.type.byName('idax_node_forward_source');
+
+        expect(() => namedSource.replaceForwardDeclaration('')).toThrow();
+        expect(() => namedSource.replaceForwardDeclaration('missing_node_forward')).toThrow();
+        expect(() => idax.type.uint32().replaceForwardDeclaration(
+            'idax_node_forward_struct')).toThrow();
+        expect(() => structForward.replaceForwardDeclaration(
+            'idax_node_forward_union')).toThrow();
+        expect(() => namedSource.replaceForwardDeclaration(
+            'idax_node_forward_union')).toThrow();
+        expect(() => namedSource.replaceForwardDeclaration(
+            'idax_node_forward_complete')).toThrow();
+        expect(idax.type.byName('idax_node_forward_union')
+            .isForwardDeclaration()).toBe(true);
+        expect(idax.type.byName('idax_node_forward_complete')
+            .memberByName('keep').name).toBe('keep');
+
+        const replaced = namedSource.replaceForwardDeclaration(
+            'idax_node_forward_struct');
+        expect(replaced.isStruct()).toBe(true);
+        expect(replaced.isForwardDeclaration()).toBe(false);
+        expect(replaced.name()).toBe('idax_node_forward_struct');
+        expect(replaced.memberCount()).toBe(2);
+        expect(replaced.memberByName('first').name).toBe('first');
+        expect(replaced.memberByName('second').name).toBe('second');
+        expect(namedSource.name()).toBe('idax_node_forward_source');
+        expect(namedSource.memberCount()).toBe(2);
+        expect(pointerBefore.pointeeType().memberCount()).toBe(2);
+
+        const unionSource = idax.type.createUnion();
+        unionSource.addMember('wide', idax.type.uint64(), 0);
+        unionSource.addMember('narrow', idax.type.uint32(), 0);
+        const replacedUnion = unionSource.replaceForwardDeclaration(
+            'idax_node_forward_union');
+        expect(replacedUnion.isUnion()).toBe(true);
+        expect(replacedUnion.isForwardDeclaration()).toBe(false);
+        expect(replacedUnion.memberCount()).toBe(2);
+    });
+
+    it('should ensure opaque persistent UDT member references idempotently', () => {
+        const sourceAddress = idax.function.byIndex(0).start;
+        const ephemeral = idax.type.createStruct();
+        ephemeral.addMember('field', idax.type.uint32(), 4);
+        expect(() => ephemeral.memberReferences(4)).toThrow();
+
+        const structure = idax.type.createStruct();
+        structure.addMember('first', idax.type.uint32(), 4);
+        structure.addMember('second', idax.type.uint64(), 8);
+        structure.saveAs('idax_node_member_reference_struct');
+        const saved = idax.type.byName('idax_node_member_reference_struct');
+        expect(saved.memberReferences(4)).toEqual([]);
+        expect(saved.ensureMemberReference(4, sourceAddress)).toBe(true);
+        const references = saved.memberReferences(4);
+        expect(references.length).toBe(1);
+        expect(references[0]).toBe(sourceAddress);
+        expect(saved.ensureMemberReference(4, sourceAddress)).toBe(false);
+        expect(() => saved.memberReferences(7)).toThrow();
+        expect(() => saved.ensureMemberReference(4, idax.BAD_ADDRESS)).toThrow();
+        expect(() => saved.memberReferences(-1)).toThrow();
+        expect(() => saved.memberReferences(1.5)).toThrow();
+
+        const ambiguous = idax.type.createUnion();
+        ambiguous.addMember('wide', idax.type.uint64(), 0);
+        ambiguous.addMember('narrow', idax.type.uint32(), 0);
+        ambiguous.saveAs('idax_node_member_reference_ambiguous');
+        expect(() => idax.type.byName('idax_node_member_reference_ambiguous')
+            .memberReferences(0)).toThrow();
+    });
+
     it('should create array type', () => {
         const elem = idax.type.uint8();
         const arr = idax.type.arrayOf(elem, 100);
         expect(arr.isArray()).toBe(true);
         expect(arr.arrayLength()).toBe(100);
     });
+
+    it('should preserve UDT layout while changing semantic flags', () => {
+        const structure = idax.type.createStruct();
+        structure.addMember('word', idax.type.uint32(), 0);
+        structure.addMember('tail', idax.type.uint8(), 8);
+        const before = structure.udtDetails();
+        expect(before.isCppObject).toBe(false);
+        expect(before.isVftable).toBe(false);
+
+        structure.setUdtSemantics(true, false);
+        const cppObject = structure.udtDetails();
+        expect(cppObject.isCppObject).toBe(true);
+        expect(cppObject.isVftable).toBe(false);
+        expect(cppObject.totalSize).toBe(before.totalSize);
+        expect(cppObject.members.map((member) => [
+            member.name,
+            member.byteOffset,
+            member.bitSize,
+            member.type.toString(),
+        ])).toEqual(before.members.map((member) => [
+            member.name,
+            member.byteOffset,
+            member.bitSize,
+            member.type.toString(),
+        ]));
+
+        structure.setUdtSemantics(false, true);
+        const vftable = structure.udtDetails();
+        expect(vftable.isCppObject).toBe(false);
+        expect(vftable.isVftable).toBe(true);
+        expect(() => structure.setUdtSemantics(true, true)).toThrow();
+        expect(structure.udtDetails().isVftable).toBe(true);
+        structure.setUdtSemantics(false, false);
+        expect(structure.udtDetails().isVftable).toBe(false);
+        expect(() => idax.type.int32().setUdtSemantics(false, false)).toThrow();
+        expect(() => idax.type.createUnion().setUdtSemantics(true, false)).toThrow();
+        idax.type.createUnion().setUdtSemantics(false, false);
+    });
+
+    it('should replace a function argument type without losing metadata', () => {
+        const original = idax.type.fromDeclaration(
+            'int __cdecl idax_node_proto(int selector, char *payload)',
+        );
+        const before = original.functionDetails();
+        const edited = original.withFunctionArgumentType(0, idax.type.uint32());
+        const after = edited.functionDetails();
+
+        expect(after.arguments.length).toBe(before.arguments.length);
+        expect(after.arguments[0].name).toBe(before.arguments[0].name);
+        expect(after.arguments[1].name).toBe(before.arguments[1].name);
+        expect(after.arguments[1].type.isPointer()).toBe(true);
+        expect(after.callingConvention).toBe(before.callingConvention);
+        expect(after.variadic).toBe(before.variadic);
+        expect(original.functionDetails().arguments[0].type.isSigned()).toBe(true);
+
+        const renamed = original.withFunctionArgumentName(0, 'size');
+        const renamedAfter = renamed.functionDetails();
+        expect(renamedAfter.arguments[0].name).toBe('size');
+        expect(renamedAfter.arguments[0].type.isSigned()).toBe(true);
+        expect(renamedAfter.arguments[1].name).toBe(before.arguments[1].name);
+        expect(renamedAfter.arguments[1].type.isPointer()).toBe(true);
+        expect(renamedAfter.callingConvention).toBe(before.callingConvention);
+        expect(renamedAfter.variadic).toBe(before.variadic);
+        expect(original.functionDetails().arguments[0].name).toBe(before.arguments[0].name);
+
+        const returnEdited = original.withFunctionReturnType(idax.type.uint64());
+        const returnAfter = returnEdited.functionDetails();
+        expect(returnAfter.returnType.isInteger()).toBe(true);
+        expect(returnAfter.returnType.isSigned()).toBe(false);
+        expect(returnAfter.arguments[0].name).toBe(before.arguments[0].name);
+        expect(returnAfter.arguments[1].name).toBe(before.arguments[1].name);
+        expect(returnAfter.callingConvention).toBe(before.callingConvention);
+        expect(returnAfter.variadic).toBe(before.variadic);
+        expect(original.functionReturnType().isSigned()).toBe(true);
+
+        const pointer = idax.type.pointerTo(original);
+        const editedPointer = pointer.withFunctionArgumentType(1, idax.type.uint32());
+        expect(editedPointer.isPointer()).toBe(true);
+        expect(editedPointer.functionDetails().arguments[1].type.isInteger()).toBe(true);
+        const renamedPointer = pointer.withFunctionArgumentName(1, 'buffer');
+        expect(renamedPointer.isPointer()).toBe(true);
+        expect(renamedPointer.functionDetails().arguments[1].name).toBe('buffer');
+        const returnEditedPointer = pointer.withFunctionReturnType(idax.type.uint64());
+        expect(returnEditedPointer.isPointer()).toBe(true);
+        expect(returnEditedPointer.functionReturnType().isSigned()).toBe(false);
+    });
 });
 
 // ── Lines / Color Tags ──────────────────────────────────────────────────
 
 describe('Lines / Color Tags', () => {
+    it('should manage half-open source-file mappings', () => {
+        const last = idax.segment.last();
+        const base = (last.end + 0xffffn) & ~0xffffn;
+        const range = { start: base + 0x100n, end: base + 0x180n };
+        let mappingAdded = false;
+        let segmentCreated = false;
+        try {
+            idax.segment.create(
+                base,
+                base + 0x1000n,
+                '__idax_node_source_metadata',
+                'DATA',
+                'data',
+            );
+            segmentCreated = true;
+            idax.lines.addSourceFile(range, '/src/network/transport.cpp');
+            mappingAdded = true;
+            const source = idax.lines.sourceFileAt(base + 0x120n);
+            expect(source.filename).toBe('/src/network/transport.cpp');
+            expect(source.range.start).toBe(range.start);
+            expect(source.range.end).toBe(range.end);
+
+            let endError;
+            try { idax.lines.sourceFileAt(range.end); } catch (error) { endError = error; }
+            expect(endError).toBeDefined();
+            expect(endError.category).toBe('NotFound');
+
+            idax.lines.removeSourceFile(base + 0x120n);
+            mappingAdded = false;
+            let removedError;
+            try { idax.lines.sourceFileAt(base + 0x120n); } catch (error) { removedError = error; }
+            expect(removedError).toBeDefined();
+            expect(removedError.category).toBe('NotFound');
+        } finally {
+            if (mappingAdded) {
+                try { idax.lines.removeSourceFile(base + 0x120n); } catch (_) { /* cleanup */ }
+            }
+            if (segmentCreated) {
+                try { idax.segment.remove(base); } catch (_) { /* cleanup */ }
+            }
+        }
+    });
+
     it('should create and strip color tags', () => {
         const tagged = idax.lines.colstr('hello', 0x20); // Keyword
         expect(typeof tagged).toBe('string');
@@ -487,6 +1802,66 @@ describe('Decompiler', () => {
     it('should report availability', () => {
         const avail = idax.decompiler.available();
         expect(typeof avail).toBe('boolean');
+    });
+
+    it('should preserve distinct pseudocode comment locations', () => {
+        if (!idax.decompiler.available()) return;
+        const funcs = idax.function.all();
+        let df;
+        for (let i = 0; i < Math.min(funcs.length, 20); i++) {
+            try {
+                df = idax.decompiler.decompile(funcs[i].start);
+                break;
+            } catch (_) {
+                // Continue past non-decompilable thunks and stubs.
+            }
+        }
+        if (!df) return;
+
+        const mappings = df.addressMap();
+        const address = mappings.length > 0 ? mappings[0].address : df.entryAddress();
+        const originalDefault = df.getComment(address, 'default');
+        const originalSemicolon = df.getComment(address, 'semicolon');
+        try {
+            expect(() => df.setComment(
+                address,
+                '',
+                { kind: 'argument', index: 64 },
+            )).toThrow(/\[0, 63\]/);
+            expect(() => df.setComment(
+                address,
+                '',
+                { kind: 'switchCase', value: 0x20000000 },
+            )).toThrow(/supported range/);
+            expect(() => df.setComment(
+                address,
+                '',
+                { kind: 'semicolon', value: 1 },
+            )).toThrow(/object kind must be argument or switchCase/);
+
+            df.setComment(address, 'node_default_location', 'default');
+            df.setComment(address, 'node_semicolon_location', 'semicolon');
+            df.saveComments();
+            expect(df.getComment(address, 'default')).toBe('node_default_location');
+            expect(df.getComment(address, 'semicolon')).toBe('node_semicolon_location');
+            const comments = df.comments();
+            expect(comments.some((comment) =>
+                comment.address === address
+                && comment.position === 'default'
+                && comment.text === 'node_default_location')).toBe(true);
+            expect(comments.some((comment) =>
+                comment.address === address
+                && comment.position === 'semicolon'
+                && comment.text === 'node_semicolon_location')).toBe(true);
+            expect(typeof df.hasOrphanComments()).toBe('boolean');
+        } finally {
+            df.setComment(address, originalSemicolon, 'semicolon');
+            df.setComment(address, originalDefault, 'default');
+            df.saveComments();
+        }
+        expect(df.comments().some((comment) =>
+            comment.text === 'node_default_location'
+            || comment.text === 'node_semicolon_location')).toBe(false);
     });
 
     it('should decompile a function if available', () => {
@@ -599,6 +1974,64 @@ describe('Decompiler', () => {
         }
     });
 
+    it('should return an owned preoptimized microcode graph', () => {
+        if (!idax.decompiler.available()) return;
+        const funcs = idax.function.all();
+        const limit = Math.min(funcs.length, 20);
+        let graph = null;
+        for (let i = 0; i < limit; i++) {
+            try {
+                graph = idax.decompiler.generateMicrocode(
+                    funcs[i].start,
+                    { maturity: 'preoptimized', analyzeCalls: true },
+                );
+                break;
+            } catch (_) {
+                continue;
+            }
+        }
+        if (limit === 0) return;
+        expect(graph === null).toBe(false);
+        expect(typeof graph.entryAddress).toBe('bigint');
+        expect(graph.maturity).toBe('preoptimized');
+        expect(Array.isArray(graph.arguments)).toBe(true);
+        expect(Array.isArray(graph.blocks)).toBe(true);
+        expect(graph.blocks.length).toBeGreaterThan(0);
+
+        const instructions = graph.blocks.flatMap((block) => {
+            expect(typeof block.index).toBe('number');
+            expect(typeof block.startAddress).toBe('bigint');
+            expect(typeof block.endAddress).toBe('bigint');
+            expect(Array.isArray(block.predecessors)).toBe(true);
+            expect(Array.isArray(block.successors)).toBe(true);
+            expect(Array.isArray(block.instructions)).toBe(true);
+            return block.instructions;
+        });
+        expect(instructions.length).toBeGreaterThan(0);
+        expect(typeof instructions[0].address).toBe('bigint');
+        expect(typeof instructions[0].text).toBe('string');
+        expect(typeof instructions[0].modifiesDestination).toBe('boolean');
+        expect(typeof instructions[0].left.text).toBe('string');
+        expect(typeof instructions[0].left.processorRegisterId).toBe('number');
+        expect(typeof instructions[0].right.processorRegisterId).toBe('number');
+        expect(typeof instructions[0].destination.processorRegisterId).toBe('number');
+        expect(Array.isArray(instructions[0].left.callArguments)).toBe(true);
+        for (const instruction of instructions) {
+            if (instruction.opcode === 'storeMemory') {
+                expect(instruction.modifiesDestination).toBe(false);
+            }
+            if (instruction.opcode === 'move'
+                && instruction.destination.kind !== 'empty') {
+                expect(instruction.modifiesDestination).toBe(true);
+            }
+        }
+
+        expect(() => idax.decompiler.generateMicrocode(
+            graph.entryAddress,
+            'notAMaturity',
+        )).toThrow(/maturity/);
+    });
+
     it('should expose microcode context introspection in filter callbacks', () => {
         if (!idax.decompiler.available()) return;
         const funcs = idax.function.all();
@@ -622,6 +2055,10 @@ describe('Decompiler', () => {
 
                     const nativeInstruction = context.instruction();
                     expect(typeof nativeInstruction.mnemonic).toBe('string');
+                    for (const operand of nativeInstruction.operands) {
+                        expect(typeof operand.isRead).toBe('boolean');
+                        expect(typeof operand.isWritten).toBe('boolean');
+                    }
                     return true;
                 },
                 (context) => {
@@ -711,11 +2148,140 @@ describe('Storage', () => {
     });
 });
 
+// ── IDB change-tracking events ─────────────────────────────────────────
+
+describe('IDB Change-Tracking Events', () => {
+    it('should route function updates and permit callback self-unsubscribe', () => {
+        const func = idax.function.byIndex(0);
+        let typedCount = 0;
+        let genericCount = 0;
+        let typedToken;
+
+        const genericToken = idax.event.onEvent((event) => {
+            if (event.kind === 'functionUpdated' && event.address === func.start) {
+                genericCount += 1;
+                expect(typeof event.size).toBe('bigint');
+                expect(event.operandIndex).toBe(-1);
+            }
+        });
+        typedToken = idax.event.onFunctionUpdated((event) => {
+            typedCount += 1;
+            expect(event.kind).toBe('functionUpdated');
+            expect(event.address).toBe(func.start);
+            idax.event.unsubscribe(typedToken);
+        });
+
+        idax.function.update(func.start);
+        idax.function.update(func.start);
+
+        expect(typedCount).toBe(1);
+        expect(genericCount).toBeGreaterThanOrEqual(2);
+        idax.event.unsubscribe(genericToken);
+    });
+
+    it('should normalize anterior comment payloads', () => {
+        const func = idax.function.byIndex(0);
+        idax.comment.clearAnterior(func.start);
+        let captured = null;
+        const token = idax.event.onExtraCommentChanged((event) => {
+            captured = event;
+        });
+
+        idax.comment.addAnterior(func.start, 'idax node event line');
+        idax.event.unsubscribe(token);
+
+        expect(captured).toBeTruthy();
+        expect(captured.kind).toBe('extraCommentChanged');
+        expect(captured.address).toBe(func.start);
+        expect(captured.placement).toBe('anterior');
+        expect(captured.lineIndex).toBe(0);
+        expect(captured.text).toBe('idax node event line');
+        idax.comment.clearAnterior(func.start);
+    });
+});
+
+// ── IDC values and synchronous execution ───────────────────────────────
+
+describe('IDC Values and Script Execution', () => {
+    it('should preserve owned values, errors, compilation, calls, globals, and files', () => {
+        const integer = idax.script.integer(42n);
+        expect(integer.kind()).toBe('integer');
+        expect(integer.asInteger()).toBe(42n);
+        expect(idax.script.string('not-a-number').coerceInteger()).toBe(0n);
+
+        const text = idax.script.string('abcdef');
+        const copy = text.deepCopy();
+        copy.replaceSlice(2, 4, idax.script.string('XY'));
+        expect(text.asString()).toBe('abcdef');
+        expect(copy.asString()).toBe('abXYef');
+        expect(copy.slice(1, 5).asString()).toBe('bXYe');
+
+        const object = idax.script.object();
+        object.setAttribute('answer', idax.script.integer(7n));
+        const shallow = object.copy();
+        shallow.setAttribute('answer', idax.script.integer(9n));
+        expect(object.attribute('answer').asInteger()).toBe(9n);
+        const deep = object.deepCopy();
+        deep.setAttribute('answer', idax.script.integer(11n));
+        expect(object.attribute('answer').asInteger()).toBe(9n);
+        expect(deep.attribute('answer').asInteger()).toBe(11n);
+        expect(object.attributeNames().includes('answer')).toBe(true);
+        expect(object.removeAttribute('missing')).toBe(false);
+
+        const falsey = idax.script.evaluateIdc('0');
+        expect(falsey.succeeded).toBe(true);
+        expect(falsey.value.asInteger()).toBe(0n);
+        const runtimeError = idax.script.evaluateIdc('1 / 0');
+        expect(runtimeError.succeeded).toBe(false);
+        expect(runtimeError.error.length).toBeGreaterThan(0);
+        expect(runtimeError.value.kind()).toBe('object');
+
+        const options = {
+            resolvedNames: [{ name: 'IDAX_NODE_CONST', value: 40n }],
+        };
+        const compiled = idax.script.compileText(
+            'static idax_node_add(a, b) { return a + b + IDAX_NODE_CONST; }',
+            options,
+        );
+        expect(compiled.succeeded).toBe(true);
+        const called = idax.script.call(
+            'idax_node_add', [idax.script.integer(1n), idax.script.integer(1n)],
+        );
+        expect(called.succeeded).toBe(true);
+        expect(called.value.asInteger()).toBe(42n);
+        const snippet = idax.script.evaluateSnippet(
+            'return IDAX_NODE_CONST + 2;', options.resolvedNames,
+        );
+        expect(snippet.succeeded).toBe(true);
+        expect(snippet.value.asInteger()).toBe(42n);
+
+        expect(idax.script.global('idax_node_global')).toBe(null);
+        expect(idax.script.setGlobal(
+            'idax_node_global', idax.script.integer(123n))).toBe(true);
+        const reference = idax.script.referenceGlobal('idax_node_global');
+        expect(reference.kind()).toBe('reference');
+        expect(reference.dereference().asInteger()).toBe(123n);
+
+        const file = path.join(fixtureDirectory, 'idax_node_script.idc');
+        fs.writeFileSync(file, 'static idax_node_file(x) { return x * 2; }\n');
+        idax.script.setIncludePaths([fixtureDirectory]);
+        expect(idax.script.resolveFile(path.basename(file))).toBe(file);
+        const executed = idax.script.executeScript(
+            file, 'idax_node_file', [idax.script.integer(21n)],
+        );
+        expect(executed.succeeded).toBe(true);
+        expect(executed.value.asInteger()).toBe(42n);
+        fs.rmSync(file, { force: true });
+        expect(idax.script.functionNames('', 8).length).toBeGreaterThan(0);
+    });
+});
+
 // ── Cleanup ─────────────────────────────────────────────────────────────
 
 describe('Cleanup', () => {
     it('should close database', () => {
         idax.database.close(false);
+        fs.rmSync(fixtureDirectory, { recursive: true, force: true });
     });
 });
 

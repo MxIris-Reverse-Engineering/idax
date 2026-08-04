@@ -35,8 +35,18 @@ set(IDAX_EXAMPLE_SOURCES
     plugin/drawida_port_widget.hpp
     plugin/drawida_port_widget.cpp
     plugin/ida_names_port_plugin.cpp
+    plugin/ida_names_port_bridge.hpp
+    plugin/ida_names_port_widget.cpp
     plugin/abyss_port_plugin.cpp
     plugin/driverbuddy_port_plugin.cpp
+    plugin/intelligent_inliner_port_plugin.cpp
+    plugin/magic_strings_port_plugin.cpp
+    plugin/auto_enum_port_plugin.cpp
+    plugin/auto_enum_port_LICENSE.txt
+    plugin/diaphora_exact_port_plugin.cpp
+    plugin/diaphora_port_LICENSE.txt
+    plugin/symless_structure_port_plugin.cpp
+    plugin/symless_port_LICENSE.txt
     plugin/codedump_parity_probe_plugin.cpp
     plugin/idapcode_port_plugin.cpp
     plugin/driverbuddy_wdf_slots.inc
@@ -69,6 +79,7 @@ if(IDAX_BUILD_EXAMPLE_ADDONS)
         SOURCES procmod/minimal_procmod.cpp
         LIBRARIES idax::idax
     )
+    set_target_properties(idax_example_procmod PROPERTIES OUTPUT_NAME idaxmini)
 
     ida_add_plugin(idax_example_plugin
         SOURCES plugin/action_plugin.cpp
@@ -125,7 +136,12 @@ if(IDAX_BUILD_EXAMPLE_ADDONS)
     )
 
     ida_add_plugin(idax_ida_names_port_plugin
-        SOURCES plugin/ida_names_port_plugin.cpp
+        TYPE QT
+        QT_COMPONENTS Core Widgets
+        SOURCES
+            plugin/ida_names_port_plugin.cpp
+            plugin/ida_names_port_widget.cpp
+            plugin/ida_names_port_bridge.hpp
         LIBRARIES idax::idax
     )
 
@@ -136,6 +152,31 @@ if(IDAX_BUILD_EXAMPLE_ADDONS)
 
     ida_add_plugin(idax_driverbuddy_port_plugin
         SOURCES plugin/driverbuddy_port_plugin.cpp
+        LIBRARIES idax::idax
+    )
+
+    ida_add_plugin(idax_intelligent_inliner_port_plugin
+        SOURCES plugin/intelligent_inliner_port_plugin.cpp
+        LIBRARIES idax::idax
+    )
+
+    ida_add_plugin(idax_magic_strings_port_plugin
+        SOURCES plugin/magic_strings_port_plugin.cpp
+        LIBRARIES idax::idax
+    )
+
+    ida_add_plugin(idax_auto_enum_port_plugin
+        SOURCES plugin/auto_enum_port_plugin.cpp
+        LIBRARIES idax::idax
+    )
+
+    ida_add_plugin(idax_diaphora_exact_port_plugin
+        SOURCES plugin/diaphora_exact_port_plugin.cpp
+        LIBRARIES idax::idax
+    )
+
+    ida_add_plugin(idax_symless_structure_port_plugin
+        SOURCES plugin/symless_structure_port_plugin.cpp
         LIBRARIES idax::idax
     )
 
@@ -200,11 +241,13 @@ if(IDAX_BUILD_EXAMPLE_ADDONS)
         SOURCES procmod/advanced_procmod.cpp
         LIBRARIES idax::idax
     )
+    set_target_properties(idax_xrisc_procmod PROPERTIES OUTPUT_NAME xrisc32)
 
     ida_add_procmod(idax_jbc_full_procmod
         SOURCES procmod/jbc_full_procmod.cpp
         LIBRARIES idax::idax
     )
+    set_target_properties(idax_jbc_full_procmod PROPERTIES OUTPUT_NAME jbc)
 endif()
 
 if(IDAX_BUILD_EXAMPLE_TOOLS)
@@ -228,7 +271,7 @@ if(IDAX_BUILD_EXAMPLE_TOOLS)
     endif()
 
     if(NOT IDAX_EXAMPLE_IDA_RUNTIME_DIR AND APPLE)
-        foreach(_ver 9.3 9.2)
+        foreach(_ver 9.4)
             set(_try "/Applications/IDA Professional ${_ver}.app/Contents/MacOS")
             if(EXISTS "${_try}/${IDAX_IDALIB_LIB_NAME}" AND EXISTS "${_try}/${IDAX_IDA_LIB_NAME}")
                 set(IDAX_EXAMPLE_IDA_RUNTIME_DIR "${_try}")

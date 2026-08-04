@@ -7,6 +7,7 @@
 #include <ida/error.hpp>
 #include <ida/address.hpp>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -15,6 +16,11 @@ namespace ida::type {
 
 // Forward declaration so Member can reference TypeInfo.
 class TypeInfo;
+struct FunctionArgument;
+struct FunctionDetails;
+struct PointerDetails;
+struct UdtDetails;
+struct EnumDetails;
 
 enum class CallingConvention {
     Unknown,
@@ -26,6 +32,31 @@ enum class CallingConvention {
     Swift,
     Golang,
     UserDefined,
+};
+
+enum class TypeKind {
+    Unknown,
+    Void,
+    Bool,
+    Character,
+    SignedInteger,
+    UnsignedInteger,
+    FloatingPoint,
+    Pointer,
+    Array,
+    Function,
+    Struct,
+    Union,
+    Enum,
+    Typedef,
+};
+
+enum class EnumRadix {
+    Unknown,
+    Binary,
+    Octal,
+    Decimal,
+    Hexadecimal,
 };
 
 struct EnumMember {
@@ -132,12 +163,35 @@ public:
     [[nodiscard]] bool is_union()          const;
     [[nodiscard]] bool is_enum()           const;
     [[nodiscard]] bool is_typedef()        const;
+    [[nodiscard]] bool is_bool()           const;
+    [[nodiscard]] bool is_char()           const;
+    [[nodiscard]] bool is_unsigned_char()  const;
+    [[nodiscard]] bool is_signed()         const;
+
+    /// Whether this value denotes a local-type forward declaration.
+    [[nodiscard]] bool is_forward_declaration() const;
+
+    /// Declared kind of a forward declaration; `Unknown` otherwise.
+    [[nodiscard]] TypeKind forward_declaration_kind() const;
+
+    [[nodiscard]] TypeKind kind() const;
+    [[nodiscard]] Result<std::string> name() const;
 
     [[nodiscard]] Result<std::size_t> size() const;
     [[nodiscard]] Result<std::string> to_string() const;
+    [[nodiscard]] Result<std::string> declaration(std::string_view declarator_name = {}) const;
 
     /// For pointer types, return the pointee type.
     [[nodiscard]] Result<TypeInfo> pointee_type() const;
+
+    /// Return copied pointer metadata, including an explicit shifted parent/delta.
+    [[nodiscard]] Result<PointerDetails> pointer_details() const;
+
+    /// Return a pointer copy marked `__shifted(parent, byte_delta)`.
+    /// The parent must be a struct and the nonzero delta must fit signed 32 bits.
+    [[nodiscard]] Result<TypeInfo>
+    with_shifted_parent(const TypeInfo& parent,
+                        std::int64_t byte_delta) const;
 
     /// For array types, return the array element type.
     [[nodiscard]] Result<TypeInfo> array_element_type() const;
@@ -151,9 +205,33 @@ public:
 
     [[nodiscard]] Result<TypeInfo> function_return_type() const;
     [[nodiscard]] Result<std::vector<TypeInfo>> function_argument_types() const;
+    [[nodiscard]] Result<FunctionDetails> function_details() const;
+
+    /// Return a copy with one function argument type replaced.
+    /// Preserves argument names/locations/flags and all other prototype metadata.
+    /// Accepts direct function types and function-pointer types.
+    [[nodiscard]] Result<TypeInfo>
+    with_function_argument_type(std::size_t index,
+                                const TypeInfo& replacement) const;
+
+    /// Return a copy with one function argument name replaced.
+    /// Preserves its type/location/comment/flags and all other prototype metadata.
+    /// An empty name clears the argument name. Embedded NUL bytes are rejected.
+    /// Accepts direct function types and function-pointer types.
+    [[nodiscard]] Result<TypeInfo>
+    with_function_argument_name(std::size_t index,
+                                std::string_view name) const;
+
+    /// Return a copy with the function return type replaced.
+    /// Preserves argument names/locations/flags and all other prototype metadata.
+    /// Accepts direct function types and function-pointer types.
+    [[nodiscard]] Result<TypeInfo>
+    with_function_return_type(const TypeInfo& replacement) const;
+
     [[nodiscard]] Result<CallingConvention> calling_convention() const;
     [[nodiscard]] Result<bool> is_variadic_function() const;
     [[nodiscard]] Result<std::vector<EnumMember>> enum_members() const;
+    [[nodiscard]] Result<EnumDetails> enum_details() const;
 
     /// Number of struct/union members (0 for non-UDT types).
     [[nodiscard]] Result<std::size_t> member_count() const;
@@ -163,11 +241,30 @@ public:
     /// Retrieve all members of a struct/union.
     [[nodiscard]] Result<std::vector<struct Member>> members() const;
 
+    /// Retrieve complete struct/union layout details.
+    [[nodiscard]] Result<UdtDetails> udt_details() const;
+
+    /// Set high-level UDT semantics while preserving the complete layout record.
+    /// C++ object and vftable semantics are mutually exclusive. A union may
+    /// only use the neutral `false, false` state.
+    Status set_udt_semantics(bool is_cpp_object, bool is_vftable);
+
     /// Find a member by name.
     [[nodiscard]] Result<struct Member> member_by_name(std::string_view name) const;
 
     /// Find a member by byte offset.
     [[nodiscard]] Result<struct Member> member_by_offset(std::size_t byte_offset) const;
+
+    /// Source item heads with persistent informational references to the unique
+    /// exact member at `byte_offset`. Member identities remain opaque.
+    [[nodiscard]] Result<std::vector<Address>>
+    member_references(std::size_t byte_offset) const;
+
+    /// Ensure a persistent informational reference from `source_address` to
+    /// the unique exact member at `byte_offset`. Returns true when newly added.
+    [[nodiscard]] Result<bool>
+    ensure_member_reference(std::size_t byte_offset,
+                            Address source_address) const;
 
     /// Add a member to this struct/union type. Offset in bytes.
     Status add_member(std::string_view name, const TypeInfo& member_type,
@@ -180,6 +277,12 @@ public:
 
     /// Save this type to the local type library under the given name.
     Status save_as(std::string_view name) const;
+
+    /// Replace an exact same-name local struct/union forward declaration
+    /// with a complete copy of this same-kind UDT while preserving its ordinal.
+    /// Complete definitions and nonlocal types are never overwritten.
+    [[nodiscard]] Result<TypeInfo>
+    replace_forward_declaration(std::string_view name) const;
 
     // ── Internal (opaque pimpl) ─────────────────────────────────────────
     struct Impl;
@@ -196,7 +299,47 @@ struct Member {
     TypeInfo    type;
     std::size_t byte_offset{0};  ///< Offset from struct start, in bytes.
     std::size_t bit_size{0};     ///< Total size in bits.
+    std::size_t bit_offset{0};    ///< Offset from struct start, in bits.
+    std::size_t storage_byte_width{0}; ///< Bitfield backing storage width; 0 for non-bitfields.
+    bool is_baseclass{false};
+    bool is_vftable{false};
+    bool is_gap{false};
+    bool is_bitfield{false};
     std::string comment;
+};
+
+struct PointerDetails {
+    TypeInfo pointee_type;
+    std::optional<TypeInfo> shifted_parent;
+    std::int32_t shift_delta{0};
+    bool is_shifted{false};
+};
+
+struct FunctionArgument {
+    std::string name;
+    TypeInfo type;
+};
+
+struct FunctionDetails {
+    TypeInfo return_type;
+    std::vector<FunctionArgument> arguments;
+    CallingConvention calling_convention{CallingConvention::Unknown};
+    bool variadic{false};
+};
+
+struct UdtDetails {
+    std::size_t total_size{0};
+    bool is_union{false};
+    bool is_cpp_object{false};
+    bool is_vftable{false};
+    std::vector<Member> members;
+};
+
+struct EnumDetails {
+    std::size_t byte_width{0};
+    bool signed_values{false};
+    EnumRadix radix{EnumRadix::Unknown};
+    std::vector<EnumMember> members;
 };
 
 /// Retrieve the type applied at an address.

@@ -1,6 +1,7 @@
 # Validation Report
 
 Date: 2026-02-15 (base report; API-surface namespace count updated 2026-05-28 after Phase 22 checks)
+Date: 2026-02-15 (base report; current local full-sweep evidence updated 2026-07-14 after Phase 29)
 
 ## Test suite summary
 
@@ -33,7 +34,7 @@ Date: 2026-02-15 (base report; API-surface namespace count updated 2026-05-28 af
 - Consistency audit: 0 SDK type leaks in public headers
 - Packaging check: `idax-0.1.0-Darwin.tar.gz` (lib + headers + cmake config)
 
-**Total: 16/16 CTest targets pass**
+**Current total: 25/25 CTest targets pass**
 
 ## Scenario coverage highlights
 
@@ -75,6 +76,29 @@ tracked in `docs/compatibility_matrix.md`.
 
 ## Recent focused validation
 
+- 2026-05-31 ida-trida port and rich type metadata parity:
+  Added opaque rich `ida::type` metadata for TypeInfo kind/name/declaration,
+  function details, enum details, UDT details, and member bit-layout flags;
+  mirrored the surface through Node and Rust bindings; and ported
+  `<ida-trida-root>` to consume idax for plugin actions/forms/wait/path/
+  clipboard plus generator type walking. Validation passed:
+  `cmake --build build-test-fetch --target idax_api_surface_check idax_type_roundtrip_test -j2`,
+  `./build-test-fetch/tests/integration/idax_type_roundtrip_test build-test-fetch/_deps/ida_sdk-src/src/plugins/idapython/examples/debugger/appcall/test_programs/simple_appcall/simple_appcall_linux64`
+  (209/209 checks), `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src npm run build`,
+  `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src npm test`
+  (183/183 checks), `env -u IDASDK cargo test -p idax types_tests --lib`,
+  `env -u IDASDK cargo test -p idax --lib --no-run`, and
+  `IDASDK=<ida-sdk-root> cmake -S . -B build-idax -DCMAKE_BUILD_TYPE=RelWithDebInfo -DFETCHCONTENT_SOURCE_DIR_IDAX=<repo-root>`
+  plus `cmake --build build-idax -j2` from `<ida-trida-root>`.
+- 2026-05-31 clipboard fallback availability:
+  `cmake --build build-test-fetch --target idax_api_surface_check -j2`
+  passed after adding external clipboard-command fallback and backend
+  detection. `scripts/check_codedump_parity_evidence_log.sh --self-test` and
+  `git diff --check` passed. The host has working `xclip` clipboard access
+  (`xclip` write/read/restore roundtrip passed). The mirrored ida-cdump cached
+  idax dependency also rebuilt successfully with
+  `IDASDK=<ida-cdump-root>/build/_deps/ida_sdk-src cmake --build build
+  -j2` from `<ida-cdump-root>`.
 - 2026-05-28 P22.10 bulk type declaration import:
   `cmake --build build-test-fetch --target idax_api_surface_check idax_type_roundtrip_test -j2`
   passed.
@@ -103,6 +127,7 @@ tracked in `docs/compatibility_matrix.md`.
   `IDAX_RUN_HEXRAYS_SESSION=1` is set.
 - 2026-05-28 P22 Hex-Rays scoped-session host gate:
   `env IDAX_RUN_HEXRAYS_SESSION=1 IDADIR=/home/null/ida-pro-9.3 build-test-fetch/tests/integration/idax_codedump_parity_host_gates_test tests/fixtures/simple_appcall_linux64`
+  `env IDAX_RUN_HEXRAYS_SESSION=1 IDADIR=<ida-runtime> build-test-fetch/tests/integration/idax_codedump_parity_host_gates_test tests/fixtures/simple_appcall_linux64`
   passed with 9 checks, 0 failures, and only the modal/Qt clipboard gates
   skipped. The fixture was restored afterward.
 - 2026-05-28 P22.8 compact parity example:
@@ -131,6 +156,7 @@ tracked in `docs/compatibility_matrix.md`.
   non-interactive run passed with 3 checks, 0 failures, and 3 skips. Running
   the same script with `IDAX_RUN_HEXRAYS_SESSION=1` and
   `IDADIR=/home/null/ida-pro-9.3` passed with 9 checks, 0 failures, and 2
+  `IDADIR=<ida-runtime>` passed with 9 checks, 0 failures, and 2
   skips; the default `.i64` fixture was restored afterward. Modal and Qt
   clipboard proof still require an interactive IDA Qt host.
 - 2026-05-28 P22 host-gate runner refresh:
@@ -139,6 +165,7 @@ tracked in `docs/compatibility_matrix.md`.
   and the default path passed with 3 checks, 0 failures, and 3 expected skips.
   Reran
   `env -u IDASDK IDADIR=/home/null/ida-pro-9.3 IDAX_RUN_HEXRAYS_SESSION=1 scripts/run_codedump_parity_host_gates.sh build-codedump-parity-host tests/fixtures/simple_appcall_linux64 RelWithDebInfo`;
+  `env -u IDASDK IDADIR=<ida-runtime> IDAX_RUN_HEXRAYS_SESSION=1 scripts/run_codedump_parity_host_gates.sh build-codedump-parity-host tests/fixtures/simple_appcall_linux64 RelWithDebInfo`;
   the Hex-Rays scoped-session path passed with 9 checks, 0 failures, and 2
   expected skips, and the runner restored the default `.i64` fixture.
 - 2026-05-28 P22 focused C++ parity refresh:
@@ -179,11 +206,18 @@ tracked in `docs/compatibility_matrix.md`.
   fixed typed-form entrypoints. The UI assertions now also exercise non-modal
   runtime behavior: `askText` argument-shape validation, default unsupported
   clipboard errors, and empty-markup validation failures for each fixed
+  `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src npm
+  test` passed from `bindings/node`, loading the native addon and confirming
+  structural assertions including `WaitBox`, `askText`, the UI clipboard, and
+  fixed typed-form entrypoints. The UI assertions also exercise non-modal
+  runtime behavior: `askText` argument-shape validation, clipboard backend
+  contract behavior, and empty-markup validation failures for each fixed
   typed-form entrypoint. Current result: 175/175 passed.
 - 2026-05-28 Node/Rust path binding parity:
   Node now exposes `path.basename`, `path.dirname`, and `path.isDirectory`;
   Rust now exposes `path::{basename, dirname, is_directory}` over the same
   `ida::path` helpers. `env IDASDK=/home/null/dev/idax/build-test-fetch/_deps/ida_sdk-src/src npm test`
+  `ida::path` helpers. `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src npm test`
   passed from `bindings/node` with 180/180 assertions, and
   `env -u IDASDK cargo test -p idax path_tests --lib` passed from
   `bindings/rust` with 2/2 path assertions.
@@ -193,6 +227,8 @@ tracked in `docs/compatibility_matrix.md`.
   `decompiler::initialize() -> ScopedSession` with RAII `Drop` release.
   `env IDASDK=/home/null/dev/idax/build-test-fetch/_deps/ida_sdk-src/src npm run build`
   and `env IDASDK=/home/null/dev/idax/build-test-fetch/_deps/ida_sdk-src/src npm test`
+  `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src npm run build`
+  and `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src npm test`
   passed from `bindings/node`; the Node structural suite remains 180/180.
   `env -u IDASDK cargo test -p idax decompiler_tests --lib --no-run`,
   `env -u IDASDK cargo test -p idax decompiler_tests::test_scoped_session_function_signatures --lib`,
@@ -206,6 +242,10 @@ tracked in `docs/compatibility_matrix.md`.
   passed. `env IDASDK=/home/null/dev/idax/build-test-fetch/_deps/ida_sdk-src/src npm test`
   then loaded the native addon and passed 170/170 unit assertions without the
   previous native-addon skip. `env IDASDK=/home/null/dev/idax/build-test-fetch/_deps/ida_sdk-src/src IDADIR=/home/null/ida-pro-9.3 npm run test:integration -- ../../tests/fixtures/simple_appcall_linux64`
+  `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src npm run build`
+  passed. `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src npm test`
+  then loaded the native addon and passed 170/170 unit assertions without the
+  previous native-addon skip. `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src IDADIR=<ida-runtime> npm run test:integration -- ../../tests/fixtures/simple_appcall_linux64`
   passed 63/63 integration assertions.
 - 2026-05-28 P22.8 focused validation sweep:
   `cmake --build build-test-fetch --target idax_api_surface_check idax_unit_test idax_decompiler_storage_hardening_test idax_segment_function_edge_cases_test -j2`
@@ -216,6 +256,7 @@ tracked in `docs/compatibility_matrix.md`.
   validation passes locally.
 - 2026-05-28 P22 concrete task/evidence mapping:
   Re-read `/home/null/dev/ida-cdump/docs/IDAX_GAPS.md` and expanded
+  Re-read `<ida-cdump-root>/docs/IDAX_GAPS.md` and expanded
   `docs/codedump_parity_tasks.md` with an idax implementation matrix for
   P22.1-P22.10, plus explicit host-only P22.H1/P22.H2 and final validation
   P22.V1 rows. `docs/codedump_migration_checklist.md` now includes an evidence
@@ -238,12 +279,16 @@ tracked in `docs/compatibility_matrix.md`.
   returned `LvarSnapshot` method shape. `env IDASDK=/home/null/dev/idax/build-test-fetch/_deps/ida_sdk-src/src IDADIR=/home/null/ida-pro-9.3 npm run test:integration -- ../../tests/fixtures/simple_appcall_linux64`
   passes from `bindings/node` with 63/63 integration checks, and the fixture
   remains clean afterward. `env IDASDK=/home/null/dev/idax/build-test-fetch/_deps/ida_sdk-src/src npm test`
+  returned `LvarSnapshot` method shape. `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src IDADIR=<ida-runtime> npm run test:integration -- ../../tests/fixtures/simple_appcall_linux64`
+  passes from `bindings/node` with 63/63 integration checks, and the fixture
+  remains clean afterward. `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src npm test`
   also passes with 180/180 unit checks.
 - 2026-05-28 Bulk declaration binding evidence:
   Added Node unit validation that `type.parseDeclarations` rejects an empty
   declaration block before SDK import, and Rust unit coverage for
   `types::parse_declarations` signature, options, and report semantics.
   `env IDASDK=/home/null/dev/idax/build-test-fetch/_deps/ida_sdk-src/src npm test`
+  `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src npm test`
   passes from `bindings/node` with 182/182 unit checks, and
   `env -u IDASDK cargo test -p idax types_tests::test_parse_declarations_function_signature_and_report --lib`
   passes from `bindings/rust`.
@@ -262,6 +307,7 @@ tracked in `docs/compatibility_matrix.md`.
   `parentDepth`, and added Rust unit coverage for `ExpressionInfo`,
   `StatementInfo`, `CtreeItemInfo`, and visitor function signatures.
   `env IDASDK=/home/null/dev/idax/build-test-fetch/_deps/ida_sdk-src/src IDADIR=/home/null/ida-pro-9.3 npm run test:integration -- ../../tests/fixtures/simple_appcall_linux64`
+  `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src IDADIR=<ida-runtime> npm run test:integration -- ../../tests/fixtures/simple_appcall_linux64`
   passes from `bindings/node` with 63/63 integration checks, and
   `env -u IDASDK cargo test -p idax decompiler_tests::test_ctree_callback_payload_shapes --lib`
   passes from `bindings/rust`.
@@ -279,6 +325,8 @@ tracked in `docs/compatibility_matrix.md`.
   `ErrorCategory::Unsupported` even if the FFI error slot is empty, and added
   `ui_tests::test_clipboard_default_contract_and_validation` for embedded-NUL
   validation plus default unsupported read/write behavior.
+  clipboard wrapper validation for embedded-NUL input plus unsupported-backend
+  error mapping when no backend is available.
   `env -u IDASDK cargo test -p idax ui_tests::test_clipboard_default_contract_and_validation --lib`
   and `env -u IDASDK cargo test -p idax --lib --no-run` pass from
   `bindings/rust`.
@@ -322,6 +370,7 @@ tracked in `docs/compatibility_matrix.md`.
   parity section that names the Rust fixed-form, UI, clipboard, decompiler,
   type-import, database, and path surfaces plus their host-runtime caveats.
   `env IDASDK=/home/null/dev/idax/build-test-fetch/_deps/ida_sdk-src/src npm
+  `env IDASDK=<repo-root>/build-test-fetch/_deps/ida_sdk-src/src npm
   test` passes from `bindings/node` with 182/182 checks, and
   `env -u IDASDK cargo test -p idax
   ui_tests::test_codedump_typed_forms_reject_empty_markup_without_modal_ui --lib`
@@ -398,6 +447,7 @@ tracked in `docs/compatibility_matrix.md`.
   Reran the locally available scoped Hex-Rays gate through the race-free
   auto-verifying runner:
   `env -u IDASDK IDADIR=/home/null/ida-pro-9.3 IDAX_RUN_HEXRAYS_SESSION=1
+  `env -u IDASDK IDADIR=<ida-runtime> IDAX_RUN_HEXRAYS_SESSION=1
   IDAX_EVIDENCE_LOG=build-codedump-parity-host/codedump-host-hexrays.log
   scripts/run_codedump_parity_host_gates.sh build-codedump-parity-host
   tests/fixtures/simple_appcall_linux64 RelWithDebInfo`. The run passed with
@@ -414,11 +464,13 @@ tracked in `docs/compatibility_matrix.md`.
   build-test-fetch RelWithDebInfo` passes with Node integration skipped after
   the section-presence verifier hardening, and
   `env IDAX_RUN_NODE_INTEGRATION=1 IDADIR=/home/null/ida-pro-9.3
+  `env IDAX_RUN_NODE_INTEGRATION=1 IDADIR=<ida-runtime>
   scripts/run_codedump_parity_local_validation.sh build-test-fetch
   RelWithDebInfo` passes including the 63/63 Node fixture integration checks.
   The runner restores the default `.i64` fixture when local host runs dirty it.
 - 2026-05-28 P22 current full local parity sweep:
   Reran `env IDAX_RUN_NODE_INTEGRATION=1 IDADIR=/home/null/ida-pro-9.3
+  Reran `env IDAX_RUN_NODE_INTEGRATION=1 IDADIR=<ida-runtime>
   scripts/run_codedump_parity_local_validation.sh build-test-fetch
   RelWithDebInfo` after the composable verifier and race-free logged runner
   changes. The sweep passed focused C++ build/CTest (6/6 selected tests),
@@ -446,6 +498,7 @@ tracked in `docs/compatibility_matrix.md`.
   evidence modes as `scripts/run_codedump_parity_host_gates.sh` and writes
   mode-specific logs for opt-in gates. `env IDAX_RUN_HEXRAYS_SESSION=1
   IDADIR=/home/null/ida-pro-9.3
+  IDADIR=<ida-runtime>
   scripts/run_codedump_parity_local_validation.sh build-test-fetch
   RelWithDebInfo` passes, including focused C++ build/CTest (6/6 selected
   tests), Hex-Rays host evidence with automatic and explicit `hexrays`
@@ -500,6 +553,7 @@ tracked in `docs/compatibility_matrix.md`.
   scripts/run_codedump_parity_host_gates.sh build-codedump-parity-host
   tests/fixtures/simple_appcall_linux64 RelWithDebInfo`, and refreshed
   Hex-Rays evidence with `env -u IDASDK IDADIR=/home/null/ida-pro-9.3
+  Hex-Rays evidence with `env -u IDASDK IDADIR=<ida-runtime>
   IDAX_RUN_HEXRAYS_SESSION=1
   IDAX_EVIDENCE_LOG=build-codedump-parity-host/codedump-host-hexrays.log
   scripts/run_codedump_parity_host_gates.sh build-codedump-parity-host
@@ -529,6 +583,7 @@ tracked in `docs/compatibility_matrix.md`.
   default/Hex-Rays evidence-log verification all pass.
 - 2026-05-28 P22 concrete remaining implementation tasks:
   Reconciled the updated `/home/null/dev/ida-cdump/docs/IDAX_GAPS.md` notes
+  Reconciled the updated `<ida-cdump-root>/docs/IDAX_GAPS.md` notes
   against current idax implementation state and converted the remaining queue
   into concrete closure subtasks: P22.H1.1-H1.3 for accepted modal typed-form
   evidence, P22.H2.1-H2.3 for Qt clipboard evidence with an IDA-compatible
@@ -546,6 +601,7 @@ tracked in `docs/compatibility_matrix.md`.
   `has_cf_chg`, `get_dtype_size`, or `get_reg_name`. Verified with
   `cmake --build build-test-fetch --target idax_api_surface_check -j2` and
   `IDASDK=/models/dev/ida-cdump/build/_deps/ida_sdk-src cmake --build build -j2`.
+  `IDASDK=<ida-cdump-root>/build/_deps/ida_sdk-src cmake --build build -j2`.
 - 2026-05-28 P22.R4 lvar locator metadata closure:
   Added serializable `LocalVariableUserSetting` / `LocalVariableLocator`
   plus `saved_user_lvar_settings`, `apply_user_lvar_setting`, and
@@ -555,6 +611,7 @@ tracked in `docs/compatibility_matrix.md`.
   `parse_decl` use from `transfer/metadata*.cpp`. Verified with
   `cmake --build build-test-fetch --target idax_api_surface_check -j2` and
   `IDASDK=/models/dev/ida-cdump/build/_deps/ida_sdk-src cmake --build build -j2`.
+  `IDASDK=<ida-cdump-root>/build/_deps/ida_sdk-src cmake --build build -j2`.
 - 2026-05-28 P22.R3 partial ctree provenance migration:
   Added read-only `ExpressionView` helpers for expression type sizing,
   pointed-object sizing, member-name resolution, ternary third operands, and
@@ -563,6 +620,7 @@ tracked in `docs/compatibility_matrix.md`.
   raw `cfunc_t`, `cexpr_t`, `carg_t`, `ctree_visitor_t`, or `get_func`.
   Verified with `cmake --build build-test-fetch --target idax_api_surface_check -j2`
   and `IDASDK=/models/dev/ida-cdump/build/_deps/ida_sdk-src cmake --build build -j2`.
+  and `IDASDK=<ida-cdump-root>/build/_deps/ida_sdk-src cmake --build build -j2`.
 - 2026-05-28 P22.R2/R3/R6 ida-cdump parity closure:
   Added idax type declaration renderers, dependency-ordered ordinal
   declarations, used-member trimming, DOT type graph rendering,
@@ -575,6 +633,7 @@ tracked in `docs/compatibility_matrix.md`.
   local formatting utilities rather than parity-blocking SDK analysis calls.
   Verified with `cmake --build build-test-fetch --target idax_api_surface_check -j2`,
   `IDASDK=/models/dev/ida-cdump/build/_deps/ida_sdk-src cmake --build build -j2`,
+  `IDASDK=<ida-cdump-root>/build/_deps/ida_sdk-src cmake --build build -j2`,
   and `git diff --check` in both checkouts.
 - 2026-05-28 P22 refreshed local parity evidence:
   `bash -n scripts/check_codedump_parity_evidence_log.sh
@@ -584,6 +643,7 @@ tracked in `docs/compatibility_matrix.md`.
   `scripts/run_codedump_parity_host_gates.sh --self-test`, and
   `scripts/run_codedump_parity_local_validation.sh --self-test` all pass.
   `env IDAX_RUN_NODE_INTEGRATION=1 IDADIR=/home/null/ida-pro-9.3
+  `env IDAX_RUN_NODE_INTEGRATION=1 IDADIR=<ida-runtime>
   scripts/run_codedump_parity_local_validation.sh build-test-fetch
   RelWithDebInfo` passes focused C++ build/CTest (6/6 selected tests), default
   host-gate evidence with automatic verifier output, verifier self-test,
@@ -600,3 +660,868 @@ tracked in `docs/compatibility_matrix.md`.
   passes. Remaining closure evidence is unchanged: P22.H1 accepted modal form
   execution and P22.H2 Qt clipboard execution in an IDA Qt UI host with a
   namespaced Qt package.
+  `env IDAX_RUN_HEXRAYS_SESSION=1 IDADIR=<ida-runtime>
+  scripts/run_codedump_parity_local_validation.sh build-test-fetch
+  RelWithDebInfo`, including Hex-Rays evidence verification with 9 checks,
+  zero failures, and the expected modal/clipboard skips. Explicit verification of
+  `build-codedump-parity-host/codedump-host-default.log` in `default` mode and
+  `build-codedump-parity-host/codedump-host-hexrays.log` in `hexrays` mode
+  passes. Remaining closure evidence is unchanged: P22.H1 accepted modal form
+  execution and P22.H2 clipboard execution in an IDA UI host with clipboard
+  access.
+
+- 2026-07-13 Phase 24 IDA-names ergonomic parity:
+  Added `ida::ui::current_widget`, `ida::decompiler::on_switch_pseudocode`,
+  arbitrary-symbol `ida::name::demangled`, stable live-widget identity, and
+  matching Node/Rust surfaces. Migrated the IDA-names example to the exact
+  polling/switch APIs and an isolated Qt host-title bridge. Focused C++ build
+  and runtime validation passes 4/4 selected CTest targets; the Qt example
+  target links successfully. Node clean/incremental native build passes, its
+  structural suite passes 184/184, and its real-IDA fixture integration passes
+  65/65. Rust formatting and library tests pass 127/127. The complete C++
+  sweep builds and passes 24/25 targets; the one failure is the independent
+  menu-detach contract regression F370 (2 failed checks in
+  `loader_processor_scenario`). Rust real-IDA integration was attempted but
+  is not counted as pass evidence because the shared init/open/analysis
+  sequence stalled (F371).
+
+- 2026-07-13 Phase 25 action-attachment state hardening:
+  Replaced reliance on IDA 9.3's ambiguous menu-detach boolean with counted
+  wrapper-managed menu/toolbar attachment state and unregister cleanup.
+  `loader_processor_scenario` now exercises registration, attach, detach,
+  second-detach `NotFound`, reattach, unregister cleanup, and post-unregister
+  `NotFound`. Focused validation passes, and a clean relink plus complete CTest
+  sweep passes 25/25 targets in 32.64 s. Rust formatting plus the plugin unit
+  subset pass 2/2; the Node addon relinks and its structural suite passes
+  184/184. The fixture IDB was restored after runtime execution.
+
+- 2026-07-13 Phase 26 Rust real-IDA main-thread harness:
+  Live process sampling localized F371 to standard libtest topology: process
+  main was parked awaiting its worker while worker-side IDAPython initialization
+  synchronously waited on IDA's main-thread executor. The `integration` target
+  now uses `harness = false` with an explicit registry of 83 sequential cases,
+  substring/exact filtering, skips/platform ignores, panic capture, and one
+  same-thread database close. The formerly stalled arbitrary-demangle case
+  passes 1/1 with real IDA. The complete suite executes to termination with
+  82/83 passing after cache-invalidating the microcode-filter test; its sole
+  remaining failure is the independent observable comment-append defect F374,
+  promoted to a separate semantic-hardening item. Compile-only, `--list`, and
+  no-`IDADIR` filtered-skip modes also pass.
+
+- 2026-07-13 Phase 27 deterministic comment append:
+  Replaced direct `append_cmt` dispatch with a bounded wrapper-level
+  read/compose/write contract: append creates the comment without a leading
+  newline when absent and writes `existing + "\n" + text` otherwise. Exact
+  function-start and repeated data-item assertions now pass. Focused C++
+  comment targets pass 2/2; complete CTest passes 25/25 in 28.42 s. The Rust
+  filtered regression passes 1/1 and the complete real-IDA suite now passes
+  83/83; Rust library tests pass 127/127. The Node addon rebuilds, unit tests
+  pass 184/184, and its real-IDA integration suite passes 66/66. The fixture
+  IDB was restored after runtime mutation tests.
+
+- 2026-07-13 post-push GitHub Actions audit:
+  The three workflow families do not currently provide source validation.
+  Integrations CI, Bindings CI, and Validation Matrix fail across Linux,
+  macOS, and Windows in `Install IDA Pro` before setup/build/test execution.
+  HCLI downloads IDA 9.3 successfully but reports no license matching the
+  configured ID `[REDACTED]` and cannot obtain the corresponding
+  `.hexlic` file. This is tracked as F377 and requires external HCLI/license or
+  GitHub Actions secret correction; no source/workflow build patch is supported
+  by the logs.
+
+- 2026-07-13 Phase 28 typed IDB change-tracking events:
+  Added nine opaque post-change event families in C++ and converged Node/Rust
+  payloads and typed subscriptions. Event-entry token ceilings, shared route
+  ownership, route-liveness checks, deferred final listener unhook, and Rust
+  callback-depth context reclamation establish callback-side mutation safety;
+  Node exposes 64-bit item/segment sizes as `bigint`. Focused `event_stress`
+  passes 103 checks with one F379 host skip; complete C++ build and CTest pass
+  25/25 in 21.08 s. The change-tracker example links. Node build and
+  structural tests pass 184/184, and real-IDA fixture integration passes 68/68.
+  Rust formatting and library tests pass 128/128; the complete main-thread
+  real-IDA suite passes 85/85. The current macOS IDA 9.3 idalib host did not
+  emit documented `destroyed_items` for two successful destruction paths, so
+  that one runtime assertion remains an explicit host-limited skip (F379),
+  while ABI/API coverage and the other eight event families pass. The fixture
+  IDB was restored after every runtime suite.
+
+- 2026-07-14 Phase 29 fixed-width data-definition units:
+  Corrected all ten then-audited data-definition families to interpret `count`
+  as an element count and perform checked conversion to the SDK's total byte
+  length. Phase 30 subsequently superseded the provisional 10-byte tbyte width.
+  Added 256-bit yword and 512-bit zword surfaces across C++, Node, and Rust;
+  retained byte units for string/structure definition and undefinition. Exact
+  tests cover default one-element and three-element arrays plus zero,
+  multiplication-overflow, and address-range-overflow rejection. The audit also
+  corrected Rust's shim error-category offset (F382) and made Node/Rust analysis
+  idle tests establish their stated wait precondition (F383). Complete C++
+  build and CTest pass 25/25 in 21.35 s. Node build/unit pass 191/191 and
+  real-IDA integration passes 69/69. Rust workspace unit tests pass 130/130 and
+  complete real-IDA integration passes 86/86. Bindgen output matches the
+  checked pre-generated bindings exactly; the mutable fixture is restored.
+
+- 2026-07-14 Phase 30 processor-aware extended-real definitions:
+  Replaced the provisional universal tbyte width with active-processor
+  `tbyte_size` resolution and independent `a_tbyte`/`a_packreal` assembler
+  availability checks. Added explicit tbyte/packed-real element-size queries
+  and checked positive-element definition APIs across C++, Node, and Rust.
+  Tests assert exact one- and three-element item sizes when a representation is
+  available and exact `Unsupported` behavior otherwise. Complete C++ build and
+  CTest pass 25/25 in 23.93 s. Node native build and structural tests pass
+  194/194, with real-IDA integration 69/69. Rust formatting passes, library
+  tests pass 130/130, and IDA Professional 9.4 integration passes 86/86 with no
+  skips. Generated bindgen output exactly matches checked bindings;
+  `git diff --check` passes and the mutable fixture is restored.
+
+- 2026-07-14 Phase 31 custom data type/format lifecycle:
+  Added owned opaque registrations with distinct IDs restricted to
+  `1..0xFFFE`, copied metadata snapshots, custom/standard format attachment,
+  fixed and callback-derived sizing, explicit/inferred item creation, stored
+  identity, callback invocation, exception/panic barriers, and deterministic
+  explicit teardown across C++, Node, and Rust. The dedicated C++ real-IDA
+  lifecycle path passes 234 checks, including variable-size kernel
+  revalidation. Complete C++ build and CTest pass 25/25 in 21.41 s. Node native
+  build and strict TypeScript declaration validation pass, structural tests
+  pass 218/218, and IDA 9.4 integration passes 70/70. Rust formatting passes,
+  library tests pass 131/131, and the process-main-thread IDA 9.4 integration
+  suite passes 87/87. All generated bindgen outputs are byte-identical to the
+  checked binding; `git diff --check` passes and the mutable fixture is clean.
+
+- 2026-07-14 Phase 32 scoped hotkey and action ownership:
+  Added wrapper-owned registered-action adapters, move-only C++/Rust
+  `ScopedHotkey` lifecycles, programmatic action activation, generated opaque
+  shortcut action IDs, and C++ exception/Rust panic barriers. Successful
+  unregister now reclaims callback state deterministically without depending
+  on host-timed `ADF_OWN_HANDLER` destruction; active callbacks retain their
+  adapter through self-unregister. DriverBuddy now models its menu action and
+  shortcut-only callback separately, and its plugin target links. Complete C++
+  build and CTest pass 25/25 in 20.89 s; the focused action target reports
+  237 passes and three explicit headless activation skips. Node build, strict
+  declaration compilation, and 218/218 structural tests pass, with IDA 9.4
+  integration passing 70/70. Rust formatting passes, workspace library tests
+  pass 132/132 plus 0 sys tests, and IDA 9.4 integration passes 88/88. The
+  newest generated bindgen output is byte-identical to the checked binding.
+  IDA 9.3 idalib rejects `process_ui_action`, so actual activation dispatch
+  remains interactive-UI-host-gated (F393); registration, release, and callback
+  reclamation are proven headlessly.
+
+- 2026-07-14 Phase 33 forward-compatible processor profile:
+  Corrected unsupported processor-ID provenance: installed SDK refs from v9.2
+  through the 9.4 placeholder end the public `PLFM_*` range at
+  `PLFM_NDS32 = 76`; no searched ref defines the formerly claimed
+  `PLFM_MCORE = 77`, while `idp.hpp` reserves values above `0x8000` for
+  third-party modules (F394). Added raw-ID-preserving `ProcessorProfile`,
+  optional verified typed identity, checked conversion, and optional ABI across
+  C++, Node, and Rust. Legacy `Mcore = 77` remains source-compatible but is
+  never produced by normalization. Both idapcode adaptations now consume the
+  profile; the external Sleigh language-selection policy remains explicit.
+  Complete C++ build and CTest pass 25/25 in 22.31 s, and the opt-in
+  Sleigh-backed idapcode plugin links. Node native build, strict declaration
+  compilation, and structural tests pass 222/222; IDA 9.4 integration passes
+  71/71. Rust formatting and the idapcode example check pass, library tests
+  pass 132/132 plus 0 sys tests, and process-main-thread IDA 9.4 integration
+  passes 89/89. The generated bindgen output is byte-identical to the checked
+  binding, `git diff --check` passes, and the mutable fixture is restored.
+
+- 2026-07-14 Phase 34 Intelligent Function Inliner port:
+  Preserved decoded-operand read/write access through Node's ordinary and
+  decompiler callback snapshots plus Rust's C transfer and safe value model.
+  Added an interactive C++ plugin action and a headless Rust report/apply
+  adaptation of the original scoring workflow. The port marks selected
+  functions with the SDK's `FUNC_OUTLINE` attribute; it does not rewrite
+  machine instructions. Complete C++ build and CTest pass 25/25 in 21.48 s,
+  and the plugin links. Node native build and strict example declaration
+  compilation pass, structural tests pass 223/223, and IDA 9.4 integration
+  passes 72/72. Rust formatting and example checks pass, library tests pass
+  133/133 plus 0 sys tests, the scoring unit passes 1/1, and process-main-thread
+  IDA 9.4 integration passes 90/90. On an isolated fixture copy, report mode
+  selected 5/18 processed functions without mutation, apply mode changed all
+  five with zero failures, and a fresh reopen observed all five persisted
+  outline markers. Generated bindgen output is byte-identical to the checked
+  binding, `git diff --check` passes, and the mutable repository fixture is
+  clean.
+
+- 2026-07-14 Phase 35 IDAMagicStrings port:
+  Added copied configurable string-list inventory and copied half-open
+  source-file mappings across C++, Node, and Rust, including normalization of
+  IDA 9.3's one leading `strtypes` bookkeeping byte. Closed safe Rust's missing
+  filtered `name::all` inventory, then added interactive C++ and headless Rust
+  adaptations of the original non-NLTK analysis and explicit rename workflow.
+  Complete C++ build and CTest pass 26/26 in 22.63 s, including the dedicated
+  `string_source_metadata` target, and the C++ plugin links. The disposable
+  CTest runner leaves the tracked fixture hash unchanged before/after the
+  complete suite. Node native build,
+  strict example declaration compilation, structural tests, and IDA integration
+  pass 230/230 and 74/74. Rust formatting/example checks pass, library tests pass
+  136/136 plus 0 sys tests, pure port tests pass 3/3, and process-main-thread
+  IDA 9.4 integration passes 91/91. On an isolated stripped Mach-O, report mode
+  found one `sub_* -> uniqueHandler` candidate without mutation, explicit apply
+  renamed 1/1 with zero failures, and a fresh reopen retained the name.
+
+- 2026-07-14 Phase 36 Auto Enum port:
+  Added immutable metadata-preserving indexed function-argument replacement
+  and opaque named operand-enum representation/readback across C++, Node, and
+  Rust. The public all-operands index `-1` is translated to native `OPND_ALL`
+  (`0x0F`) only at the SDK boundary. Added an interactive C++ port preserving
+  global imported-prototype enrichment and cursor-selected selector-dependent
+  annotation, plus a headless Rust global report/apply adaptation backed by a
+  representative dependency-free Linux/Windows corpus. Complete C++ build and
+  CTest pass 26/26 in 23.07 s, the Auto Enum plugin links, and the tracked IDB
+  Git blob object ID remains `84ff142e9cd6c39dbd22d94c7d164b2db48c64dd`
+  before and after. Node native
+  build, strict declaration compilation, structural tests, and IDA 9.4
+  integration pass 232/232 and 76/76. Rust formatting/all-example checks,
+  library/sys/port tests, and process-main-thread IDA 9.4 integration pass
+  137/137, 0 sys, 2/2, and 93/93. On a disposable host-native fixture, report
+  mode found 6 imports/8 candidate arguments without mutation, apply changed
+  6 functions/8 arguments with zero failures, and a fresh reopen observed all
+  8 positions as already enum-typed. Generated bindgen output is byte-identical
+  to the checked binding (SHA-256
+  `89ab07dacbbe5a8cfb1696e800a6933fd036c67403a7febce24b50dd87978a66`).
+
+- 2026-07-14 Phase 37 Symless structure reconstruction port:
+  Added maturity-explicit owned function-level microcode graphs across C++,
+  Node, and Rust, including copied argument/return locations, CFG adjacency,
+  addressed recursive instructions, address references, call arguments, and
+  forward-compatible `Other` values. Added an interactive C++ plugin and
+  headless Rust adaptation for the explicitly bounded one-argument
+  intraprocedural workflow; neither claims full Symless parity. Complete C++
+  build and CTest pass 26/26 in 22.99 s, the Symless plugin links, and the
+  tracked IDB Git blob object ID remains
+  `84ff142e9cd6c39dbd22d94c7d164b2db48c64dd` (file SHA-256
+  `ce6d678f484d681a5bc147dab49c272e3a7f9883b3c15c41974ec52cb95a431b`).
+  Node native build, strict declaration compilation, structural tests, and
+  IDA 9.4 integration pass 232/232 and 77/77. Rust formatting/all-example
+  checks, library/sys/port tests, and process-main-thread IDA 9.4 integration
+  pass 138/138, 0 sys, 3/3, and 94/94. A host-native fixture recovered exact
+  `+4/4 B` write, `+8/8 B` read, `+18/2 B` read, and `+24/1 B` read fields;
+  report mode did not create the UDT, explicit apply created 4/4 members and
+  changed argument 0, and fresh-process reopen was idempotent. Generated
+  bindgen output is byte-identical to the checked binding (SHA-256
+  `dc548a8c3f5b0c00a28db45827a5570c2530d20a9d06fa01a87416daf942a4b8`).
+
+- 2026-07-14 Phase 38 Symless interprocedural structure propagation:
+  Added metadata-preserving function-return replacement and explicit default-off
+  call analysis across C++, Node, and Rust. Extended both Symless adaptations
+  with depth-bounded resolved direct-call argument injection, active/repeated
+  context guards, conservative terminal-return consensus, propagated-site
+  reporting, and zero-shift-only argument/return mutation. Complete C++ build
+  and CTest pass 26/26 in 23.00 s, the plugin links, and the tracked fixture
+  remains Git blob `84ff142e9cd6c39dbd22d94c7d164b2db48c64dd` with SHA-256
+  `ce6d678f484d681a5bc147dab49c272e3a7f9883b3c15c41974ec52cb95a431b`.
+  Node native build, strict declarations, structural tests, and IDA 9.4
+  integration pass 234/234 and 77/77. Rust formatting/all-example checks,
+  library/sys/port tests, and process-main-thread IDA 9.4 integration pass
+  138/138, 0 sys, 6/6, and 94/94. A host-native arm64 fixture (source SHA-256
+  `3f6c0a873a5c58ddc20a49286d03ebd95935626bff6c296822dc50aa41adb382`;
+  binary SHA-256
+  `c35d86971a29a8bb54da74170b39ee3bb6018db95891e04de41cd7220d1dd635`)
+  follows 2 calls/3 functions and recovers exact `+4/4 B`, `+8/8 B`, and
+  `+24/1 B` reads; depth zero omits the callee-only field. First apply creates
+  3/3 members and types 3/3 arguments plus 1/1 return; fresh-process reopen is
+  idempotent. Generated bindings are byte-identical at SHA-256
+  `6a14f8a22c18ecd8576773854a99b96c8463631860aafbd76a0449900dd2b0e4`.
+
+- 2026-07-14 Phase 39 Symless allocator seed and wrapper discovery:
+  Added metadata-preserving function-argument renaming across C++, Node, and
+  Rust. Extended both Symless adaptations with declarative malloc/calloc/realloc
+  locators, exact direct-call classification, bounded static sizes,
+  terminal-call-token wrapper confirmation, cycle-safe heir traversal,
+  allocation-call structure roots, extent checks, distinct root UDTs, and
+  generic allocator prototype enrichment. Complete C++ build/CTest pass 26/26
+  in 24.91 s and the four-action C++ plugin links. Node native build, strict
+  declarations, structural tests, and IDA 9.4 integration pass 234/234 and
+  77/77. Rust formatting/all-target checks, library/sys/port tests, and
+  process-main-thread IDA 9.4 integration pass 138/138, 0 sys, 10/10, and
+  94/94. The host-native arm64 fixture (source SHA-256
+  `25dc8ab5303f5d8cbe4dad89e19f3c36ce8c8e095d9a007a97a30ef29491109e`;
+  binary SHA-256
+  `6e85799ebf264654b5a898c44ae77c6990cf5c3b772e1ba9fd8106a04721fac6`)
+  yields one malloc wrapper and one 32 B root with exact `+4/4 B`, `+8/8 B`,
+  and `+24/1 B` read/write fields and zero extent violations. First apply
+  creates one UDT/three members and changes two generic prototypes; a fresh
+  process reuses all members and recognizes both prototypes with zero changes.
+  Generated bindings are byte-identical at SHA-256
+  `414fe27fd05155e75246ee686c98919c0cab40e44b02c692fe927632e925c428`.
+
+- 2026-07-14 Phase 40 Symless constructor and vtable root discovery:
+  Added metadata-preserving C++ object/vftable UDT semantics across C++, Node,
+  and Rust. Extended both Symless adaptations with bounded function-pointer
+  table scanning, exact argument-zero constructor-store proof, ambiguous-root
+  rejection, secondary-offset reporting, recovered class fields, semantic
+  class/vftable materialization, existing-layout preflight, vftable application,
+  and eligible `this` prototype typing. Complete C++ build and CTest pass 26/26
+  in 22.16 s and the six-action plugin links. Node native build, strict
+  declarations, structural tests, and IDA 9.4 integration pass 234/234 and
+  78/78. Rust formatting/all-target checks, library/sys/port tests, and
+  process-main-thread IDA 9.4 integration pass 138/138, 0 sys, 12/12, and
+  95/95. The host-native arm64 fixture (source SHA-256
+  `6002d19ff61a9a1029412e508be59445ead0ffe7df41f02b648650c702da2b4b`;
+  binary SHA-256
+  `ee4b8c55449a6163716b6ca5f86744381c4bccd153b13073c49ee53bda47fab8`)
+  yields one three-method table and one constructor with exact `+8/4 B`,
+  `+16/8 B`, and `+24/1 B` writes. First apply creates two semantic UDTs and
+  seven members, types four prototypes, and applies one vftable; fresh-process
+  reopen reuses all seven members and recognizes all four prototypes with zero
+  changes. Generated bindings are byte-identical at SHA-256
+  `5a91e0e932583a98f7079e32cfacc9493d1dee27e4d80c938a1b3da5b44ef949`.
+
+- 2026-07-14 Phase 41 Symless shifted-pointer metadata:
+  Added copied exact pointer details and immutable metadata-preserving shifted
+  parent/delta construction across C++, Node, generated C ABI, and safe Rust.
+  Extended both Symless adaptations to apply proven nonzero argument shifts,
+  recognize exact parent/delta metadata on reopen, preserve mismatched complex
+  pointers, and continue excluding shifted returns. Full C++ build and CTest
+  pass 26/26 in 22.40 s; the Symless plugin links. Node native build, strict
+  example declarations, structural tests, and IDA 9.4 integration pass 234/234
+  and 79/79. Rust format/all-target checks, library/sys/port tests, and
+  process-main-thread IDA 9.4 integration pass 138/138, 0 sys, 12/12, and
+  96/96. The host-native arm64 fixture (source SHA-256
+  `51077b3f7811c4d8f7d185d7fe2bd23bdefdceaa8736b0b726790acfa13b4c12`;
+  binary SHA-256
+  `f2d9e2cb641377ead4d855a4d994768cabbabd53e33f015500b32bef0df5306b`)
+  yields root shift `0 B`, callee shift `+8 B`, and exact `+4/4 B`, `+8/8 B`,
+  and `+24/1 B` fields. First apply creates one UDT/three members and changes two
+  arguments including one shifted argument; fresh-process reopen reuses all
+  members and recognizes both arguments with zero mutation. Generated bindings
+  are byte-identical at SHA-256
+  `4b0958634a70f67ce68945a13a9d89c27ed9bd7b0d3a1fcdb451a1dc9a3f484c`.
+
+- 2026-07-14 Phase 42 Symless forward local-type replacement:
+  Added explicit local forward-declaration state/kind and failure-atomic,
+  ordinal-preserving same-name structure/union replacement across C++, Node,
+  generated C ABI, and safe Rust. Extended both Symless adaptations to replace
+  exact forwards only during explicit apply, retain complete/incompatible
+  definitions, and report creation/reuse/replacement independently. Full C++
+  build and CTest pass 26/26 in 22.04 s; the Symless plugin links. Node native
+  build, strict example declarations, structural tests, and IDA 9.4 integration
+  pass 234/234 and 80/80. Rust formatting/all-target checks, library/sys/port
+  tests, and process-main-thread IDA 9.4 integration pass 138/138, 0 sys,
+  12/12, and 97/97. The DWARF host fixture (source SHA-256
+  `031535bef12bf6b7559501ad30e719a2a013c14f78299ae7fe5953665d8220dd`;
+  arm64 binary SHA-256
+  `108394bb40d9a50db4b63fe0d7f535c383632da1110f5527afda0b362dc45b3b`)
+  yields exact `+4/4 B`, `+8/8 B`, and `+24/1 B` reads. First apply replaces
+  one forward ordinal, adds three members, creates no duplicate UDT, and
+  recognizes the existing pointer argument as already typed; fresh-process
+  reopen performs zero replacement/addition and reuses all three members.
+  Generated bindings are byte-identical at SHA-256
+  `82702ed7f7a98b3e446c1e9053704d84e0f47c7d8f2cbd9cad126363f8473ac8`.
+  The tracked executable and adjacent IDB remain respectively SHA-256
+  `af23d4fde7d2b5ebe20385f5aa8c23221988fd1bdbab777c18daf8c9d9543f80`
+  and Git blob `84ff142e9cd6c39dbd22d94c7d164b2db48c64dd` / SHA-256
+  `ce6d678f484d681a5bc147dab49c272e3a7f9883b3c15c41974ec52cb95a431b`.
+
+- 2026-07-14 Phase 43 Symless member-TID informational references:
+  Added opaque exact-member `member_references(byte_offset)` and
+  `ensure_member_reference(byte_offset, source_address)` across C++, Node,
+  generated C ABI, and safe Rust. The implementation requires a complete saved
+  local UDT, one exact member offset, stable internal member identity, and a
+  mapped source item head; it ensures verified `dr_I | XREF_USER` persistence
+  without exposing a TID. Both Symless adaptations now count candidates in
+  report mode and classify added/reused/skipped references during explicit
+  apply for ordinary, allocator, and class/vtable structures. Full C++ build
+  and CTest pass 26/26 in 22.95 s. Node native build, strict example
+  declarations, structural tests, and IDA 9.4 integration pass 234/234 and
+  81/81. Rust formatting/all-target checks, library/sys/port tests, and
+  process-main-thread IDA 9.4 integration pass 138/138, 0 sys, 13/13, and
+  98/98. Generated bindings are byte-identical at SHA-256
+  `5613b4d1672f5c2a51b3b6705f0ad34d67faf15ed37eae600773280c23683212`.
+  The DWARF fixture source SHA-256 is
+  `031535bef12bf6b7559501ad30e719a2a013c14f78299ae7fe5953665d8220dd`;
+  the temporary arm64 executable is
+  `db57dccb7c56f0487edf1ff3c7d477e84b6b1bc45e12ad3ccf6fd98376ab79f0`.
+  Report mode found three exact fields/sites and three candidates without an
+  IDB; first apply added three persistent member references; a fresh process
+  reopening the saved `.i64` added zero and reused all three. The tracked
+  executable and adjacent IDB remain respectively SHA-256
+  `af23d4fde7d2b5ebe20385f5aa8c23221988fd1bdbab777c18daf8c9d9543f80`
+  and Git blob `84ff142e9cd6c39dbd22d94c7d164b2db48c64dd` / SHA-256
+  `ce6d678f484d681a5bc147dab49c272e3a7f9883b3c15c41974ec52cb95a431b`.
+
+- 2026-07-14 Phase 44 Symless exact operand struct-offset paths:
+  Replaced public native structure/member-ID path metadata with copied root and
+  ordered member names across C++, Node, generated C ABI, and safe Rust. Added
+  conflict-safe exact-member ensure with complete saved-local UDT validation,
+  arbitrary-operand representation preflight, two-component apply/readback,
+  post-apply verification, and failure-atomic cleanup. Owned microcode register
+  operands now retain copied processor-register IDs from `mreg2reg`. Both
+  Symless adaptations preserve direct memory and size-zero pointer add/sub
+  evidence, group by `(instruction, processor register)`, select the upstream
+  phrase/displacement or register-preceded immediate, and report exact
+  candidate/add/reuse/skip counts for ordinary, allocator, and class/vtable
+  reconstructions. Full C++ build and CTest pass 26/26 in 22.90 s; the Symless
+  plugin links. Node native build, authoritative strict example declarations,
+  structural tests, and ABI-matched live integration pass 238/238 and 82/82.
+  Rust formatting/all-target checks, library/sys/port tests, and
+  process-main-thread IDA Professional 9.4 integration pass 139/139, 0 sys,
+  14/14, and 99/99. Generated bindings are byte-identical at SHA-256
+  `3a143a13309725ed66c5ebce1dd5199fafcc30ea8a0d92b33404c9fef66d7a13`.
+  The final fresh arm64 fixture (source SHA-256
+  `031535bef12bf6b7559501ad30e719a2a013c14f78299ae7fe5953665d8220dd`;
+  executable SHA-256
+  `1c1f7d72a5d13a6f74101e09c0f46048d1321190c3272a728dbc0bce94bb0843`)
+  recovers three fields and three operand candidates. Report mode creates no
+  IDB; first apply adds three two-component paths plus three members/references;
+  fresh-process apply adds zero and reuses all three of each. The reopened IDB
+  SHA-256 is
+  `5eacc6b9554734a9d58fec4475697c09207eeb42330edda16f13047ffa2e4f94`.
+  Tracked executable and adjacent IDB remain respectively SHA-256
+  `af23d4fde7d2b5ebe20385f5aa8c23221988fd1bdbab777c18daf8c9d9543f80`
+  and Git blob `84ff142e9cd6c39dbd22d94c7d164b2db48c64dd` / SHA-256
+  `ce6d678f484d681a5bc147dab49c272e3a7f9883b3c15c41974ec52cb95a431b`.
+
+- 2026-07-14 Phase 45 Symless database-resolved indirect calls:
+  Added an adaptation-internal database-derived scalar distinct from plain
+  integers in C++ and Rust. Global reads, address-of-global values, derived
+  loads, moves, extensions, and integer add/sub preserve provenance; only the
+  copied `IndirectCall` right operand with that provenance may select an exact
+  callee entry. Ordinary traversal reuses the existing depth, active-context,
+  completed-context, graph-cache, argument-injection, and return-consensus
+  controls. Allocator discovery additionally follows one exact data-slot
+  reference hop and validates every candidate with the same target provenance
+  and configured argument classifier. Full C++ build and CTest pass 26/26 in
+  24.54 s; the Symless plugin links. Node native build, authoritative strict
+  example declarations, structural tests, and ABI-matched live integration
+  pass 238/238 and 82/82. Rust formatting/all-target checks,
+  library/sys/Symless tests, and process-main-thread IDA Professional 9.4
+  integration pass 139/139, 0 sys, 15/15, and 99/99. Generated bindings remain
+  byte-identical at SHA-256
+  `3a143a13309725ed66c5ebce1dd5199fafcc30ea8a0d92b33404c9fef66d7a13`.
+  The fresh arm64 fixture (source SHA-256
+  `ce0d76fde61fbdcd07c889fc5f3f730f5b4e915bef334c60cf0e9271a7f12be1`;
+  executable SHA-256
+  `a29cda2ef8470f1f254e1bf7b943b908f644632e5b852c1176859ca93359368d`)
+  reports one database-resolved ordinary call, one database-resolved `_malloc`
+  wrapper, one 32 B allocation root, zero ordinary unresolved calls, zero
+  allocator unclassified calls, and exact `+4/4 B`, `+8/8 B`, and `+24/1 B`
+  fields. Ordinary first apply adds three members/references/operand paths and
+  types two arguments; reopen reuses all of them with zero additions. Allocator
+  first apply adds three members plus six references/operand paths; reopen
+  reuses all of them with zero additions. The reopened IDB SHA-256 is
+  `0ef1c5bc5853daaef8f919205c80001263fbb8484819109db67bbffbb14caddc`.
+  Tracked executable and adjacent IDB remain respectively SHA-256
+  `af23d4fde7d2b5ebe20385f5aa8c23221988fd1bdbab777c18daf8c9d9543f80`
+  and Git blob `84ff142e9cd6c39dbd22d94c7d164b2db48c64dd` / SHA-256
+  `ce6d678f484d681a5bc147dab49c272e3a7f9883b3c15c41974ec52cb95a431b`.
+
+- 2026-07-14 Phase 46 Symless RTTI-adjusted vtable propagation:
+  Extended both Symless adaptations without a public API delta. Candidate
+  tables now search direct load references first; only tables without a
+  confirmed direct load fall back to the two-pointer Itanium RTTI label.
+  Reference traversal recursively crosses exact pointer-valued data aliases
+  with cycle/value accounting, while owned microcode must still confirm the
+  final function-array value stored through argument zero. Every unique
+  non-import member is then an argument-zero propagation root under the
+  existing depth/context/conflict bounds. Full C++ build and CTest pass 26/26
+  in 22.42 s; Node native build, strict declarations, structural tests, and
+  ABI-matched live integration pass 238/238 and 82/82. Rust formatting and
+  all-target checks, library/sys/Symless tests, and process-main-thread IDA
+  Professional 9.4 integration pass 139/139, 0 sys, 17/17, and 99/99. Fresh
+  bindgen output is byte-identical at SHA-256
+  `3a143a13309725ed66c5ebce1dd5199fafcc30ea8a0d92b33404c9fef66d7a13`.
+  The arm64 RTTI fixture (source SHA-256
+  `ab2594cd975742e0d521dfec0d494952fba7408453b6e57ea78ffab9c0984e56`;
+  executable SHA-256
+  `3408da9c64e5bfe34b18bd980c46bacd680b7f70747a4425eea244ebb88a7b75`)
+  reports one accepted class, zero direct loads, one RTTI fallback/load, one
+  followed data alias, three virtual methods, and exact `+8/4 B`, `+16/8 B`,
+  `+24/1 B`, and `+32/8 B` fields; the last two are method-only. First apply
+  adds five class members, three method members, eleven references/operand
+  paths, and four prototypes. Fresh-process reopen adds or changes zero and
+  reuses every item; the resulting IDB SHA-256 is
+  `41e72624faf91985ebc93fd583b422bd92b7e9983edc20ad9a705180a087e116`.
+  The original direct-table fixture remains the negative control with one
+  direct load, zero RTTI fallback/load, three methods, and unchanged fields.
+  Tracked executable/IDB hashes and IDB blob remain unchanged.
+
+- 2026-07-14 Phase 47 Symless microcode operand root selection:
+  Added copied `minsn_t::modifies_d()` semantics across C++, Node, generated C
+  ABI, and safe Rust, then used one depth-first execution traversal for exact
+  register/stack root enumeration and private-path before/after injection. The
+  C++ adaptation exposes a modal chooser; the Rust adaptation exposes stable
+  headless list/select options. Full C++ build and CTest pass 26/26 in 22.58 s;
+  Node native build, strict declarations, structural tests, and ABI-matched
+  IDA Professional 9.4 integration pass 238/238 and 82/82. Rust formatting and
+  all-target checks, library/sys/Symless tests, and process-main-thread IDA 9.4
+  integration pass 139/139, 0 sys, 20/20, and 99/99. Two independent clean
+  bindgen outputs are byte-identical to the checked file at SHA-256
+  `865f53507d8dd44ef7b2033eccb901f3bf26bf21e0653c8528c493e3692c7b3f`.
+  The fresh arm64 root-selection fixture (source SHA-256
+  `e9eac89ea492d197048d0f7e34c357824626fc5433adb11b3d44297831ea73c3`;
+  executable SHA-256
+  `465efd22b8d7ab90130428b2b70ea794c694bb0d3b0a23f131939cb1673785c1`)
+  lists 18 readable candidates. Candidate zero is `x0.8{2}` at
+  `0x100000460.0`, injects exactly once before execution, and recovers four
+  exact fields. First apply adds four members, references, and operand paths;
+  fresh-process reopen adds zero and reuses all four. The reopened IDB SHA-256
+  is `724fdf034ae9a5aa93f56280894d1e08e97bcf34bd88970cf41a53ae434fa61c`.
+  The tracked executable/IDB hashes and IDB blob remain unchanged.
+
+- 2026-07-14 Phase 48 Diaphora exact-function adaptation:
+  Added deterministic C++ and Rust exact-function manifests, canonical CFG
+  metrics, RFC 1321 hashes, unique-only tiered matching, and conservative
+  name/declaration/comment application. Closed encoded operand byte positions
+  and function-declaration readback across C++, Node, generated C, and Rust.
+  Complete validation passed C++ 27/27, Node 239/239 structural plus 84/84
+  initialized checks, Rust 139/139 library plus 0 sys plus 7/7 Diaphora plus
+  20/20 Symless plus 101/101 initialized checks, and independent generated
+  binding identity. Two 22-record exports were byte-identical at SHA-256
+  `4263b3eafdb75fcb009e3c565f341a72cf6abe222c34554d9908fc65caa0d08a`;
+  first apply changed one name and one repeatable comment, while reopen changed
+  zero and preserved exact readback.
+
+- 2026-07-14 Phase 49 Diaphora exact instruction metadata:
+  Added byte-compatible C++ and Rust companion manifests for ordinary and
+  repeatable comments plus forced operands, with strict parsing, checked signed
+  offsets, unique-function alignment, exact instruction guards, and absent-only
+  mutation. Complete validation passed C++ 27/27, Node 239/239 structural plus
+  84/84 initialized checks, Rust 139/139 library plus 0 sys plus 10/10 Diaphora
+  plus 20/20 Symless plus 101/101 initialized checks, and independent binding
+  identity. The 22-function/9-instruction manifest SHA-256 was
+  `d7dbebeb499f1f14cbe378b2af9e77f06f5f65fd7f2d853b2806755382d996d6`;
+  first apply wrote one ordinary comment, one repeatable comment, and one forced
+  operand, reopen wrote zero, and one altered relocation hash rejected exactly
+  one record.
+
+- 2026-07-14 Phase 50 semantic pseudocode-comment locations:
+  Replaced incorrect/raw comment preciser integers with opaque semantic C++,
+  Node, C, and Rust models; added deterministic copied persisted-comment
+  enumeration; and added byte-compatible exact C++/Rust Diaphora companion
+  transfer preserving multiple locations at one instruction. Full C++ build
+  and CTest pass 27/27 in 22.91 s. Node native build, strict examples, and
+  structural tests pass 240/240; the full ABI-matched IDA 9.3 suite passes
+  85/85, and a focused IDA 9.4 default/semicolon persistence, enumeration, and
+  malformed-object probe passes. Rust formatting/all-target, library/sys,
+  Diaphora, Symless, and process-main-thread IDA 9.4 checks pass 140/140, 0,
+  12/12, 20/20, and 102/102. Independent bindgen output is byte-identical at
+  SHA-256 `1c22d8ded3ccd9d08b22f2cce200fb4df4fedc744b89518cc1d0b1ceb370d279`.
+  Isolated two-location apply writes `2`, reopen writes `0` and preserves `2`,
+  and export remains byte-identical at SHA-256
+  `5e8a42dc99e28d57f6b7843d29292ce39c9ed8b387fa6d517ddfa93cb030ba23`.
+  One altered guard rejects one record, and a target-owned conflict is
+  preserved. The tracked executable/IDB hashes and IDB blob remain unchanged.
+  A diagnostic full Node run using SDK 9.3 headers with runtime 9.4 stops in
+  pre-existing `data::string_literals()` after `get_strlist_item()` corrupts
+  vector state; exact cause is unknown without matching 9.4 headers, so this is
+  excluded from the ABI-matched compatibility envelope.
+
+- 2026-07-15 Phase 52 ida-cdump P22.R3 documentation reconciliation:
+  Verified that public `collect_referenced_types(Address)` declaration,
+  implementation, and compile-surface reference are present. The
+  `idax_api_surface_check` target is current and `api_surface_parity` passes
+  1/1. Structural probes reject the former stale `Partially implemented`,
+  `Partially covered by idax`, and residual P22.R3-facade prescriptions. The
+  unavailable downstream ida-cdump tree remains explicitly bounded by
+  Assumption A52.1; no downstream call-site state is inferred from this local
+  build.
+
+- 2026-07-16 Phase 59 opaque undo/redo domain:
+  Added named checkpoint creation, copied optional undo/redo labels, and
+  boolean transition execution across C++, Node, generated C/safe Rust, and
+  Python without exposing native records or SDK strings. Exact isolated
+  comment mutation proves label fidelity, undo, redo, and final restoration.
+  Complete validation passes native CTest 30/30; Node 242 structural plus
+  86 initialized-host checks; Rust 145 unit plus 103 initialized-host checks,
+  all-target compilation, doctests, and byte-identical generated bindings;
+  Python 19 pure plus one initialized-host check, strict typing over 32 modules,
+  a 28-domain/832-symbol validated manifest, and wheel/sdist audit. Current-tree
+  and reachable-history privacy scans pass across 491 project files and 3,686
+  reachable objects. The tag-only Node release matrix now uses the supported
+  `macos-15-intel` label, and all workflow YAML/actionlint gates pass. On the
+  exact implementation commit, runs 29509686296, 29509687054, and 29509687311
+  pass Integrations 3/3, Validation 6/6, and Bindings 9/9; complete logs contain
+  zero unmasked canonical license identifiers.
+
+- 2026-07-16 Phase 60 opaque analysis-problem domain:
+  Added all six pinned problem-list operations and all 16 semantic kinds across
+  C++, Node, generated C/safe Rust, and Python. Exact isolated tests cover
+  all-kind short/long names, invalid kind/address/NUL rejection, Unicode
+  remember/description fidelity, ordered lookup, presence, removal, and final
+  absence without assuming unrelated markers are absent. Native CTest passes
+  31/31 with TGZ packaging; Node passes 244 structural plus 87 initialized-host
+  checks and strict TypeScript; Rust passes 148 unit plus 104 initialized-host
+  checks, all-target compilation, doctests, formatting, and byte-identical
+  generated bindings; Python passes 19 pure plus one initialized-host check,
+  strict typing over 33 modules, a 29-domain/839-symbol manifest, and wheel/sdist
+  audit. Generic Python runtime setup now follows the release-neutral raw-only
+  fixture rule. Selector, procmod, privacy, workflow, YAML, diff-hygiene, and
+  strict object-integrity gates pass. Exact implementation commit
+  `c3412cc74a7c2f76d74ed3a9c18cc0bebad6e39c` passes runs 29513543247
+  (Integrations 3/3), 29513543228 (Validation 6/6), and 29513543177
+  (Bindings 9/9) across Linux, Windows, and macOS. All 18 jobs install IDA
+  Professional 9.4 using exact SDK commit
+  `6929db6868a524496eb66e76e4ec6c9d720a0594`; complete logs contain zero
+  unmasked canonical license identifiers.
+
+- 2026-07-16 Phase 61 opaque exception-region domain:
+  Added all five pinned `tryblks.hpp` operations across C++, Node, generated
+  C/safe Rust, and Python using owned fragmented ranges, discriminated C++/SEH
+  handlers, semantic selectors/dispositions/locations, optional system-region
+  lookup, and explicit native error mapping. Native CTest passes 32/32 with TGZ
+  packaging; Node passes 246 structural plus 88 initialized-host checks and
+  strict TypeScript examples; Rust passes 149 unit plus 105 initialized-host
+  checks, formatting, all-target compilation, doctests, and byte-identical
+  generated bindings (`d350e186eb665c5635837a4770d5beafcf37634f255d38ee1b15d21eba7ed85d`);
+  Python passes 20 pure plus one initialized-host check, strict typing over 34
+  modules, a 30-domain/854-symbol manifest, and wheel/sdist inspection. The
+  license-selector, procmod, repository-privacy, workflow-YAML, actionlint,
+  diff-hygiene, 509-file candidate, and 3,753-object reachable-history gates
+  pass. Exact implementation commit
+  `35d3776ffeb3e6fc83de426f05b2d64f2e90cdfc` passes runs 29518226489
+  (Integrations 3/3), 29518226538 (Validation 6/6), and 29518226492
+  (Bindings 9/9) across Linux, Windows, and macOS; complete logs contain zero
+  unmasked canonical license identifiers.
+
+- 2026-07-16 Phase 62 opaque source-parser domain:
+  Added all nine pinned `srclang.hpp` operations across C++, Node, generated
+  C/safe Rust, and Python using a closed six-language set, semantic source/file
+  inputs and extended options, copied parser identity/configuration, explicit
+  error-count reports, and current-local-type-library storage. Exact-SDK native
+  validation passes 33/33 CTest targets, 44 focused parser assertions, the
+  267-check smoke suite, installation, and TGZ packaging. Node passes 248
+  structural plus 89 initialized-host checks, declaration compilation, and
+  package inspection. Rust passes 152 unit plus 106 initialized-host checks,
+  all-target compilation, doctests, formatting, and byte-identical generated
+  bindings (`1f140efe048b93721295fb0eddfc62ef7e51b6340ce162a38e198e9d09d1f50f`).
+  Python passes 20 pure plus one initialized-host check, strict typing over 35
+  modules, a 31-domain/867-symbol manifest, and wheel/sdist inspection. The 26
+  selector, processor-module, and privacy regressions; repository consistency;
+  workflow YAML/actionlint; shell syntax; diff hygiene; and strict object
+  integrity gates pass. Implementation commit
+  `acd0e46020af8fb63d1edf73368873af046e60a6` exposed and corrective commit
+  `3d6b8b1b6b39e15b0ff32c1f0044070474990c5f` closes one GCC-only ambiguous V8
+  handle conversion. On the exact release commit, runs 29524467857
+  (Integrations 3/3), 29524467668 (Validation 6/6), and 29524467579 (Bindings
+  9/9) pass across Linux, Windows, and macOS; complete logs contain zero
+  unmasked canonical license identifiers.
+
+- 2026-07-16 Phase 63 opaque standard directory-tree domain:
+  Added the standard-tree operation family across C++, Node, generated C/safe
+  Rust, and Python using eight semantic built-in kinds, owned paths and copied
+  entry snapshots, exact error mapping, recursive enumeration/search,
+  directory/item organization, semantic ordering, and deterministic partial
+  bulk reports. Exact-SDK native validation passes CTest 34/34, installation,
+  and TGZ packaging. Node passes 250 structural plus 90 initialized-host
+  checks, strict TypeScript compilation, and package inspection. Rust passes
+  formatting, 154 unit plus 107 initialized-host checks, all-target
+  compilation, doctests, build-support, and byte-identical generated bindings.
+  Python passes 20 pure plus one initialized-host check, strict typing over 36
+  modules, a 32-domain/874-symbol manifest, and wheel/sdist inspection. The
+  local Python host reports the compatible decompiler as unavailable under the
+  strict licensed-CI flag; all directory behavior passes and the initialized
+  suite passes under its optional-capability contract. The 26 selector,
+  processor-module, and privacy regressions; repository consistency; workflow
+  YAML/actionlint; shell syntax; diff hygiene; strict object integrity; and
+  527-file candidate plus 3,932-object reachable-history privacy gates pass.
+  Implementation commit `dc9d3ac61bad6c82cfd8bd81bcdb6a3fb5a2ab21`
+  passes runs 29530158100 (Integrations 3/3), 29530157993 (Validation 6/6),
+  and 29530157973 (Bindings 9/9) across Linux, Windows, and macOS. All 18 jobs
+  select an eligible active named IDA product license, install IDA Professional
+  9.4, and use exact SDK commit
+  `6929db6868a524496eb66e76e4ec6c9d720a0594`; complete logs contain zero
+  install failures and zero unmasked canonical license identifiers.
+
+- 2026-07-16 Phase 64 opaque scoped persistent-registry domain:
+  Added scoped persistent plugin configuration across C++, Node, generated
+  C/safe Rust, and Python using owned nonempty key identities, typed copied
+  values, copied child/value/list inventories, checked writes, explicit
+  deletion state, and deterministic ordered-list updates. Exact-SDK native
+  validation passes CTest 35/35, installation, and TGZ packaging. Node passes
+  252 structural plus 91 initialized-host checks, strict TypeScript, and
+  package inspection. Rust passes formatting, 156 unit plus 108
+  initialized-host checks, all-target compilation, doctests, build-support,
+  and byte-identical generated bindings at SHA-256
+  `19345f155b4b90c6ef7331c7d2b3baeb3d9bdcdbb91cb8503e9a88a744905a`.
+  Python passes 20 pure plus one initialized-host check, strict typing over 37
+  files, a 33-domain/877-symbol declaration audit, and wheel/sdist inspection.
+  The local optional Hex-Rays capability remains unavailable; all independent
+  runtime domains, including registry behavior, pass under the established
+  capability contract. Implementation commit
+  `381fe404c51058a9c4741f0202f17acc92f9a834` exposed five ambiguous optional
+  V8 handle conversions in Linux/GCC and macOS/Apple-Clang Node builds;
+  corrective release commit `1489e775a1bb0f6d128e927cf4ca6147ccc69b85`
+  replaces them with explicit present/absent branches. On the corrective SHA,
+  runs 29536527402 (Integrations 3/3), 29536525913 (Validation 6/6), and
+  29536526464 (Bindings 9/9) pass across Linux, Windows, and macOS. All 18 jobs
+  use IDA Professional 9.4 and exact SDK commit
+  `6929db6868a524496eb66e76e4ec6c9d720a0594`; boundary-aware complete-log
+  scanning finds zero standalone canonical license identifiers, zero license-
+  install failures, and zero reported identity-path occurrences.
+
+- 2026-07-16 Phase 65 opaque register-value tracking domain:
+  Added all seven pinned `regfinder.hpp` operations across C++, Node, generated
+  C/safe Rust, and Python using twelve closed semantic states, owned copied
+  candidates/origins/descriptions, name-based register selection, unique
+  constants, stack-pointer deltas, nearest-of-two results, and semantic cache
+  notifications. Exact-SDK native validation passes all three processor
+  exports/descriptors, processor runtime smoke, CTest 36/36, 39 focused tracker
+  assertions, installation, and TGZ packaging. Node passes 254 structural, 91
+  general initialized-host, and 24 AArch64 tracker checks plus declaration and
+  package inspection. Rust passes formatting, 158 unit plus 108 general
+  initialized-host checks, one tracker runtime, all-target compilation,
+  doctests, build-support, and byte-identical generated bindings at SHA-256
+  `0a95f82dad548feb1e303b65e33680058dad899eaaf9cfabd4b1d609a7282f85`.
+  Python passes 20 pure plus two initialized-host tranches, strict typing over
+  38 files, a 34-domain/891-symbol declaration audit, and wheel/sdist
+  inspection. The debug-free AArch64 fixture is post-processed to remove LLD's
+  non-loadable email-shaped source-control comment; its program headers and
+  `.text` remain byte-identical and all four runtime consumers pass afterward.
+  A two-path merge also proves two copied constant candidates with distinct
+  origins while the unique-constant convenience query returns absence.
+  Workflow/actionlint, shell/JSON/diff consistency, and candidate/reachable-
+  history privacy gates pass. Implementation commit
+  `c66fc8e2bcd7c4084e7c1cc629114a41e96685b1` exposed an unpinned setup-uv
+  metadata-rate-limit failure; the workflows now pin setup-uv `v8.3.2`, uv
+  `0.11.28`, and the explicit workflow token. Corrective release commit
+  `c035111e9cf8ed8db5fcd3cdf03a7ab33712a540` passes runs 29545255109
+  (Integrations 3/3), 29545255136 (Validation 6/6), and 29545255093 (Bindings
+  9/9) across Linux, Windows, and macOS. All 18 jobs install IDA Professional
+  9.4 and use exact SDK commit
+  `6929db6868a524496eb66e76e4ec6c9d720a0594`. Automatic whole-log audits
+  29545467762, 29545625755, and 29546203247 pass with no canonical license
+  identifier or non-infrastructure home-path finding. All one-use diagnostic
+  artifacts and replay tags are removed at closure.
+
+- 2026-07-17 Phase 66 Node 24 CI runtime and immutable-action boundary:
+  Migrated all 29 external workflow action uses to seven reviewed full-commit
+  pins and replaced six Node 20-only MSVC action uses with a repository-local
+  composite PowerShell bridge. The three setup-node calls continue testing
+  Node.js 20 product behavior while their action runtime uses Node 24 and its
+  new automatic package-manager cache remains explicitly disabled. Rust macOS
+  now uses Xcode's bundled `libclang.dylib` without Homebrew. A fail-closed
+  offline inventory covers all 35 action uses and passes nine regression tests;
+  actionlint, workflow/composite YAML, shell/Python syntax, exact-SDK IDA 9.4
+  compile-only validation, processor exports/descriptors/runtime smoke, and
+  559-file candidate plus 4,168-object reachable-history privacy gates pass.
+  Initial source commit `a6d8c8510b4af434be699a1d061c3dd6de77d01a`
+  exposed strict-mode access to uninitialized `$LASTEXITCODE` on hosted Windows
+  2025/Visual Studio 2026. Corrective commit
+  `245dd2bf4a425c9b9bbfaa9d6842540db49a37be` captures initialized `$?` state
+  and passes runs 29547501264 (Integrations 3/3), 29547501196 (Validation 6/6),
+  and 29547501214 (Bindings 9/9). All six Windows rows pass MSVC setup and
+  downstream compilation; all 18 complete logs contain zero GitHub warning
+  commands, Node 20 action-runtime warnings, Homebrew LLVM invocations, or
+  untrusted-tap warnings. Whole-log audits 29547738319, 29547844551, and
+  29548385969 pass. IDA Professional 9.4 and exact SDK commit
+  `6929db6868a524496eb66e76e4ec6c9d720a0594` remain unchanged.
+
+- 2026-07-17 Phase 67 opaque address-bookmark domain:
+  Added the complete address-bookmark lifecycle across C++, Node, generated
+  C/safe Rust, and Python using owned address/slot/description snapshots,
+  deterministic lowest-free-slot allocation, exact optional slots, copied
+  sparse enumeration, pre-mutation conflicts, and identity-preserving removal.
+  Exact-SDK native validation passes CTest 37/37, sparse low/middle/high removal
+  plus save/reopen, all examples/addons/tools, three processor exports and
+  descriptors, processor runtime smoke, install, and TGZ packaging. Node passes
+  256 structural plus 92 initialized-host checks, strict declarations, and
+  38-file package inspection. Rust passes formatting, 161 unit plus 109
+  initialized-host checks, doctests, package inspection, and byte-identical
+  generated bindings at SHA-256
+  `3b79836d71b236a92ad42f7551fb762c1c3828be0310e8549e3dd43d7972e18b`.
+  Python passes 20 pure plus one initialized-host lifecycle, strict typing over
+  39 files, a 35-domain/898-symbol manifest, and wheel/sdist inspection.
+  Candidate privacy passes across 568 files and post-implementation reachable-
+  history privacy across 4,226 objects. Implementation commit
+  `151a4622294a71836c9063a6ac9fa569053d6d07` passes runs 29551204566
+  (Integrations 3/3), 29551204572 (Validation 6/6), and 29551204568 (Bindings
+  9/9) across Linux, Windows, and macOS. Complete-log audits 29551426405,
+  29551508095, and 29551931196 pass without a canonical license identifier or
+  non-infrastructure identity-path finding. Every job uses IDA Professional 9.4
+  and exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`.
+
+- 2026-07-17 Phase 68 opaque address-navigation history:
+  Added the proven current `navstack_t` address-history subset across C++,
+  Node, generated C/safe Rust, and Python using owned address/channel/metadata
+  snapshots and copyable logical stream handles. Native places, renderer and
+  widget state, netnodes, stream keys, serialized records, and mutable SDK
+  containers remain private. Exact mutation verification covers independent
+  per-channel current state, push with forward truncation, cursor movement,
+  replacement, clear, discard/retain transfer, source/destination cursor
+  normalization, conflict/empty-source rejection, rollback paths, private
+  bootstrap filtering, and save/reopen persistence. Exact-SDK/IDA 9.4 native
+  validation passes CTest 38/38, every example/addon/tool, three processor
+  exports/descriptors plus licensed runtime smoke, install, and TGZ packaging.
+  Node passes 258 structural, 93 initialized-host, and 24 register-tracking
+  checks with a 39-file package inventory. Rust passes formatting, 164 unit
+  plus 110 initialized-host checks, doctests, package inspection, and
+  byte-identical generated declarations at SHA-256
+  `bab689914bbdfcd89d8f01a8417ccb950f2b9656546116ad2bdb124d7eab0946`.
+  Python passes 20 pure plus two initialized-host tests, strict typing over 40
+  files, a 36-domain/901-symbol declaration audit, and fresh wheel/sdist
+  inspection; the independent strict local Hex-Rays tranche remains unavailable
+  while optional-capability runtime execution passes. Workflow/action pins,
+  HCLI named-product license selection, processor validation helpers, log
+  privacy, explicit checkout-path absence, 577-file candidate privacy, and
+  4,232-object pre-implementation reachable-history privacy pass.
+  Implementation commit `c3977730f20b65adb30f6443b0f366fe0651a4ee`
+  passes runs 29555219434 (Integrations 3/3), 29555219457 (Validation 6/6),
+  and 29555219429 (Bindings 9/9) across Linux, Windows, and macOS. Automatic
+  complete-log audits 29555414138, 29555572331, and 29556133959 pass without a
+  canonical license identifier or non-infrastructure identity-path finding.
+  All 18 jobs use IDA Professional 9.4 and exact SDK commit
+  `6929db6868a524496eb66e76e4ec6c9d720a0594`; post-implementation privacy
+  passes across 4,287 reachable objects.
+
+- 2026-07-17 Phase 70 opaque operand offset/reference semantics:
+  Added standard/custom semantic formats, copied target/base/delta metadata,
+  nine named options, main/outer operand locations, stored/explicit plain
+  rendering, target/base/candidate calculations, verified layered apply/remove,
+  and reference-aware operand data-xref creation across C++, Node, generated
+  C/safe Rust, and Python. Native IDs, flags, records, sentinels, tagged strings,
+  decoded instructions, and operand containers remain private. Mutation rejects
+  competing display state, preflights outer capability, verifies normalized
+  exact readback, and restores prior/empty state on rejection, mismatch, or
+  partial removal. Node passes 275 structural checks, strict declarations, and
+  40-file package inspection. Rust passes formatting, 170 pure tests, generated
+  declaration identity at SHA-256
+  `52ca9518414f45373171c250956f8bca137e4a5d8baece193346476867bc835f`,
+  and both crate archives. Python passes strict typing over 41 files, a
+  37-domain/939-symbol declaration audit, and fresh wheel/sdist inspection.
+  Exact IDA 9.4 release evidence passes implementation commit
+  `fafcbaffe0f859b9f3e1835c0f76126486532a18` in runs 29564523560
+  (Integrations 3/3), 29564523607 (Validation 6/6), and 29564523569 (Bindings
+  9/9) across Linux, Windows, and macOS. Complete-log audits 29564829739,
+  29565022137, and 29565920823 pass across 294 entries and 12,611,190
+  uncompressed bytes. Every job uses exact SDK commit
+  `6929db6868a524496eb66e76e4ec6c9d720a0594`; licensed rows install IDA
+  Professional 9.4 through the eligible active named-product selector.
+
+- 2026-07-17 Phase 71 opaque IDC values and synchronous script execution:
+  Added owned opaque IDC values with exact typed access, explicit SDK
+  coercions, deterministic moved-from zero state, shallow/deep object copies,
+  attributes, half-open slices, rendering, references, and globals. Added
+  current-language/IDC/integer evaluation, file/text/snippet compilation,
+  named calls, compile-and-call, snippet/system execution, include paths, file
+  resolution, and function discovery across C++, Node, generated C/safe Rust,
+  and Python. Resolver callbacks are synchronous owned maps; native values,
+  objects, pointers, bytecode, callback descriptors, and interpreter-global
+  registration remain private or explicitly out of this lifecycle phase.
+  Every native target builds against exact SDK commit
+  `6929db6868a524496eb66e76e4ec6c9d720a0594`. The local IDA 9.3 runtime proxy
+  passes the 118-check script lifecycle and 39/41 complete CTests; the only
+  failures are the previously bounded name-sanitization and decompiler-variable
+  fixture variances. Node passes 277 structural and 96 initialized-host checks,
+  strict TypeScript compilation, and a 41-file package. Rust passes formatting,
+  all-target compilation, 172 unit and 113 initialized-host tests, doctests,
+  11/76-file crate packages, and byte-identical generated declarations at
+  SHA-256 `692d05ed07d6f2b2f456773df32dcc933f2d2cb65ca56d881c7092f007f31cd8`.
+  Python passes 20 pure and one fresh-wheel initialized-host test, strict typing
+  over 42 files, a 38-domain/965-symbol declaration audit, and fresh wheel/sdist
+  inspection. Release install/TGZ, 35 policy tests plus three subtests,
+  immutable-action inventory, actionlint, consistency, diff and object-integrity
+  gates pass. Candidate privacy covers 597 project-owned files and pre-commit
+  reachable-history privacy covers 4,389 objects; extracted CPack, Node, both
+  Rust crates, and both Python artifacts contain no user-home identity path.
+  Implementation commit `bbcb34511947f53b443fd004cf0ae93ea16fb388`
+  reached the hosted matrices; Bindings run 29572635965 then falsified the
+  first Node binding's compiler portability on hosted Apple Clang, GCC, and
+  MSVC at V8 local-handle conditional expressions. Correction commit
+  `a9c8bd0cd2264603a8644b99cedfb3a596c8090a` replaces them with explicitly
+  typed optional arguments and output branches. Runs 29573171753
+  (Integrations 3/3), 29573171723 (Validation 6/6), and 29573171713 (Bindings
+  9/9) then pass all 18 hosted jobs across Linux, Windows, and macOS. Every job
+  records exact SDK commit `6929db6868a524496eb66e76e4ec6c9d720a0594`
+  and IDA Professional 9.4. Automatic complete-log audits 29573520110,
+  29573734060, and 29574575456 pass across 294 entries and 12,790,604
+  uncompressed bytes.
