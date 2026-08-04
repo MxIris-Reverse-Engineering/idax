@@ -578,3 +578,12 @@ Current overall phase status:
 - [x] P71.4 Add malformed-input plus isolated exact-IDA 9.4 scalar/object/evaluate/compile/call/snippet/script evidence, synchronize docs/protocol records, run complete validation and self-red-team, exact-stage review, push, live-audit all release jobs/logs, and remove Phase 71 from active work.
 
 ---
+
+## Upstream Relationship
+
+- [x] U1 Establish shared ancestry with `19h/idax` by replaying post-February work onto the matching upstream commit, then merge normally.
+- [x] U2 Verify the merge across every layer: 42/42 CTest including all integration suites, Rust 173, Node 277, Swift 64, plus a clean-clone build.
+- [x] U3 Offer the Swift bindings upstream as a draft pull request with the two domains they depend on.
+- [ ] U4 Respond to upstream review; mirror any restructuring back onto the merge branch before publishing it.
+- [ ] U5 Publish the merge branch (force-push, since 87 commits were replayed onto a new base — verify with `git cherry` first).
+

@@ -129,3 +129,10 @@
   - 6.1.3. **Clipboard evidence:** Run `IDAX_RUN_QT_CLIPBOARD=1` in an IDA UI host with either an IDA-compatible Qt clipboard backend or a working external clipboard command, then verify with `scripts/check_codedump_parity_evidence_log.sh <log> qt-clipboard`.
   - 6.1.4. **Blocker:** Requires an interactive IDA UI host; Qt clipboard mode also requires either a namespaced `QT_NAMESPACE=QT` Qt package or usable host clipboard command access.
   - 6.1.5. **Status:** In progress / host-gated.
+
+- **6.2. Upstream Pull Request `19h/idax#6`**
+  - 6.2.1. **Action:** Await maintainer review of the Swift bindings draft opened at his request in `19h/idax#5`.
+  - 6.2.2. **Held deliberately:** The merge branch (upstream plus this fork, verified green across all four binding layers) is not pushed to `origin`. A restructuring request — splitting or renaming `microcode` / `dyld_cache`, or declining one of them — would have to be mirrored onto it, and pushing first means doing the work twice. Pushing it will also require a force-push, since 87 commits were replayed onto a new base.
+  - 6.2.3. **Known gaps in the PR:** the Node addon carries only the two files it needed, and the `build-swift` CI job cannot run on the PR itself because forks cannot read `HCLI_KEY`. The job's command sequence was verified locally against SDK 9.4.
+  - 6.2.4. **If declined:** nothing blocks continuing on the merge branch; the fork keeps the xcframework, the dyld cache CLI tool, and its own domain layout.
+  - 6.2.5. **Status:** Awaiting upstream.
