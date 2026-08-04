@@ -66,7 +66,6 @@ handling.
 
 ### `loader/sep_firmware_loader.cpp` — Apple SEP Firmware Loader Port
 
-Port of `/Users/int/Downloads/sep-binja-main` into an idax example loader.
 Port of `<upstream-source>/sep-binja-main` into an idax example loader.
 It detects raw 64-bit SEP firmware images via the `Built by legion2` markers,
 parses the SEP container header/app table, maps the boot/kernel/SEPOS/app/shared
