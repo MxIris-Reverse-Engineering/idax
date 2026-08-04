@@ -26,6 +26,9 @@ let cidaxTarget: Target = devMode
             .unsafeFlags([
                 "-L\(libDir)",
                 "-lidax", "-lidax_shim",
+                // libidax.a is C++; SPM links CIDAX as a C target and so does
+                // not pull in the C++ runtime on its own.
+                "-lc++",
             ]),
         ]
     )

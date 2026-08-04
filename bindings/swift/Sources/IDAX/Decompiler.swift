@@ -153,16 +153,74 @@ public struct DecompiledFunction: ~Copyable, @unchecked Sendable {
 
     // MARK: - Comments
 
-    public func setComment(at address: Address, text: String, position: Int) throws(IDAError) {
+    /// Semantic location of a persisted pseudocode comment.
+    ///
+    /// Replaces the raw integer position the C ABI used to take. `value`
+    /// carries the argument index or switch-case value, and is ignored for
+    /// every other kind.
+    public struct CommentPosition: Sendable, Equatable {
+        public enum Kind: Int32, Sendable {
+            case `default` = 0
+            case argument = 1
+            case parenthesisOpen = 2
+            case assembly = 3
+            case elseLine = 4
+            case doLine = 5
+            case semicolon = 6
+            case openBrace = 7
+            case closeBrace = 8
+            case parenthesisClose = 9
+            case labelColon = 10
+            case blockBefore = 11
+            case blockAfter = 12
+            case tryLine = 13
+            case switchCase = 14
+        }
+
+        public var kind: Kind
+        public var value: Int64
+
+        public init(kind: Kind = .default, value: Int64 = 0) {
+            self.kind = kind
+            self.value = value
+        }
+
+        public static let `default` = CommentPosition()
+
+        public static func argument(index: Int64) -> CommentPosition {
+            CommentPosition(kind: .argument, value: index)
+        }
+
+        public static func switchCase(value: Int64) -> CommentPosition {
+            CommentPosition(kind: .switchCase, value: value)
+        }
+
+        var cValue: IdaxDecompilerCommentPosition {
+            IdaxDecompilerCommentPosition(kind: kind.rawValue, value: value)
+        }
+    }
+
+    public func setComment(at address: Address,
+                           text: String,
+                           position: CommentPosition = .default) throws(IDAError) {
+        var rawPosition = position.cValue
         try checkStatus(
-            text.withCString { idax_decompiled_set_comment(handle, address, $0, Int32(position)) },
+            text.withCString { textPointer in
+                withUnsafePointer(to: &rawPosition) { positionPointer in
+                    idax_decompiled_set_comment(handle, address, textPointer, positionPointer)
+                }
+            },
             "decompiled.setComment"
         )
     }
 
-    public func comment(at address: Address, position: Int) throws(IDAError) -> String {
-        try withStringOutput("decompiled.comment") {
-            idax_decompiled_get_comment(handle, address, Int32(position), $0)
+    public func comment(at address: Address,
+                        position: CommentPosition = .default) throws(IDAError) -> String {
+        var rawPosition = position.cValue
+        return try withStringOutput("decompiled.comment") { out in
+            withUnsafePointer(to: &rawPosition) { positionPointer in
+                idax_decompiled_get_comment(handle, address, positionPointer, out)
+            }
         }
     }
 

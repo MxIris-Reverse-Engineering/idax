@@ -288,22 +288,30 @@ public struct Instruction: Sendable {
 
     // MARK: - Struct offset paths
 
-    public static func operandStructOffsetPath(at address: Address, operand n: Int) throws(IDAError) -> (ids: [UInt64], delta: Int64) {
-        var idsPtr: UnsafeMutablePointer<UInt64>? = nil
+    /// Structure-offset path applied to an operand, plus its delta.
+    ///
+    /// The C ABI used to hand back raw SDK structure ids here; upstream made
+    /// the path opaque and now returns structure *names*, so this returns
+    /// names too.
+    public static func operandStructOffsetPath(at address: Address, operand n: Int) throws(IDAError) -> (names: [String], delta: Int64) {
+        var namesPtr: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>? = nil
         var count: Int = 0
         var delta: Int64 = 0
         try checkStatus(
-            idax_instruction_operand_struct_offset_path(address, Int32(n), &idsPtr, &count, &delta),
+            idax_instruction_operand_struct_offset_path(address, Int32(n), &namesPtr, &count, &delta),
             "instruction.operandStructOffsetPath"
         )
-        defer { idax_free_addresses(idsPtr) }
-        let ids: [UInt64]
-        if let idsPtr, count > 0 {
-            ids = Array(UnsafeBufferPointer(start: idsPtr, count: count))
-        } else {
-            ids = []
+        defer { idax_instruction_string_array_free(namesPtr, count) }
+        var names: [String] = []
+        if let namesPtr, count > 0 {
+            names.reserveCapacity(count)
+            for index in 0..<count {
+                if let element = namesPtr[index] {
+                    names.append(String(cString: element))
+                }
+            }
         }
-        return (ids: ids, delta: delta)
+        return (names: names, delta: delta)
     }
 
     public static func operandStructOffsetPathNames(at address: Address, operand n: Int) throws(IDAError) -> [String] {
