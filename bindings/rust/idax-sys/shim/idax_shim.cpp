@@ -12851,6 +12851,393 @@ int idax_lumina_push(const uint64_t* __counted_by(count) addresses __noescape,
 
 // ─── merged from fork: functions not present upstream ───
 
+// Fork-local helpers and types the upstream shim does not define.
+
+// Forward declarations: ProcessorBridge below calls these, but their
+// definitions live further down with the rest of the fork-local functions.
+void fill_switch_description(IdaxSwitchDescription* out,
+                             const ida::processor::SwitchDescription& desc);
+ida::processor::SwitchDescription to_cpp_switch_description(
+        const IdaxSwitchDescription* desc);
+
+namespace {
+
+using CtreeParentMap = std::unordered_map<const void*, ida::decompiler::CtreeItemView>;
+
+thread_local CtreeParentMap* g_ctree_parent_map = nullptr;
+
+struct CtreeParentMapScope {
+    CtreeParentMap* previous;
+    explicit CtreeParentMapScope(CtreeParentMap* current) noexcept
+        : previous(g_ctree_parent_map) {
+        g_ctree_parent_map = current;
+    }
+    ~CtreeParentMapScope() {
+        g_ctree_parent_map = previous;
+    }
+    CtreeParentMapScope(const CtreeParentMapScope&) = delete;
+    CtreeParentMapScope& operator=(const CtreeParentMapScope&) = delete;
+};
+
+template <typename View>
+void record_ctree_parent(CtreeParentMap& parent_map, const View& view) {
+    auto parent = view.parent();
+    if (!parent || !*parent)
+        return;
+    parent_map[view.raw_handle()] = **parent;
+}
+
+int populate_ctree_parent_info(const void* handle, IdaxCtreeItemInfo* out) {
+    if (!out)
+        return fail(ida::Error::validation("out is null"));
+    out->has_value     = 0;
+    out->type          = 0;
+    out->address       = 0;
+    out->is_expression = 0;
+    if (!handle || !g_ctree_parent_map)
+        return 0;
+    auto it = g_ctree_parent_map->find(handle);
+    if (it == g_ctree_parent_map->end())
+        return 0;
+    out->has_value     = 1;
+    out->type          = static_cast<int>(it->second.type);
+    out->address       = it->second.address;
+    out->is_expression = it->second.is_expression ? 1 : 0;
+    return 0;
+}
+
+static ida::decompiler::MicrocodeContext* as_mutable_microcode_context(void* raw) {
+    return static_cast<ida::decompiler::MicrocodeContext*>(raw);
+}
+
+struct ProcessorBridge final : ida::processor::Processor {
+    IdaxProcessorCallbacks callbacks;
+
+    explicit ProcessorBridge(const IdaxProcessorCallbacks& cbs) : callbacks(cbs) {}
+
+    // ── Required overrides ─────────────────────────────────────────────
+
+    ida::processor::ProcessorInfo info() const override {
+        IdaxProcessorInfo raw{};
+        callbacks.info(callbacks.context, &raw);
+
+        ida::processor::ProcessorInfo result;
+        result.id    = raw.id;
+        result.flags = raw.flags;
+        result.flags2 = raw.flags2;
+        result.code_bits_per_byte = raw.code_bits_per_byte;
+        result.data_bits_per_byte = raw.data_bits_per_byte;
+        result.code_segment_register  = raw.code_segment_register;
+        result.data_segment_register  = raw.data_segment_register;
+        result.first_segment_register = raw.first_segment_register;
+        result.last_segment_register  = raw.last_segment_register;
+        result.segment_register_size  = raw.segment_register_size;
+        result.return_icode = raw.return_icode;
+        result.default_bitness = raw.default_bitness;
+
+        for (size_t i = 0; i < raw.short_name_count; ++i) {
+            if (raw.short_names[i])
+                result.short_names.emplace_back(raw.short_names[i]);
+        }
+        for (size_t i = 0; i < raw.long_name_count; ++i) {
+            if (raw.long_names[i])
+                result.long_names.emplace_back(raw.long_names[i]);
+        }
+        for (size_t i = 0; i < raw.register_count; ++i) {
+            result.registers.push_back({
+                raw.registers[i].name ? std::string(raw.registers[i].name) : std::string(),
+                raw.registers[i].read_only != 0
+            });
+        }
+        for (size_t i = 0; i < raw.instruction_count; ++i) {
+            auto& src = raw.instructions[i];
+            ida::processor::InstructionDescriptor desc;
+            desc.mnemonic      = src.mnemonic ? std::string(src.mnemonic) : std::string();
+            desc.feature_flags = src.feature_flags;
+            desc.operand_count = src.operand_count;
+            desc.description   = src.description ? std::string(src.description) : std::string();
+            desc.privileged    = src.privileged != 0;
+            result.instructions.push_back(std::move(desc));
+        }
+        for (size_t i = 0; i < raw.assembler_count; ++i) {
+            auto& src = raw.assemblers[i];
+            ida::processor::AssemblerInfo asm_info;
+            asm_info.name              = src.name ? std::string(src.name) : std::string();
+            asm_info.comment_prefix    = src.comment_prefix ? std::string(src.comment_prefix) : std::string();
+            asm_info.origin            = src.origin ? std::string(src.origin) : std::string();
+            asm_info.end_directive     = src.end_directive ? std::string(src.end_directive) : std::string();
+            asm_info.string_delim      = src.string_delim;
+            asm_info.char_delim        = src.char_delim;
+            asm_info.byte_directive    = src.byte_directive ? std::string(src.byte_directive) : std::string();
+            asm_info.word_directive    = src.word_directive ? std::string(src.word_directive) : std::string();
+            asm_info.dword_directive   = src.dword_directive ? std::string(src.dword_directive) : std::string();
+            asm_info.qword_directive   = src.qword_directive ? std::string(src.qword_directive) : std::string();
+            asm_info.oword_directive   = src.oword_directive ? std::string(src.oword_directive) : std::string();
+            asm_info.float_directive   = src.float_directive ? std::string(src.float_directive) : std::string();
+            asm_info.double_directive  = src.double_directive ? std::string(src.double_directive) : std::string();
+            asm_info.tbyte_directive   = src.tbyte_directive ? std::string(src.tbyte_directive) : std::string();
+            asm_info.align_directive   = src.align_directive ? std::string(src.align_directive) : std::string();
+            asm_info.include_directive = src.include_directive ? std::string(src.include_directive) : std::string();
+            asm_info.public_directive  = src.public_directive ? std::string(src.public_directive) : std::string();
+            asm_info.weak_directive    = src.weak_directive ? std::string(src.weak_directive) : std::string();
+            asm_info.external_directive = src.external_directive ? std::string(src.external_directive) : std::string();
+            asm_info.current_ip_symbol  = src.current_ip_symbol ? std::string(src.current_ip_symbol) : std::string();
+            asm_info.uppercase_mnemonics         = src.uppercase_mnemonics != 0;
+            asm_info.uppercase_registers         = src.uppercase_registers != 0;
+            asm_info.requires_colon_after_labels = src.requires_colon_after_labels != 0;
+            asm_info.supports_quoted_names       = src.supports_quoted_names != 0;
+            result.assemblers.push_back(std::move(asm_info));
+        }
+
+        idax_processor_info_free(&raw);
+        return result;
+    }
+
+    ida::Result<int> analyze(ida::Address address) override {
+        int size = 0;
+        int ret = callbacks.analyze(callbacks.context, address, &size);
+        if (ret != 0) {
+            return std::unexpected(ida::Error::sdk("analyze callback failed"));
+        }
+        return size;
+    }
+
+    ida::processor::EmulateResult emulate(ida::Address address) override {
+        int ret = callbacks.emulate(callbacks.context, address);
+        return static_cast<ida::processor::EmulateResult>(ret);
+    }
+
+    void output_instruction(ida::Address address) override {
+        callbacks.output_instruction(callbacks.context, address);
+    }
+
+    ida::processor::OutputOperandResult output_operand(ida::Address address,
+                                                       int operand_index) override {
+        int ret = callbacks.output_operand(callbacks.context, address, operand_index);
+        return static_cast<ida::processor::OutputOperandResult>(ret);
+    }
+
+    // ── Optional overrides ─────────────────────────────────────────────
+
+    void on_new_file(std::string_view filename) override {
+        if (callbacks.on_new_file)
+            callbacks.on_new_file(callbacks.context, std::string(filename).c_str());
+    }
+
+    void on_old_file(std::string_view filename) override {
+        if (callbacks.on_old_file)
+            callbacks.on_old_file(callbacks.context, std::string(filename).c_str());
+    }
+
+    int is_call(ida::Address address) override {
+        if (!callbacks.is_call) return 0;
+        return callbacks.is_call(callbacks.context, address);
+    }
+
+    int is_return(ida::Address address) override {
+        if (!callbacks.is_return) return 0;
+        return callbacks.is_return(callbacks.context, address);
+    }
+
+    int may_be_function(ida::Address address) override {
+        if (!callbacks.may_be_function) return 0;
+        return callbacks.may_be_function(callbacks.context, address);
+    }
+
+    int is_sane_instruction(ida::Address address, bool no_code_references) override {
+        if (!callbacks.is_sane_instruction) return 0;
+        return callbacks.is_sane_instruction(callbacks.context, address,
+                                             no_code_references ? 1 : 0);
+    }
+
+    int is_indirect_jump(ida::Address address) override {
+        if (!callbacks.is_indirect_jump) return 0;
+        return callbacks.is_indirect_jump(callbacks.context, address);
+    }
+
+    int is_basic_block_end(ida::Address address,
+                           bool call_instruction_stops_block) override {
+        if (!callbacks.is_basic_block_end) return 0;
+        return callbacks.is_basic_block_end(callbacks.context, address,
+                                            call_instruction_stops_block ? 1 : 0);
+    }
+
+    bool create_function_frame(ida::Address function_start) override {
+        if (!callbacks.create_function_frame) return false;
+        return callbacks.create_function_frame(callbacks.context, function_start) != 0;
+    }
+
+    int adjust_function_bounds(ida::Address function_start,
+                               ida::Address max_function_end,
+                               int suggested_result) override {
+        if (!callbacks.adjust_function_bounds) return suggested_result;
+        return callbacks.adjust_function_bounds(callbacks.context, function_start,
+                                                max_function_end, suggested_result);
+    }
+
+    int analyze_function_prolog(ida::Address function_start) override {
+        if (!callbacks.analyze_function_prolog) return 0;
+        return callbacks.analyze_function_prolog(callbacks.context, function_start);
+    }
+
+    int calculate_stack_pointer_delta(ida::Address address,
+                                      std::int64_t& out_delta) override {
+        if (!callbacks.calculate_stack_pointer_delta) {
+            out_delta = 0;
+            return 0;
+        }
+        return callbacks.calculate_stack_pointer_delta(callbacks.context, address,
+                                                       &out_delta);
+    }
+
+    int get_return_address_size(ida::Address function_start) override {
+        if (!callbacks.get_return_address_size) return 0;
+        return callbacks.get_return_address_size(callbacks.context, function_start);
+    }
+
+    int detect_switch(ida::Address address,
+                      ida::processor::SwitchDescription& out_switch) override {
+        if (!callbacks.detect_switch) return 0;
+        IdaxSwitchDescription raw{};
+        int ret = callbacks.detect_switch(callbacks.context, address, &raw);
+        if (ret > 0) {
+            out_switch = to_cpp_switch_description(&raw);
+        }
+        return ret;
+    }
+
+    int calculate_switch_cases(ida::Address address,
+                               const ida::processor::SwitchDescription& switch_description,
+                               std::vector<ida::processor::SwitchCase>& out_cases) override {
+        if (!callbacks.calculate_switch_cases) return 0;
+        IdaxSwitchDescription raw_switch{};
+        fill_switch_description(&raw_switch, switch_description);
+
+        IdaxSwitchCase* raw_cases = nullptr;
+        size_t raw_case_count = 0;
+        int ret = callbacks.calculate_switch_cases(callbacks.context, address,
+                                                   &raw_switch, &raw_cases,
+                                                   &raw_case_count);
+        if (ret > 0 && raw_cases != nullptr) {
+            for (size_t i = 0; i < raw_case_count; ++i) {
+                ida::processor::SwitchCase sc;
+                sc.target = raw_cases[i].target;
+                if (raw_cases[i].values && raw_cases[i].value_count > 0) {
+                    sc.values.assign(raw_cases[i].values,
+                                     raw_cases[i].values + raw_cases[i].value_count);
+                }
+                out_cases.push_back(std::move(sc));
+            }
+            idax_switch_cases_free(raw_cases, raw_case_count);
+        }
+        return ret;
+    }
+
+    int create_switch_references(ida::Address address,
+                                 const ida::processor::SwitchDescription& switch_description) override {
+        if (!callbacks.create_switch_references) return 0;
+        IdaxSwitchDescription raw{};
+        fill_switch_description(&raw, switch_description);
+        return callbacks.create_switch_references(callbacks.context, address, &raw);
+    }
+
+    ida::processor::OutputInstructionResult output_mnemonic_with_context(
+            ida::Address address,
+            ida::processor::OutputContext& output) override {
+        if (!callbacks.output_mnemonic_with_context)
+            return ida::processor::OutputInstructionResult::NotImplemented;
+        int ret = callbacks.output_mnemonic_with_context(callbacks.context, address, &output);
+        return static_cast<ida::processor::OutputInstructionResult>(ret);
+    }
+
+    ida::processor::OutputInstructionResult output_instruction_with_context(
+            ida::Address address,
+            ida::processor::OutputContext& output) override {
+        if (!callbacks.output_instruction_with_context) {
+            return Processor::output_instruction_with_context(address, output);
+        }
+        int ret = callbacks.output_instruction_with_context(callbacks.context, address, &output);
+        return static_cast<ida::processor::OutputInstructionResult>(ret);
+    }
+
+    ida::processor::OutputOperandResult output_operand_with_context(
+            ida::Address address,
+            int operand_index,
+            ida::processor::OutputContext& output) override {
+        if (!callbacks.output_operand_with_context) {
+            return output_operand(address, operand_index);
+        }
+        int ret = callbacks.output_operand_with_context(callbacks.context, address,
+                                                        operand_index, &output);
+        return static_cast<ida::processor::OutputOperandResult>(ret);
+    }
+};
+
+int copy_dyld_cache_modules(
+    const ida::Result<std::vector<ida::dyld_cache::ModuleInfo>>& module_result,
+    IdaxDyldCacheModule** output_modules,
+    size_t* output_count
+) {
+    if (!module_result)
+        return fail(module_result.error());
+
+    const auto& modules = *module_result;
+    *output_count = modules.size();
+    if (modules.empty()) {
+        *output_modules = nullptr;
+        return 0;
+    }
+
+    *output_modules = static_cast<IdaxDyldCacheModule*>(
+        std::calloc(modules.size(), sizeof(IdaxDyldCacheModule)));
+    if (*output_modules == nullptr)
+        return fail(ida::Error::internal("malloc failed"));
+
+    for (size_t module_index = 0; module_index < modules.size(); ++module_index) {
+        (*output_modules)[module_index].load_address = modules[module_index].load_address;
+        (*output_modules)[module_index].path = dup_string(modules[module_index].path);
+        if ((*output_modules)[module_index].path == nullptr
+            && !modules[module_index].path.empty()) {
+            idax_dyld_cache_list_modules_free(*output_modules, module_index + 1);
+            *output_modules = nullptr;
+            *output_count = 0;
+            return fail(ida::Error::internal("malloc failed"));
+        }
+    }
+    return 0;
+}
+
+ida::microcode::Maturity parse_microcode_maturity(int raw) {
+    switch (raw) {
+        case 0:
+        case IDAX_MICROCODE_MATURITY_LVARS:
+            return ida::microcode::Maturity::Lvars;
+        case IDAX_MICROCODE_MATURITY_GENERATED:
+            return ida::microcode::Maturity::Generated;
+        case IDAX_MICROCODE_MATURITY_PREOPTIMIZED:
+            return ida::microcode::Maturity::Preoptimized;
+        case IDAX_MICROCODE_MATURITY_LOCOPT:
+            return ida::microcode::Maturity::Locopt;
+        case IDAX_MICROCODE_MATURITY_CALLED_ARGUMENTS:
+            return ida::microcode::Maturity::CalledArguments;
+        case IDAX_MICROCODE_MATURITY_GLBOPT1:
+            return ida::microcode::Maturity::Glbopt1;
+        case IDAX_MICROCODE_MATURITY_GLBOPT2:
+            return ida::microcode::Maturity::Glbopt2;
+        case IDAX_MICROCODE_MATURITY_GLBOPT3:
+            return ida::microcode::Maturity::Glbopt3;
+        default:
+            return ida::microcode::Maturity::Lvars;
+    }
+}
+
+ida::microcode::FunctionSnapshot* as_microcode_snapshot(IdaxMicrocodeSnapshotHandle handle) {
+    return static_cast<ida::microcode::FunctionSnapshot*>(handle);
+}
+
+}  // namespace
+
+
 int idax_database_save_to(const char* output_database_path) {
     if (output_database_path == nullptr)
         return fail(ida::Error::validation("Output database path is null"));

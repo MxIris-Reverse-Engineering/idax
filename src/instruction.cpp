@@ -369,9 +369,6 @@ struct InstructionAccess {
         processor_t* processor = get_ph();
         const uint32 feature = processor ? raw.get_canon_feature(*processor) : 0;
 
-        processor_t* processor = get_ph();
-        const uint32 feature = processor ? raw.get_canon_feature(*processor) : 0;
-
         // Collect non-void operands.
         for (int i = 0; i < UA_MAXOP; ++i) {
             const op_t& op = raw.ops[i];

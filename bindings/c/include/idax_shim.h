@@ -328,14 +328,6 @@ int idax_path_dirname(const char* path, char** out);
 int idax_path_is_directory(const char* path, int* out);
 
 /* ═══════════════════════════════════════════════════════════════════════════
- * Path (ida::path)
- * ═══════════════════════════════════════════════════════════════════════════ */
-
-int idax_path_basename(const char* path, char** out);
-int idax_path_dirname(const char* path, char** out);
-int idax_path_is_directory(const char* path, int* out);
-
-/* ═══════════════════════════════════════════════════════════════════════════
  * Undo (ida::undo)
  * ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -3013,8 +3005,6 @@ int idax_decompiled_retype_variable(void* handle, const char* variable_name,
 int idax_decompiled_retype_variable_by_index(void* handle, size_t variable_index,
                                               IdaxTypeHandle type_handle);
 int idax_decompiled_refresh(void* handle);
-int idax_decompiled_has_orphan_comments(void* handle, int* out_result);
-int idax_decompiled_remove_orphan_comments(void* handle, int* out_removed_count);
 int idax_decompiled_address_map(void* handle, uint64_t** out_line_numbers,
                                  uint64_t** out_addresses, size_t* out_count);
 void idax_decompiled_address_map_free(uint64_t* line_numbers, uint64_t* addresses);

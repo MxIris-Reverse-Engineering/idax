@@ -981,41 +981,6 @@ private:
     std::shared_ptr<Impl> impl_;
 };
 
-/// Serializable saved Hex-Rays local-variable user setting.
-struct LocalVariableUserSetting {
-    LocalVariableLocator locator;
-    std::string name;
-    std::string type_declaration;
-    std::string comment;
-};
-
-struct ReferencedTypeCollection {
-    std::vector<std::uint32_t> ordinals;
-    std::vector<ida::type::UsedMemberOffsets> used_offsets;
-};
-
-/// Opaque snapshot of saved Hex-Rays local-variable user settings.
-///
-/// The snapshot owns SDK-derived state privately; it can be captured from one
-/// decompiled function and restored later to the same function address.
-class LvarSnapshot {
-public:
-    LvarSnapshot();
-    ~LvarSnapshot();
-    LvarSnapshot(const LvarSnapshot&);
-    LvarSnapshot& operator=(const LvarSnapshot&);
-    LvarSnapshot(LvarSnapshot&&) noexcept;
-    LvarSnapshot& operator=(LvarSnapshot&&) noexcept;
-
-    [[nodiscard]] bool empty() const noexcept;
-    [[nodiscard]] std::size_t saved_variable_count() const noexcept;
-
-private:
-    friend class DecompiledFunction;
-    struct Impl;
-    std::shared_ptr<Impl> impl_;
-};
-
 /// Enumerate saved user local-variable settings for a function.
 Result<std::vector<LocalVariableUserSetting>>
 saved_user_lvar_settings(Address function_address);

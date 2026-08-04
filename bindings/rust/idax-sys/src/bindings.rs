@@ -7539,47 +7539,6 @@ unsafe extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 unsafe extern "C" {
-    pub fn idax_decompiled_capture_user_lvar_settings(
-        handle: IdaxDecompiledHandle,
-        out: *mut IdaxLvarSnapshotHandle,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
-    pub fn idax_decompiled_restore_user_lvar_settings(
-        handle: IdaxDecompiledHandle,
-        snapshot: IdaxLvarSnapshotHandle,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
-    pub fn idax_decompiled_set_variable_comment_by_name(
-        handle: IdaxDecompiledHandle,
-        variable_name: *const ::std::os::raw::c_char,
-        comment: *const ::std::os::raw::c_char,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
-    pub fn idax_decompiled_set_variable_comment_by_index(
-        handle: IdaxDecompiledHandle,
-        variable_index: usize,
-        comment: *const ::std::os::raw::c_char,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
-    pub fn idax_lvar_snapshot_free(snapshot: IdaxLvarSnapshotHandle);
-}
-unsafe extern "C" {
-    pub fn idax_lvar_snapshot_empty(
-        snapshot: IdaxLvarSnapshotHandle,
-        out: *mut ::std::os::raw::c_int,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
-    pub fn idax_lvar_snapshot_saved_variable_count(
-        snapshot: IdaxLvarSnapshotHandle,
-        out: *mut usize,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
     pub fn idax_decompiled_set_comment(
         handle: IdaxDecompiledHandle,
         ea: u64,
@@ -8940,36 +8899,6 @@ unsafe extern "C" {
     ) -> ::std::os::raw::c_int;
 }
 pub type IdaxUIWaitBoxHandle = *mut ::std::os::raw::c_void;
-unsafe extern "C" {
-    pub fn idax_ui_wait_box_create(
-        message: *const ::std::os::raw::c_char,
-        out: *mut IdaxUIWaitBoxHandle,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
-    pub fn idax_ui_wait_box_update(
-        handle: IdaxUIWaitBoxHandle,
-        message: *const ::std::os::raw::c_char,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
-    pub fn idax_ui_wait_box_cancelled(
-        handle: IdaxUIWaitBoxHandle,
-        out: *mut ::std::os::raw::c_int,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
-    pub fn idax_ui_wait_box_active(
-        handle: IdaxUIWaitBoxHandle,
-        out: *mut ::std::os::raw::c_int,
-    ) -> ::std::os::raw::c_int;
-}
-unsafe extern "C" {
-    pub fn idax_ui_wait_box_dismiss(handle: IdaxUIWaitBoxHandle);
-}
-unsafe extern "C" {
-    pub fn idax_ui_wait_box_free(handle: IdaxUIWaitBoxHandle);
-}
 unsafe extern "C" {
     pub fn idax_ui_wait_box_create(
         message: *const ::std::os::raw::c_char,
