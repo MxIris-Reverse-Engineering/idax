@@ -1012,52 +1012,6 @@ impl DecompiledFunction {
         error::int_to_status(ret, "set_variable_comment_by_index failed")
     }
 
-    pub fn set_comment(&self, ea: Address, text: &str, position: i32) -> Status {
-        let c = CString::new(text).map_err(|_| Error::validation("invalid text"))?;
-        let ret =
-            unsafe { idax_sys::idax_decompiled_capture_user_lvar_settings(self.handle, &mut out) };
-        if ret != 0 || out.is_null() {
-            Err(error::consume_last_error(
-                "capture_user_lvar_settings failed",
-            ))
-        } else {
-            Ok(LvarSnapshot { handle: out })
-        }
-    }
-
-    pub fn restore_user_lvar_settings(&self, snapshot: &LvarSnapshot) -> Status {
-        let ret = unsafe {
-            idax_sys::idax_decompiled_restore_user_lvar_settings(self.handle, snapshot.handle)
-        };
-        error::int_to_status(ret, "restore_user_lvar_settings failed")
-    }
-
-    pub fn set_variable_comment_by_name(&self, variable_name: &str, comment: &str) -> Status {
-        let c_name =
-            CString::new(variable_name).map_err(|_| Error::validation("invalid variable name"))?;
-        let c_comment = CString::new(comment).map_err(|_| Error::validation("invalid comment"))?;
-        let ret = unsafe {
-            idax_sys::idax_decompiled_set_variable_comment_by_name(
-                self.handle,
-                c_name.as_ptr(),
-                c_comment.as_ptr(),
-            )
-        };
-        error::int_to_status(ret, "set_variable_comment_by_name failed")
-    }
-
-    pub fn set_variable_comment_by_index(&self, variable_index: usize, comment: &str) -> Status {
-        let c_comment = CString::new(comment).map_err(|_| Error::validation("invalid comment"))?;
-        let ret = unsafe {
-            idax_sys::idax_decompiled_set_variable_comment_by_index(
-                self.handle,
-                variable_index,
-                c_comment.as_ptr(),
-            )
-        };
-        error::int_to_status(ret, "set_variable_comment_by_index failed")
-    }
-
     pub fn set_comment(&self, ea: Address, text: &str, position: CommentPosition) -> Status {
         let c = CString::new(text).map_err(|_| Error::validation("invalid text"))?;
         let raw_position = position.to_raw()?;
