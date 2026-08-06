@@ -1,0 +1,46 @@
+<!-- Fork-local records. See .agents/fork/README.md. -->
+
+# Knowledge Base (fork)
+
+Entries this fork added to `.agents/knowledge_base.md`, moved here so that file can track
+upstream byte for byte. Numbering is whatever it was before the move; it is
+independent of upstream's, which is exactly why these live in a separate file
+— upstream's Phase 23 is an ida-trida port, ours was the Swift dyld cache
+tool, and both had claimed `P23.1`.
+
+---
+
+### 35.23. C++ Public API Audit Discipline Before Binding Extension [F365]
+Before designing new C++ public API to satisfy a binding gap, re-read the existing accessor surface of the relevant value type. `ida::instruction::Operand` already exposed processor-marked `is_read()` / `is_written()` (backed by `CF_USE<n>` / `CF_CHG<n>` feature bits in `InstructionAccess::populate`) — the Swift binding gap was solely in shim/`IdaxOperand` and the Swift converter, not in the C++ layer. Skipping this audit step risks duplicating C++ work that already exists and, worse, designing a parallel field that drifts from the canonical accessor.
+### 35.24. Cross-Architecture Branch Condition Classification via Mnemonic Parsing [F366]
+A semantic `BranchCondition` enum can be populated from the rendered mnemonic alone, covering ARM64 (`B.EQ`/`B.NE`/`CBZ`/`TBZ`), ARM32 (`BEQ`/`BNE`), and x86 (`JE`/`JNE`/`JA`/`JBE`/`JCXZ`/`LOOP*`) families through `parse_branch_condition_from_mnemonic` (`src/instruction.cpp`). This avoids pulling in processor-specific SDK headers (`arm.hpp`, `intel.hpp`, etc.) and avoids decoding processor-private fields like ARM64 `insn_t.auxpref`. IDA's `print_insn_mnem` output is the contract — wrapper-side mnemonic parsing trades a small portability tax (new mnemonic patterns from future processor modules need an entry in the parser) for staying inside the opaque-boundary architecture.
+### 35.25. Visitor-Scoped Thread-Local Sidecar for Handle-Only ABIs [F367]
+When a C++ value type carries enrichment data via a shared pointer (e.g. `ExpressionView::parents_`) but the C ABI represents it as a bare `void* raw_handle()`, attribute accessors invoked after the view's destruction cannot reconstruct the enrichment data by themselves. The robust pattern that preserves the single-pointer ABI is: (1) inside each visitor callback, record `(raw_handle(), enrichment_value)` into a per-visitor `unordered_map`; (2) expose the active map via a `thread_local` pointer set on visit entry, restored to the previous value on exit (RAII scope) so re-entrant visits compose; (3) accessors look up the map and return a "has_value = 0" sentinel when called outside a visitor callback. This matches the existing "valid only during visitor callback" handle contract and avoids requiring callers to thread additional state through the FFI.
+### 35.26. Shared C ABI Headers Must Have a Single Source [F368]
+Maintaining the shim's C ABI header as two parallel copies (one per binding) silently drifts. The reliable pattern is to keep exactly one canonical declaration file at a neutral location (`bindings/c/include/idax_shim.h`), referenced directly by every binding's build system. Where a packaging system forces a copy under a target-local path (SPM's `publicHeadersPath` is the case in point), keep that copy to a one-line thin re-export and route the actual packaging step (XCFramework `Headers/`) at the central file so external consumers never see the re-export layer.
+### 35.27. SE-0447 `__counted_by` Attributes Are Type-Identity Participants on Apple Clang 21+ [F369]
+On Apple Clang 21+, `__counted_by(len)` resolves via `<ptrcheck.h>` to a real `__attribute__((__counted_by__(N)))` rather than a no-op macro. That attribute participates in function-type identity, so a declaration like `int f(const uint8_t* __counted_by(len) data __noescape, size_t len)` and a definition like `int f(const uint8_t* data, size_t len)` are treated as conflicting types and the build fails. The reliable pattern is to repeat the same annotations on every annotated function's definition in `idax_shim.cpp`; on non-Apple toolchains the attributes degrade to no-op macros (via the central header's fallback `#define __counted_by(N)`), so the same source compiles cleanly everywhere. This preserves Swift's `Span<T>` overload synthesis (which depends on the real attributes) while making the C++ shim build pass on every platform.
+### 35.28. SPM Public Header Path Containment Constraint [F370]
+Swift Package Manager requires every `publicHeadersPath` to be a subdirectory of the target's `path`. A target cannot expose a header that physically lives outside the source tree. When the canonical source of truth for a header lives at a shared location across language bindings, the Swift target needs at least one local `.h` so SPM can generate the module map. The lightest-touch pattern is a one-line thin re-export header (`#include "../../../../c/include/idax_shim.h"`) that documents the canonical location in a comment and exists only to satisfy SPM. The XCFramework packaging script must read the central file directly (not the re-export) so consumer-mode `Headers/` carries the full content, not the indirection.
+### 35.29. FetchContent SDK checkout 存在未跟踪生成文件时应隔离 build [F371]
+复用的 checkout 含有 `src/cmake/idasdkConfig.cmake`、`src/cmake/idasdkConfigVersion.cmake` 等未跟踪生成文件时，ida-sdk FetchContent update 可能在 CMake 重新生成期间失败；Git 会在编译开始前拒绝 detach 或切换 revision。不要擅自清理共享 checkout。应创建全新 build directory，并将 `IDASDK` 指向现有 SDK source tree，以保留 checkout 并跳过 FetchContent update/rebase。
+### 35.30. Database save wrapper 必须保留 `save_database` 的失败与输出路径语义 [F372]
+IDA `save_database` 返回 `bool` 并接受可选的新输出路径。丢弃结果会把 filesystem、permission 或 serialization 失败误报为成功。`ida::database::save()` 与 `save_to(output_database_path)` 都必须检查返回值并把失败映射为 `Error::sdk`；各 binding 应统一经过这些已检查的 wrapper，而不是独立调用 SDK。
+### 35.31. Raw dyld cache 打开时必须在模块枚举前获得第一个 image 完整路径 [F373，已由 F375 扩展]
+raw cache loader 在 `Database.open` 期间消费 `IDA_DYLD_CACHE_MODULE`，而无参数 `DyldCache.listModules()` 从已经打开的数据库取得 cache path。F375 新增 `list_modules(cache_path)` / `DyldCache.listModules(in:)` 后，headless 工具可以在 open 前按 name 解析首个完整 image path，再以 `IDA_DYLD_CACHE_DEPTH=0` 设置环境并加载其余 image。
+### 35.32. 自定义 Node native build 环境需要拆分依赖安装与 lifecycle [F374]
+`npm ci` 默认运行 `install` lifecycle，而本项目的 lifecycle 会立刻调用 `cmake-js`。当 native build 依赖显式 `IDADIR`、`IDASDK` 或 `IDAX_BUILD_DIR` 时，安装阶段可能在这些路径准备完成前失败。可复现的验证顺序是先执行 `npm ci --ignore-scripts`，再携带完整环境显式执行 `npm run rebuild`，最后运行 `npm test`。
+### 35.33. Image name selector 需要 pre-open dyld cache file enumeration [F375]
+首个 dyld cache image 的完整路径必须在 `Database.open` 读取 `IDA_DYLD_CACHE_MODULE` 前确定；依赖当前 database input path 的无参数 `list_modules()` 无法支持 name-only bootstrap。稳定设计是复用同一 cache header parser 新增 `list_modules(cache_path)`，通过 C ABI 和 Swift 暴露，然后按每个 image path 最后一个 component 去除最后一层 extension 后进行精确 name matching。未匹配应返回明确错误；同名多路径按 cache enumeration order 选择第一条，其他同名 image 通过 `--image-path` 指定。
+### 35.34. Derived image name 不是 cache 内的唯一键 [F376]
+按 image path 最后一个 component 去除 extension 得到的 name 可能重复。macOS 26.5.2 cache 中，`SwiftUI` 同时对应主 macOS framework、iOSSupport framework 和 Accessibility bundle。CLI 应保留 `list_modules(cache_path)` 返回顺序并为 `--image-name` 选择第一条，以覆盖最常见的主 cache image；用户需要非首条同名 image 时必须使用完整 `--image-path`。
+### 35.35. SwiftPM binary framework executable 的用户级安装布局 [F377]
+SwiftPM consumer build 会把 binary framework target 复制到 release products directory，并让 executable 以 `@rpath/CIDAX.framework/CIDAX` 引用它；当前 product 同时带有 `@loader_path` rpath。因此可移植安装必须保留 executable 与 `CIDAX.framework` 的相对同目录关系。推荐把两者一起部署到 `<prefix>/libexec/idax-dyld-cache-database-creator/`，再从 `<prefix>/bin` 的 launcher 转发参数并 `exec` 真实 executable。该布局比只复制 executable 完整，也避免 `install_name_tool` 修改与后续 ad-hoc signing。
+### 35.36. IDA 9.4 DSC 应使用 public service backend [F378]
+IDA 9.4 `dscu.h` 已公开 `get_dscu_svc()`、typed image query、`region_info_t`、`dscu_load_request_t`、atomic `load_regions` 与逐类 loaded-state query。IDAX 应在 `IDA_SDK_VERSION >= 940` 使用这一 supported surface，并用 request 内容与 service query 双重验证成功；9.3 才保留 private netnode/numeric-mode compatibility backend。把 9.3 mode numbers 直接沿用到 9.4 不再是可维护 contract。
+### 35.37. IDA SDK 9.3 与 9.4 使用不同 CMake discovery layout [F379]
+9.3 SDK 可通过 checkout root `bootstrap.cmake` 引入 ida-cmake；9.4 SDK 移除该入口并提供 `src/cmake/idasdkConfig.cmake`，unpacked source root 也可能直接暴露 `cmake/idasdkConfig.cmake`。Root configure 应按存在性把 config directory 加入 `CMAKE_PREFIX_PATH`，再由既有 `find_package(idasdk REQUIRED)` 解析；只在 legacy bootstrap 实际存在时 include，才能让一个 source tree 同时支持两代 SDK。
+### 35.38. IDA SDK data stub 必须在 dynamic framework 内保持 hidden [F380]
+为 `-undefined dynamic_lookup` framework 提供 null `callui` / `dbg` / `under_debugger` definitions 时，symbol visibility 是 runtime correctness 条件。若这些 symbols exported，IDA 9.4 加载 `_ida_dscu.so` 时可能优先绑定 framework stub 而不是真实 libida global，随后通过 null call gateway 跳到 address zero。使用 hidden visibility 可满足 framework 自身引用但阻止跨-image interposition；验证应检查 `nm` 中 symbol 为 local，并真实执行 `init_library` 与 DSC open。
+### 35.39. Cache-wide data 是 IDA 9.4 独立 region 类型 [F381]
+`rt_cache_data` 表示 cache 全局命名数据，例如 linkedit subcache mapping；它拥有独立 request vector 与 loaded-state query，不等同于 `rt_unknown`。C++ `load_cache_data`、Swift `DyldCache.loadCacheData` 与 CLI `--load-cache-data` 应保持该语义。IDA SDK 9.3 没有 supported equivalent，调用应返回 Unsupported。macOS 26.5.2 real-cache validation 加载 6 个 regions 并保存成功。

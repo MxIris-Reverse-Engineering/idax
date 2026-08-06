@@ -30,10 +30,6 @@ Current overall phase status:
 - Phase 17: ~100% (Consolidated per-port gap audits into `docs/port_gap_audit_examples.md`, removed old per-port audit files, synchronized README/api/quickstart/coverage-matrix references, and pruned resolved entries from `.agents/active_work.md`)
 - Phase 18: ~100% (Scenario-driven documentation remediation complete: all 10 evaluated practical-use-case docs delivered, cross-cutting API-surface selection guide and scenario acceptance checklist mapping added, cookbook/traversal docs rebalanced to C++-first default presentation, and case-10 safety/perf guidance reframed as wrapper-vs-raw-SDK)
 - Phase 19: 100% (examples-to-bindings continuation: Node tool-style ports added for `idalib_dump`/`idalib_lumina`/`ida2py`; Rust standalone adaptation set expanded with procmod + plugin-style standalone flows including `ida_names_port_plugin`, `qtform_renderer_plugin`, `driverbuddy_port_plugin`, and `abyss_port_plugin`; `jbc_full_loader` rewritten to actively mutate database layout instead of just printing text; TypeScript + Cargo example checks passing; Node addon runtime linkage repaired via rebuild with correct IDA install path; runtime matrix passes for Node tool examples and expanded Rust adaptation set including JBC rows via synthetic fixture validation; ported UI-constrained `idapcode` and `lifter` analysis slices to headless examples)
-- Phase 20: ~75% (real-IDA CI hardening in progress: deterministic installer resolution + macOS `IDADIR` normalization landed; Node example argv contract fixed; Windows Node import-library fallback hardened; workflow now uses Windows-native shells/runtime path propagation for Rust/Node example execution to avoid Git-Bash linker collisions and missing-DLL runtime failures)
-- Phase 21: 100% (example loader port continuation: completed `sep_firmware_loader.cpp` as a full-functionality idax loader port of the Binary Ninja SEP firmware plugin, covering SEP firmware detection, module-table parsing, Mach-O/raw module mapping, shared-library slide handling, header/load-command annotations, firmware type definitions/application, pointer rewrite passes, entry registration, symbol import, and example build/docs wiring)
-- Phase 22: ~99% (ida-cdump parity closure in progress: wait-box UI, multiline text, typed-form C++ bindings/FormBuilder plus fixed-shape Node/Rust typed-form entrypoints, optional Qt clipboard helpers with Node/Rust wrappers and an IDA-compatible `QT_NAMESPACE=QT` build gate, IDB path, portable path helpers, Hex-Rays popup-population events, scoped Hex-Rays ownership, Local Types action-context type references, lvar/prototype metadata helpers, read-only ctree migration helpers, bulk local type declaration import, host-gated runtime harness and runner script including Hex-Rays scoped-session runtime evidence, compact parity probe example, Qt example build bridge, Node native build/runtime validation, and Rust high-level no-run validation are implemented; the updated remaining queue is interactive modal form and Qt clipboard evidence)
-- Phase 23: 100%（Swift dyld shared cache database 命令行工具、显式输出路径保存、binding parity、测试、打包、安装、IDA 9.4 DSC service adaptation 与文档均已完成）
 - Phase 20: 100% (real-IDA CI hardening complete: deterministic installer resolution, cross-platform SDK/runtime normalization, Node decompiler teardown safety, Windows Node/Rust link and runtime hardening, stable fixture-IDB execution, and full green `Bindings CI`/`Validation Matrix`/`Integrations CI` evidence)
 - Phase 21: 100% (example loader port continuation: completed `sep_firmware_loader.cpp` as a full-functionality idax loader port of the Binary Ninja SEP firmware plugin, covering SEP firmware detection, module-table parsing, Mach-O/raw module mapping, shared-library slide handling, header/load-command annotations, firmware type definitions/application, pointer rewrite passes, entry registration, symbol import, and example build/docs wiring)
 - Phase 22: ~99% (ida-cdump parity closure in progress: wait-box UI, multiline text, typed-form C++ bindings/FormBuilder plus fixed-shape Node/Rust typed-form entrypoints, optional Qt clipboard helpers with Node/Rust wrappers and an IDA-compatible `QT_NAMESPACE=QT` build gate, IDB path, portable path helpers, Hex-Rays popup-population events, scoped Hex-Rays ownership, Local Types action-context type references, lvar/prototype metadata helpers, read-only ctree migration helpers, bulk local type declaration import, host-gated runtime harness and runner script including Hex-Rays scoped-session runtime evidence, compact parity probe example, Qt example build bridge, Node native build/runtime validation, and Rust high-level no-run validation are implemented; the updated remaining queue is interactive modal form and Qt clipboard evidence)
@@ -91,7 +87,6 @@ Current overall phase status:
 
 ### Phase 21 TODO Action Items (Example Loader Port Continuation)
 
-- [x] P21.1 Port `/Users/int/Downloads/sep-binja-main` SEP firmware Binary Ninja loader into a native idax example loader.
 - [x] P21.1 Port `<upstream-source>/sep-binja-main` SEP firmware Binary Ninja loader into a native idax example loader.
 - [x] P21.2 Wire the new loader into `examples/CMakeLists.txt` and document it in `examples/README.md`.
 - [x] P21.3 Validate the new example loader builds cleanly as `idax_sep_firmware_loader`.
@@ -104,7 +99,6 @@ Current overall phase status:
 - [x] P20.2 Avoid Windows debug CRT link failures in Rust bindings workflow by building/running examples in `--release`.
 - [x] P20.3 Harden Node Windows linkage discovery so MSVC import libs are resolved from `IDASDK` even when `IDADIR` is present.
 - [x] P20.4 Fix Windows workflow shell/runtime routing so Rust uses MSVC `link.exe` (not `/usr/bin/link`) and examples resolve IDA DLLs via `PATH`.
-- [~] P20.5 Re-run `Bindings CI` matrix and close residual runtime/linking regressions (current focus: validate Node macOS decompiler-wrapper pre-close disposal for `complexity_metrics` exit segfaults; verify Windows Rust runtime hardening after link fixes: minimal init argv, isolated `IDAUSR`, trace toggles (`IDAX_RUST_EXAMPLE_TRACE=1`), fixture-IDB input (avoid raw PE loader path), and build+direct-exec workflow for improved failure attribution; keep `Validation Matrix` link-safe after the loader bridge export change by providing a non-loader fallback for `idax_loader_bridge_init` while preserving real loader-module `LDSC` exports; normalize bindings-side SDK library discovery so `IDASDK=/.../ida-sdk/src` still resolves platform import libs/stubs from the checkout root or installed `IDADIR`; and account for current Windows SDK layout using `x64_win_64` / `x64_win_64_s` while restricting Rust integration execution to the stable macOS/Windows paths in `Bindings CI`).
 - [x] P20.5 Re-run `Bindings CI` matrix and close residual runtime/linking regressions. (`Bindings CI`, `Validation Matrix`, and `Integrations CI` all passed for `fe028da7163d77519262f95762edd4b8564806dc` on 2026-05-31.)
 - [x] P20.6 Close `ida::database::set_address_bitness` parity across C++ API surface checks, Node/Rust bindings, and docs/agent catalogs.
 - [x] P20.7 Close `MicrocodeContext` introspection parity across Node/Rust bindings and documentation/catalog surfaces.
@@ -126,16 +120,6 @@ Current overall phase status:
 
 ---
 
-### Phase 23 TODO Action Items (Swift Dyld Cache Database Creator)
-
-- [x] P23.1 Add explicit output-path database saving to the C++ API, central C ABI, and Swift/Node/Rust bindings.
-- [x] P23.2 Add a `swift-argument-parser` executable that loads one or more requested dyld shared cache images plus optional header, branch-island, branch-mapping, global-offset-table, and gap regions.
-- [x] P23.3 Add deterministic output naming, overwrite protection, argument validation, and focused unit coverage.
-- [x] P23.4 Rebuild the committed `CIDAX.xcframework` and validate the command against a real dyld shared cache fixture.
-- [x] P23.5 同步公开文档与分布式 `.agents/` protocol 记录。
-- [x] P23.6 将旧 `--image` 替换为支持列表输入的 `--image-name` / `--image-path`，并新增 database 打开前的 cache image name resolution。
-- [x] P23.7 新增当前用户安装脚本，将 release executable 与 `CIDAX.framework` 一并部署，并提供 `PATH` 内可直接调用的 launcher。
-- [x] P23.8 适配 IDA 9.4 public `dscu_svc_t`、新增 cache-data region loading、保留 IDA 9.3 source compatibility，并重建验证 9.4 `CIDAX.xcframework`。
 ### Phase 23 TODO Action Items (ida-trida Port Parity)
 
 - [x] P23.1 Port `<ida-trida-root>` build/plugin shell to consume `idax::idax` instead of vendored ida-cmake and raw SDK UI/action/clipboard helpers.
@@ -578,12 +562,3 @@ Current overall phase status:
 - [x] P71.4 Add malformed-input plus isolated exact-IDA 9.4 scalar/object/evaluate/compile/call/snippet/script evidence, synchronize docs/protocol records, run complete validation and self-red-team, exact-stage review, push, live-audit all release jobs/logs, and remove Phase 71 from active work.
 
 ---
-
-## Upstream Relationship
-
-- [x] U1 Establish shared ancestry with `19h/idax` by replaying post-February work onto the matching upstream commit, then merge normally.
-- [x] U2 Verify the merge across every layer: 42/42 CTest including all integration suites, Rust 173, Node 277, Swift 64, plus a clean-clone build.
-- [x] U3 Offer the Swift bindings upstream as a draft pull request with the two domains they depend on.
-- [ ] U4 Respond to upstream review; mirror any restructuring back onto the merge branch before publishing it.
-- [ ] U5 Publish the merge branch (force-push, since 87 commits were replayed onto a new base — verify with `git cherry` first).
-

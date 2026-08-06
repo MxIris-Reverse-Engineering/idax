@@ -1,0 +1,45 @@
+# Merge behaviour for upstream syncs.
+#
+# Background: this fork tracks 19h/idax. See docs/UpstreamSyncPlaybook.md for
+# the full procedure; scripts/sync_upstream.sh applies it.
+
+# ── Generated artifacts ──────────────────────────────────────────────────
+# bindings.rs is bindgen output, checked in only as an offline fallback for
+# docs.rs. Merging it textually is meaningless and produces duplicate extern
+# blocks; keep our side and let the sync script regenerate it from the merged
+# C ABI header.
+#
+# Requires: git config merge.ours.driver true   (sync_upstream.sh sets this)
+bindings/rust/idax-sys/src/bindings.rs merge=ours -diff
+
+# ── Append-only ledgers ──────────────────────────────────────────────────
+# These files only ever grow, so union keeps both sides' entries instead of
+# forcing a manual resolution. Union is safe here precisely because nobody
+# edits or deletes existing entries.
+#
+# It is NOT safe for prose or tables — see the warning below.
+.agents/*.md merge=union
+
+# ── Prose and tables: deliberately NOT union ─────────────────────────────
+# README.md, docs/*.md and the binding READMEs get edited and deleted, not
+# just appended to. Union silently keeps both sides of every hunk, which:
+#   - leaves a current table row next to a months-stale one, and
+#   - resurrects content the other side deliberately removed.
+# The August 2026 sync hit both: seven duplicated README domain rows, and
+# five documents restored with upstream's scrubbed personal paths.
+# Let these conflict and resolve them by hand;
+# scripts/check_merge_residue.py catches leftovers either way.
+
+# ── Binaries ─────────────────────────────────────────────────────────────
+# IDA databases and packaged frameworks have no meaningful textual merge.
+*.i64 binary
+*.id0 binary
+*.id1 binary
+*.id2 binary
+*.nam binary
+*.til binary
+bindings/swift/Frameworks/** binary
+
+# ── Line endings ─────────────────────────────────────────────────────────
+*.sh text eol=lf
+*.py text eol=lf
