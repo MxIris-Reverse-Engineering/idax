@@ -75,3 +75,8 @@ tool, and both had claimed `P23.1`.
   - 6.2.3. **Known gaps in the PR:** the Node addon carries only the two files it needed, and the `build-swift` CI job cannot run on the PR itself because forks cannot read `HCLI_KEY`. The job's command sequence was verified locally against SDK 9.4.
   - 6.2.4. **If declined:** nothing blocks continuing on the merge branch; the fork keeps the xcframework, the dyld cache CLI tool, and its own domain layout.
   - 6.2.5. **Status:** Awaiting upstream.
+
+- **F3. Next Upstream Sync**
+  - F3.1. **Action:** Run `scripts/sync_upstream.sh` monthly. The August 2026 sync cost a day because the gap had grown to four months and ~250 upstream commits.
+  - F3.2. **Remaining overlap:** 29 files still coincide with upstream's change surface — 9 in the C++ core, 6 Rust, 4 tests, and a handful of user-facing documents. These are genuine (both sides edit the same code) and can only be kept small by syncing often.
+  - F3.3. **Status:** Tooling in place; next sync is routine.
