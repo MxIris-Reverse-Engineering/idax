@@ -14,6 +14,41 @@ let libDir: String = {
     return "\(packageDir)/bindings/swift/.build-libs"
 }()
 
+// libidax.a calls into the IDA runtime, so anything that links — the example
+// executable, the test bundle, a downstream consumer — needs libida/libidalib
+// on the link line. Mirrors the discovery order in
+// bindings/rust/idax-sys/build.rs: $IDADIR first, then installed applications.
+//
+// Do not substitute `-undefined dynamic_lookup` for this. That only appears to
+// work while the archive happens to reference nothing requiring eager binding;
+// upstream's IDC script domain (script.cpp, added 2026-07) references
+// eval_expr, and the shim is a single translation unit that pulls it in
+// unconditionally. And do not reach for DYLD_INSERT_LIBRARIES either — the
+// symbol resolves, but idalib never runs its own initialisation and the first
+// call into ida::database::init hits a null.
+let idaRuntimeDirectory: String? = {
+    let fileManager = FileManager.default
+    func containsRuntime(_ directory: String) -> Bool {
+        fileManager.fileExists(atPath: "\(directory)/libida.dylib")
+    }
+
+    if let directory = ProcessInfo.processInfo.environment["IDADIR"], containsRuntime(directory) {
+        return directory
+    }
+
+    let applications = (try? fileManager.contentsOfDirectory(atPath: "/Applications")) ?? []
+    return applications
+        .filter { $0.hasPrefix("IDA") && $0.hasSuffix(".app") }
+        .sorted()
+        .reversed()
+        .map { "/Applications/\($0)/Contents/MacOS" }
+        .first(where: containsRuntime)
+}()
+
+let idaRuntimeLinkerFlags: [String] = idaRuntimeDirectory.map { directory in
+    ["-L\(directory)", "-lida", "-lidalib", "-Xlinker", "-rpath", "-Xlinker", directory]
+} ?? []
+
 let cidaxTarget: Target = devMode
     ? .target(
         name: "CIDAX",
@@ -29,7 +64,7 @@ let cidaxTarget: Target = devMode
                 // libidax.a is C++; SPM links CIDAX as a C target and so does
                 // not pull in the C++ runtime on its own.
                 "-lc++",
-            ]),
+            ] + idaRuntimeLinkerFlags),
         ]
     )
     : .binaryTarget(
