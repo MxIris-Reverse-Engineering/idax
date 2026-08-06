@@ -173,6 +173,84 @@ What worked, and what to do if it recurs:
 Do not automate this. It depends on the two trees genuinely having been
 identical at the chosen point, which has to be checked rather than assumed.
 
+## After a re-alignment, dates lie
+
+The August 2026 re-alignment replayed 87 commits with `git rebase --onto`.
+Rebase preserves each commit's **author** date and assigns a new **committer**
+date, so on this branch:
+
+- author dates still span 2026-02-12 → 2026-07-17
+- committer dates are all 2026-08-04, for every one of the 87
+
+`git log`, `rev-list` and friends filter `--since` / `--before` by **committer**
+date. So a date-bounded lookup skips the entire replayed history and silently
+lands on upstream's line instead:
+
+```bash
+# Wrong: excludes all 87 replayed commits (committed 08-04), lands upstream
+git rev-list -1 --before="2026-07-16" HEAD
+
+# Right: locate topologically
+git show e9a8c3d^1:path/to/file    # our state just before the merge
+git show e9a8c3d^2:path/to/file    # upstream's state at the merge
+```
+
+Anything that displays author dates — `%ad`, GitHub's commit list — compounds
+it. `git log -S encoded_value_byte_offset` surfaces a commit dated 2026-07-14
+for a field that actually arrived on 08-04, because `6da2c0e` was authored in
+July and committed in August.
+
+A downstream consumer lost an afternoon to exactly this. Their session, verbatim:
+
+```bash
+$ BASE=$(git rev-list -1 --before="2026-07-16 15:05" HEAD)
+$ git log -1 --format='%h %s' $BASE
+710ea139 Implement Phase 53 Diaphora exact referent metadata     # upstream's line, not ours
+```
+
+`710ea139` already carries post-merge content, so diffing `IdaxOperand` against
+it showed nothing and they ruled out the struct that was actually crashing them.
+The diff also reported the header as a whole-file addition — not because the
+struct was new, but because the header used to live at a different path.
+
+Cross-checking the commit date does not rescue you either:
+
+```bash
+$ git log --format='%h author=%ad commit=%cd %s' --date=short \
+      -S encoded_value_byte_offset -- bindings/c/include/idax_shim.h \
+                                      bindings/rust/idax-sys/shim/idax_shim.h
+5bbc426 author=2026-07-14 commit=2026-07-14 feat: implement Phase 48 …
+```
+
+Both dates read July, which "proved" the fields predated their archive. That
+commit was upstream's and was never replayed, so its dates are untouched — but
+its *content* only reached this branch through the 08-04 merge. Dates describe
+when a commit was written, never when it arrived here.
+
+### A struct diff is not a layout diff
+
+The same investigation misread this hunk:
+
+```
+7a8
+>     int          branch_condition;
+```
+
+and concluded a field had been inserted at position 8, shifting everything after
+it. `branch_condition` is the **last** member of `IdaxInstruction`; appending and
+inserting produce identical-looking unified hunks. For an ABI question, print the
+whole struct from both sides and compare member order — the hunk alone cannot
+tell you where a field sits.
+
+Two further traps in the same area:
+
+- **The C ABI header moved.** It was `bindings/rust/idax-sys/shim/idax_shim.h`
+  until the merge, now `bindings/c/include/idax_shim.h`. `git log -S … --
+  <current path>` returns nothing for anything older; use `--follow`.
+- **The merge commit itself is not a baseline.** `e9a8c3d` has two parents and
+  carries content from both. For "what did we have before", use `e9a8c3d^1`
+  (= `80b6e63`); for "what did upstream have", `e9a8c3d^2`.
+
 ## Publishing after a re-alignment
 
 A rebase-based re-alignment rewrites history, so publishing needs a force-push.

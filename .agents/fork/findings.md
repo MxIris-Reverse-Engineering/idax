@@ -27,3 +27,44 @@ tool, and both had claimed `P23.1`.
 379. **IDA 9.4 SDK CMake entry point 已改变：** 9.3 checkout 通过 root `bootstrap.cmake` 引入 build helpers，而 9.4 checkout 提供 `src/cmake/idasdkConfig.cmake`，不再包含 root bootstrap。IDAX configure 必须先识别 config package layout，并只在存在时 include legacy bootstrap。
 380. **Dynamic framework 中 exported IDA data stub 会破坏 IDA 9.4 plugin loading：** `CIDAX.framework` 原先导出的 null `callui` / `dbg` / `under_debugger` 会被 dynamic loader 用来 interpose `_ida_dscu.so` 对 libida globals 的引用，导致 `init_library` 从空 call gateway 跳到 address zero。将这些 stub 标记 hidden 后仍可满足 framework 内部链接，同时 9.4 runtime plugin 会绑定真实 libida symbols，初始化和 DSC open 均恢复正常。
 381. **IDA 9.4 新增 `rt_cache_data`，且真实 macOS 26.5.2 cache 会返回多个 region：** public load request 为 cache-wide named data 提供独立 `cache_data` vector 与 `is_cache_data_loaded` verification。真实 AppKit database smoke test 加载 6 个 cache-data regions 并成功保存，因此该类型应作为明确 API/CLI option 暴露，而不是归入 unknown regions。
+
+- **F4. Rebase-replayed history makes every date-based lookup wrong.**
+  `git rebase --onto` preserves author dates and rewrites committer dates, so
+  all 87 commits replayed on 2026-08-04 carry author dates spanning 2026-02-12
+  → 2026-07-17 against a single committer date. `git log` / `rev-list` filter
+  `--since` / `--before` by committer date, so a date-bounded lookup skips the
+  entire replayed history and lands on upstream's line. Cross-checking the
+  commit date does not help for upstream commits that were never replayed:
+  their dates are untouched, yet their content only reached this branch through
+  the merge. Anchor topologically instead — `<merge>^1` for fork-side state,
+  `<merge>^2` for upstream-side. A downstream consumer misdiagnosed a crash for
+  an afternoon on this. Recorded in `docs/UpstreamSyncPlaybook.md` with the
+  worked example.
+
+- **F5. A unified diff hunk cannot tell you where a struct member sits.**
+  `7a8 > int branch_condition;` was read as an insertion at field position 8
+  shifting everything after it; it is in fact the last member of
+  `IdaxInstruction` and shifts nothing. Appending and inserting produce
+  identical-looking hunks. The real ABI break was two `int32_t` inserted into
+  `IdaxOperand` between `byte_width` and `register_name`, moving `register_name`
+  8 bytes later and turning it into a wild pointer for consumers holding a
+  pre-merge archive. For any ABI question, print both structs in full and
+  compare member order rather than reading the hunk.
+
+- **F6. The C shim is one translation unit, so every consumer links every domain.**
+  `libidax_shim.a` contains a single `idax_shim.o` referencing 47 `ida::script::*`
+  symbols, so static linking pulls in `script.cpp.o` and its `_eval_expr`
+  dependency whether or not the consumer touches any script API. This surfaced
+  as `dyld: symbol not found in flat namespace '_eval_expr'` in a headless Swift
+  consumer that had been linking with `-undefined dynamic_lookup` — which only
+  ever worked because the archive happened to reference nothing needing eager
+  binding. Upstream's shim has the same structure (also 47), so this is not
+  fork-introduced. Fixed at the link line rather than structurally: Package.swift
+  now resolves the IDA runtime and links `libida`/`libidalib` with an rpath.
+  Splitting the shim per domain remains the real fix.
+
+- **F7. DYLD_INSERT_LIBRARIES resolves the symbol and breaks initialisation.**
+  Preloading `libida.dylib` makes `_eval_expr` bind, but idalib never runs its
+  own initialisation, so the first call into `ida::database::init` dereferences
+  null. Bind at link time with an rpath; never paper over a missing symbol by
+  injecting the library at load time.
