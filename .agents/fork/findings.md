@@ -68,3 +68,35 @@ tool, and both had claimed `P23.1`.
   own initialisation, so the first call into `ida::database::init` dereferences
   null. Bind at link time with an rpath; never paper over a missing symbol by
   injecting the library at load time.
+
+- **F8. Two microcode decoders exist, and only one changed.**
+  `ida::decompiler` parses microcode through `parse_sdk_opcode` /
+  `parse_sdk_instruction`; `ida::microcode::snapshot` has its own decoder that
+  casts `insn.opcode` straight to an int (`src/microcode.cpp:312`) and never
+  calls either. The 2026-08-04 merge flipped the decompiler decoder's fallback
+  from `Error::unsupported` to `MicrocodeOpcode::Other` and added explicit
+  mappings for `m_call` / `m_icall` / `m_goto` / `m_ijmp` / `m_ret`, so
+  instructions that previously failed to decode now succeed — a behavioural
+  break that is simultaneously ABI-compatible, since both enums appended their
+  new values. Consumers of `ida::microcode::snapshot` observe none of it.
+  The APIs that do reach the changed parser: `generate_microcode`,
+  `MicrocodeContext::instruction_at_index`,
+  `MicrocodeContext::last_emitted_instruction`, and nested-operand parsing.
+  `decompile` is ctree-only and reaches none of it.
+
+- **F9. Sizing a change by diffstat answers the wrong question.**
+  A consumer was told to discard a measurement baseline on the strength of
+  +578/+299 lines in the files they consume plus a real behavioural break in
+  those files. Their re-run came back byte-identical because their calls never
+  reached the changed function. Establishing that took one grep for the caller.
+  Before telling anyone their baseline is void, trace from their entry point to
+  the change; "this file changed a lot" and "this consumer is affected" are
+  independent facts.
+
+- **F10. Text-pattern function location is unreliable in this codebase.**
+  Locating the function enclosing `src/decompiler.cpp:5412` with an awk pattern
+  for column-zero signatures ending in a brace returned `decompile()`. The line
+  belongs to `generate_microcode()`, whose return type sits on its own line. The
+  wrong answer named the one function not affected by the change under
+  investigation. Track brace depth or read the whole construct; this pairs with
+  F5 — tools that approximate structure return confident wrong answers.

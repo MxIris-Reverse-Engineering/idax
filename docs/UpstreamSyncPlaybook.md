@@ -227,6 +227,55 @@ commit was upstream's and was never replayed, so its dates are untouched — but
 its *content* only reached this branch through the 08-04 merge. Dates describe
 when a commit was written, never when it arrived here.
 
+### "How much changed" is the wrong question; "which API do they call" is the right one
+
+A consumer asked whether the merge was additive for microcode/ctree/instruction
+users. The diff looked alarming — `src/decompiler.cpp` +578, `src/instruction.cpp`
++299 — and it contained a genuine behavioural break: `parse_sdk_opcode`'s
+fallback flipped from `Error::unsupported` to `MicrocodeOpcode::Other`, and
+`m_call` / `m_goto` / `m_ret` gained explicit mappings. Instructions that used to
+fail to decode now succeed.
+
+On that basis they were told their measurement baseline was void, and re-ran a
+20-minute control. It came back byte-identical, because their code never reaches
+that function:
+
+```bash
+$ grep -rn parse_sdk_opcode src/ include/     # one caller, in decompiler.cpp
+$ grep -c parse_sdk_ src/microcode.cpp        # 0 — snapshot has its own decoder
+```
+
+`ida::microcode::snapshot` casts `insn.opcode` straight to an int; the parsing
+path belongs to `ida::decompiler`. Two microcode APIs, two decoders, one
+unaffected by the change.
+
+The lesson runs in both directions. Sizing a change by diffstat says nothing
+about whether a given consumer observes it, and neither does finding a real
+behavioural break — you have to establish that their calls reach it. That is one
+grep, and it is cheaper than either party assumed.
+
+For the record, the APIs that do reach the changed parser are
+`generate_microcode`, `MicrocodeContext::instruction_at_index`,
+`MicrocodeContext::last_emitted_instruction`, and nested-operand parsing.
+`decompile` is ctree-only and reaches none of it.
+
+### Text patterns will lie about which function encloses a line
+
+While tracing the above, `awk` matching "column-zero signature ending in a
+brace" reported line 5412 as belonging to `decompile()`. It belongs to
+`generate_microcode()`, which puts its return type on its own line:
+
+```cpp
+Result<MicrocodeFunction>
+generate_microcode(Address function_address,
+                   const MicrocodeGenerationOptions& options) {
+```
+
+The wrong answer named the one function that is *not* affected — it would have
+sent the consumer re-testing a clean path while missing the dirty one. Track
+brace depth, or read the whole construct; a one-line pattern cannot tell you
+what encloses what.
+
 ### A struct diff is not a layout diff
 
 The same investigation misread this hunk:
