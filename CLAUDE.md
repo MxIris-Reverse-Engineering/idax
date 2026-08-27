@@ -106,7 +106,7 @@ All fallible operations return `ida::Result<T>` (`std::expected<T, ida::Error>`)
 
 - **Rust** (`bindings/rust/`): Cargo workspace with `idax-sys` (raw FFI via C shim + bindgen) and `idax` (safe idiomatic layer). The C shim (`idax-sys/shim/`) uses thread-local error state. `build.rs` invokes CMake to build `libidax.a`, then `cc` for the shim, then `bindgen`.
 - **Node.js** (`bindings/node/`): Native addon via `cmake-js` + `nan`. 20 C++ bind files in `src/`, JS wrapper in `lib/index.js` with TypeScript declarations. Addresses are `BigInt`, errors throw `IdaxError`.
-- **Swift** (`bindings/swift/`): SPM package (Package.swift at repo root) with two targets — `CIDAX` (raw C shim module) and `IDAX` (safe Swift wrapper). Uses Swift 6.0 typed throws (`throws(IDAError)`). 21 namespace files mirror the C++ library. Dual-mode: consumer mode uses `CIDAX.xcframework` (binaryTarget), developer mode (`IDAX_DEV=1`) links pre-built `.a` files. IDA dylibs loaded at runtime via dlopen.
+- **Swift** (`bindings/swift/`): SPM package (Package.swift at repo root) with two targets — `CIDAX` (raw C shim module) and `IDAX` (safe Swift wrapper). Uses Swift 6.0 typed throws (`throws(IDAError)`). 21 namespace files mirror the C++ library. Dual-mode: consumer mode uses `CIDAX.xcframework` (binaryTarget), developer mode (`IDAX_DEV=1`) links pre-built `.a` files. Developer mode resolves the IDA runtime from `IDADIR` or installed applications and links `libida`/`libidalib` with an rpath.
 
 ### Testing Layers
 
@@ -119,7 +119,7 @@ All fallible operations return `ida::Result<T>` (`std::expected<T, ida::Error>`)
 
 Test fixture: `tests/fixtures/simple_appcall_linux64` (ELF64) with pre-analysed `.i64` database.
 
-macOS integration tests link against real IDA dylibs from `/Applications/IDA Professional 9.3.app/Contents/MacOS` (not SDK stubs) due to two-level namespace constraints.
+macOS integration tests link against real IDA dylibs from `/Applications/IDA Professional 9.4.app/Contents/MacOS` (not SDK stubs) due to two-level namespace constraints.
 
 ## Coding Conventions
 
@@ -132,7 +132,94 @@ macOS integration tests link against real IDA dylibs from `/Applications/IDA Pro
 
 ## Agent Knowledge Base
 
-The `.agents/` directory contains the distributed knowledge base for this project (architecture decisions, roadmap, findings, progress). The hub file is `agents.md` at the repo root. Consult `.agents/architecture.md` for design rationale, `.agents/roadmap.md` for phase status, and `.agents/decision_log.md` for past architectural decisions.
+`.agents/` is the distributed source of truth for this project's roadmap, progress,
+findings, and decisions. The upstream hub file is `agents.md` at the repo root; its
+operating rules are reproduced below, with the write destinations adjusted for this
+fork.
+
+### Upstream ledgers vs. fork records
+
+This repository is a fork of [`19h/idax`](https://github.com/19h/idax). `agents.md` and
+every `.agents/*.md` one level up track upstream **byte for byte and must not be edited
+here**. Appending to them is what made all seven ledgers conflict on every sync, and what
+let two unrelated tasks share the number `P23.1` (upstream's was an ida-trida port, this
+fork's was the Swift dyld cache tool).
+
+Fork records live in `.agents/fork/`, one mirror per upstream ledger. **New fork entries
+use an `F` prefix** (`F1`, `F2.3`, `FS1.4`) — upstream will never issue those, so a number
+stays unambiguous even if these records are merged back or offered upstream.
+
+Touch an upstream ledger only when the change is genuinely upstream's: fixing its typo, or
+preparing a pull request that has to follow its numbering. See `.agents/fork/README.md`
+for the split and `docs/UpstreamSyncPlaybook.md` for the sync procedure that depends on it.
+
+### File map
+
+| File | Contents | When to read | Fork counterpart (write here) |
+|---|---|---|---|
+| `agents.md` (repo root) | Upstream's rules, mission, locked decisions | Rarely — this section supersedes it for fork work | none (read-only) |
+| `.agents/knowledge_base.md` | Hierarchical findings/learnings KB (Section 12) | Checking known SDK behaviour | `.agents/fork/knowledge_base.md` |
+| `.agents/findings.md` | Raw findings log, referenced as `[FXXX]` | Tracing a KB entry to its evidence | `.agents/fork/findings.md` |
+| `.agents/decision_log.md` | Architectural decisions (Section 13) | Making a design decision | `.agents/fork/decision_log.md` |
+| `.agents/progress_ledger.md` | Detailed progress history (Section 15) | Logging completed work | `.agents/fork/progress_ledger.md` |
+| `.agents/active_work.md` | In-progress, queued, and blocked work only (Section 16) | Picking up work or checking status | `.agents/fork/active_work.md` |
+| `.agents/roadmap.md` | Phased TODO roadmap + progress snapshot (Sections 10-11) | Checking phase status | `.agents/fork/roadmap.md` |
+| `.agents/api_catalog.md` | Public API concept catalog (Section 17) | Implementing new APIs | `.agents/fork/api_catalog.md` |
+| `.agents/architecture.md` | Analysis recap, target architecture, domain mapping, build/test/doc strategy (Sections 4-9) | Designing a new domain | none — architecture is stable |
+| `.agents/interface_blueprint.md` | Detailed interface sketches (Section 21) | Implementing a specific namespace; the actual headers are authoritative | none |
+| `.agents/pain_points.md` | Legacy SDK friction catalog (Section 18) | Designing wrapper behaviour | none |
+| `.agents/naming_normalization.md` | Legacy-to-wrapper naming map (Section 19) | Naming new APIs | none |
+| `bindings/node/agents.md` | Exhaustive Node.js binding API reference written for agents | Working on or calling the Node bindings | none (upstream-tracked) |
+
+**Append-friendly convention.** Every file uses hierarchical numbered sections. To add an
+entry, read only the **tail** (~50 lines) of the target file to learn the current
+numbering, then append. Reading the whole file is unnecessary for most updates — several
+of these run to hundreds of thousands of bytes.
+
+### Mandatory update protocol
+
+No task is complete until the records are updated. This applies to parent TODOs, sub-TODOs,
+findings, decisions, blockers, and progress entries alike; a change that is not recorded is
+treated as work that did not happen.
+
+1. Update the task checkbox/status in `.agents/fork/roadmap.md` as soon as it changes.
+2. Add a progress ledger entry with scope in `.agents/fork/progress_ledger.md`.
+3. If a technical insight was discovered, add it to **both** `.agents/fork/findings.md` and
+   `.agents/fork/knowledge_base.md`.
+4. If architecture changed, record it with rationale in `.agents/fork/decision_log.md`.
+5. If blocked, add or update `.agents/fork/active_work.md` with impact, mitigation, and the
+   next action.
+6. When work completes or is retired, remove it from `.agents/fork/active_work.md` in the
+   same update that records the completion. `active_work.md` holds only active, queued, or
+   blocked work; finished work belongs in the progress ledger.
+
+Two transitions are only half-valid without their pair: a TODO status change requires a
+ledger entry, and a discovery requires both a knowledge base entry and a ledger entry.
+
+**Never commit identity-bearing absolute host paths.** Use semantic tokens — `<repo-root>`,
+`<ida-sdk-root>`, `<ida-runtime>`, `<upstream-source>` — in documentation and evidence, and
+audit both tracked text and binary strings before pushing.
+
+### Locked technical decisions
+
+Explicitly chosen and currently locked; changing any of them requires a decision log entry:
+
+1. **C++23** as the language standard.
+2. **Hybrid packaging** — header-only for thin wrappers and utility aliases, compiled
+   library for complex behaviour, stateful adapters, iterators, and lifecycle management.
+3. **Fully opaque public API** — no `.raw()` escape hatches, no SDK structs or pointers in
+   the public interface.
+4. **`std::string`** as the public string type; `std::string_view` is allowed for input
+   where it is safe.
+5. **Full scope** — plugins, loaders, and processor modules.
+
+Engineering preferences to honour during implementation:
+
+- Prefer straightforward, portable implementations.
+- Avoid compiler-specific intrinsics unless unavoidable.
+- Avoid heavy bit-level micro-optimisation that reduces readability.
+- Prefer SDK helpers (including `pro.h` helpers) where they improve portability or clarity.
+- For batch analysis and testing workflows, prefer `idump <binary>` over `idat`.
 
 ## CI/CD
 
