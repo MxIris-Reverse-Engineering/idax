@@ -100,3 +100,10 @@ tool, and both had claimed `P23.1`.
   wrong answer named the one function not affected by the change under
   investigation. Track brace depth or read the whole construct; this pairs with
   F5 — tools that approximate structure return confident wrong answers.
+
+- **F11. 同一种公开值存在两条快照转换路径时，字段修复必须横向核对。**
+  `ida::decompiler::make_local_variable` 与 `ida::microcode::snapshot` 都会把
+  SDK 的 `lvar_t` 转成公开的 `LocalVariable`，但前者一直填写
+  `stack_offset`，后者却让它保持默认值 `-1`。消费方因此会误以为
+  `.lvars` maturity 没有栈槽信息。修复一条路径后，应搜索同一输出类型
+  的全部构造点，并用真实 database 的 integration test 直接覆盖每条路径。

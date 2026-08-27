@@ -680,6 +680,45 @@ void test_owned_microcode_graph(ida::Address fn_ea) {
         CHECK(bad_address.error().category == ida::ErrorCategory::Validation);
 }
 
+void test_microcode_snapshot_stack_offsets() {
+    std::cout << "--- microcode snapshot stack offsets ---\n";
+
+    auto availability = ida::decompiler::available();
+    if (!availability || !*availability) return;
+
+    ida::Address mainFunctionAddress = ida::BadAddress;
+    for (auto currentFunction : ida::function::all()) {
+        if (currentFunction.name() == "main") {
+            mainFunctionAddress = currentFunction.start();
+            break;
+        }
+    }
+    CHECK(mainFunctionAddress != ida::BadAddress);
+    if (mainFunctionAddress == ida::BadAddress) return;
+
+    auto functionSnapshot = ida::microcode::snapshot(
+        mainFunctionAddress,
+        ida::microcode::Maturity::Lvars);
+    CHECK_HAS_VALUE(functionSnapshot);
+    if (!functionSnapshot) return;
+
+    auto localVariables = functionSnapshot->local_variables();
+    CHECK_HAS_VALUE(localVariables);
+    if (!localVariables) return;
+
+    std::size_t stackVariableCount = 0;
+    for (const auto& localVariable : *localVariables) {
+        if (localVariable.storage
+            != ida::decompiler::VariableStorage::Stack) {
+            continue;
+        }
+
+        ++stackVariableCount;
+        CHECK(localVariable.stack_offset >= 0);
+    }
+    CHECK(stackVariableCount > 0);
+}
+
 // ---------------------------------------------------------------------------
 // Post-phase parity: maturity subscription + cache invalidation helpers
 // ---------------------------------------------------------------------------
@@ -2906,6 +2945,7 @@ int main(int argc, char* argv[]) {
         test_address_mapping(fn_ea);
         test_microcode_output(fn_ea);
         test_owned_microcode_graph(fn_ea);
+        test_microcode_snapshot_stack_offsets();
         test_maturity_subscription_and_dirty(fn_ea);
         test_microcode_filter_registration(fn_ea);
         test_decompiler_comments(fn_ea);

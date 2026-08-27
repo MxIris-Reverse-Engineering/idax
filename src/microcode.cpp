@@ -508,6 +508,14 @@ Result<FunctionSnapshot> snapshot(Address function_address, Maturity maturity) {
         } else {
             lv.storage = ida::decompiler::VariableStorage::Unknown;
         }
+        // `get_stkoff()` returns the stack-frame vd-offset for stack variables
+        // and a negative value (-1) for everything else. It shares its frame
+        // coordinate system with `mop_S::off` above, so a consumer can match a
+        // stack lvar at this maturity against a raw `SP + offset` computed at an
+        // earlier one (e.g. recovering a swiftself receiver whose x20 setup was
+        // dead-code-eliminated by MMAT_LVARS). Mirrors `make_local_variable` on
+        // the ctree side, which has always reported this.
+        lv.stack_offset = static_cast<std::int64_t>(v.get_stkoff());
         impl->local_variables.push_back(std::move(lv));
     }
 

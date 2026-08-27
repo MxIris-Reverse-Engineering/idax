@@ -26,3 +26,7 @@ tool, and both had claimed `P23.1`.
 - [x] U3 Offer the Swift bindings upstream as a draft pull request with the two domains they depend on.
 - [ ] U4 Respond to upstream review; mirror any restructuring back onto the merge branch before publishing it.
 - [ ] U5 Publish the merge branch (force-push, since 87 commits were replayed onto a new base — verify with `git cherry` first).
+
+## Runtime Correctness
+
+- [x] F4 Populate stack offsets in `ida::microcode::snapshot`, add a runtime regression test, rebuild the Swift development archives, and verify the downstream Swift decompiler adapter.

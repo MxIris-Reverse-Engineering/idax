@@ -117,3 +117,10 @@ tool, and both had claimed `P23.1`.
   - F1.3. Added `scripts/check_api_surface_loss.py`, which diffs public declarations across a merge. Written because a merge can delete API without conflicting: upstream removed a `set_operand_struct_offset` overload, auto-merge accepted it silently, the C++ library still compiled, and only the Swift bindings caught it. Verified by reproducing that exact case.
   - F1.4. Added `scripts/check_merge_residue.py` for conflict markers, duplicated prose and resurrected host paths, scoped to files the merge touched. Found two problems in this branch that manual review had missed: an unscrubbed host path and a duplicated phase block, both in `.agents/roadmap.md`.
   - F1.5. Added `scripts/sync_upstream.sh` to run the sequence, and `docs/UpstreamSyncPlaybook.md` for the judgement it refuses to automate — category-by-category resolution guidance, the function-granularity procedure for `idax_shim.cpp`, and the no-common-ancestor recovery.
+
+- **F4. Microcode Snapshot Stack Offsets**
+  - F4.1. 修复 `ida::microcode::snapshot` 的 local-variable 转换：为每个 `LocalVariable` 写入 `lvar_t::get_stkoff()`，与 ctree 路径的 `make_local_variable` 保持同一帧坐标系。
+  - F4.2. 在 `decompiler_storage_hardening_test` 新增真实 fixture regression：直接取得 `main` 的 `.lvars` microcode snapshot，要求存在 stack variable，且每个 stack variable 的 `stack_offset` 都非负。隔离的修复前源码运行得到 573 passed / 3 failed，失败点正是三处默认 `-1`；修复后同一测试通过。
+  - F4.3. 从当前 checkout 以 IDA SDK 9.4 重建实际 Swift development archives；`libidax.a` 与 `libidax_shim.a` 随后在隔离 SwiftPM package 中完成 clean build，Swift full suite 83 tests / 33 suites 全部通过。
+  - F4.4. 下游 `swift-decompiler` 移除重复的 `-undefined dynamic_lookup` 后，adapter package clean build 与 131 tests 全部通过；产物直接链接 `@rpath/libida.dylib` / `@rpath/libidalib.dylib`，并携带 IDA 9.4 runtime rpath。
+  - F4.5. 使用 macOS 26.5.2 的 SwiftUI + SwiftUICore + AppKit database 克隆运行原崩溃函数：2/2 函数均完成 LIR / MIR / HIR，HIR failures 为 0，进程正常输出 `Done.`，关闭后没有 `.id0` / `.id1` / `.nam` / `.til` 残留。`idax_shim.cpp` 单 translation unit 仍是 link-size debt，但不再是 runtime blocker。
