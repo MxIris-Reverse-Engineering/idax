@@ -135,3 +135,18 @@ tool, and both had claimed `P23.1`.
   `nonisolated` 的 24/24 落在非主线程。所以 Swift 侧不需要 Rust 那种
   `harness = false` 的自定义主线程 runner。注意测试数量少时探针没有区分力——
   三个测试时两种标注都落在主线程，要制造并行才看得出差别。
+
+- **F16. 签入的 IDA fixture 会被测试就地改脏，`close(save: false)` 挡不住。**
+  `tests/fixtures/simple_appcall_linux64` 的解包形式（`.id0` / `.id1` / `.id2` /
+  `.nam` / `.til`）是签入 git 的，而 IDA 的 netnode 写入直接落到 `.id0`。
+  一次 `Bookmark.set` 就让 `git status` 出现修改；不保存也没用，因为写入
+  发生在关闭之前。任何会写 netnode 的测试都必须先把整组文件复制到别处再打开。
+  C++ 集成测试之所以没暴露这一点，是因为它们打开原始可执行文件并
+  `close(save: false)`，且基本只做读操作。
+
+- **F17. 集成测试抓到了两处「把必需参数写成可选」的绑定错误。**
+  `ida::navigation::History::open` 的第二参数是 `const Entry&`，
+  `validate_channel` 又不允许空 channel，但 Swift 侧最初把两者都做成了
+  可选/有默认值。编译期完全看不出来——C ABI 那一层是裸指针和 `const char*`，
+  null 与空串都是合法的 C 值，只有真实调用才会撞上 shim 的 Validation 错误。
+  为 C ABI 写绑定时，可选性必须回到 C++ 签名和校验函数去核对，不能照抄 C 头文件。

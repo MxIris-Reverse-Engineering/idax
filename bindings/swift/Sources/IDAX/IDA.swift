@@ -27,7 +27,7 @@ import Darwin
 /// }
 /// try Database.initialize()
 /// ```
-public enum IDARuntime {
+public nonisolated enum IDARuntime {
 
     /// Whether the IDA Pro runtime libraries can be located on this system.
     ///

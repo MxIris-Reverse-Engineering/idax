@@ -133,3 +133,11 @@ tool, and both had claimed `P23.1`.
   - F5.5. 全部 117 处 `Sendable` 提及中的 23 处 `@unchecked Sendable` 移除；其余 93 处是普通遵循，保留。
   - F5.6. CLI 工具跟着改：`ParsableCommand` 的 `run()` / `validate()` 是协议要求的 nonisolated，`run()` 的 IDA 调用改为先把 plan 与 8 个 Bool flag 取成局部常量再进 `onIDAThread`；`validate()` 只碰 FileManager 与 URL，不需要包裹。
   - F5.7. 验证：`IDAX_DEV=1 swift build` 与 `swift test` 均 0 error 0 warning，83 tests / 33 suites 通过，与改动前基线一致。Consumer 模式在本 commit 前后同为 13 个 error（`IdaxDecompilerCommentPosition` 等符号缺失），已用 HEAD 的 baseline worktree 确证是 XCFramework 过期的既有问题，与本次改动无关；修复归 F7。
+
+- **F6. Swift Batch 1b — 五个零覆盖域与集成测试骨架**
+  - F6.1. 新增 `FilePath`(3)、`Undo`(5)、`Problem`(6)、`Bookmark`(7)、`NavigationHistory`(20) 共 41 个函数，全部按 C ABI 实现。`NavigationHistory` 是这批里唯一持有 IDA 侧句柄的类型，用 `~Copyable` + `deinit` 管理生命周期。
+  - F6.2. 新增 `Tests/IDAXTests/IntegrationSupport.swift`：`IntegrationEnvironment` 做前置条件检测，`IntegrationDatabase` 做进程级一次性打开。套件用 `.enabled(if:)` 显式 skip 而非静默 return，用 `.serialized` 保证串行——idalib 每进程只初始化一次且要求同线程。
+  - F6.3. 集成测试抓到两个 API 设计错误，都是我把 C++ 的必需参数错当成可选：`NavigationHistory.open` 的 `initial`（C++ 签名是 `const Entry&`）和 `NavigationEntry.channel`（`validate_channel` 不允许空）。两者都改成必需参数。`metadata` 确实可空，保留默认值。
+  - F6.4. 测试必须在 fixture 的副本上跑。首次运行把 `tests/fixtures/simple_appcall_linux64.id0` 改脏了：IDA 的 netnode 写入直接落到 `.id0`，而该文件是签入 git 的，一次 `Bookmark.set` 就会让工作区出现修改。`close(save: false)` 救不了——写入在那之前就已经发生。现在 `IntegrationEnvironment` 把整组文件（可执行文件加 `.i64` / `.id0` / `.id1` / `.id2` / `.nam` / `.til`）复制到临时目录再打开。
+  - F6.5. `IDARuntime` 标 `nonisolated`：它只用 `access()` 查文件是否存在，不碰运行时，而 `.enabled(if:)` 的条件是 `@Sendable` 闭包，够不到隔离成员。
+  - F6.6. 验证：`IDAX_DEV=1 swift build` 与 `swift test` 均 0 error 0 warning，99 tests / 38 suites 通过（此前 83 / 33，新增 16 个真实执行的测试），且运行后 `tests/fixtures/` 工作区保持干净。
