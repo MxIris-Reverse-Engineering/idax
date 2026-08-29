@@ -156,3 +156,11 @@ tool, and both had claimed `P23.1`.
   - F8.3. Registry 测试是这批里唯一不受 fixture 副本保护的：`ida::registry` 写的是 IDA 的全局配置而非数据库。因此全部测试限定在 `idax_swift_test_scratch` 这一个 key 下，并在每个测试结束时 `eraseTree()`。
   - F8.4. Register tracking 在 x86-64 上返回 `Unsupported`，而共享 fixture 正是 x86-64。仓库里有 `register_tracking_aarch64` fixture，C++ 的 `register_tracking_roundtrip` 用它——那能成立是因为每个 CTest 目标是独立进程、可以各开各的数据库。Swift 全部测试共用一个进程，idalib 同时只持有一个数据库，因此够不到该 fixture。这批测试转而钉住「不支持」路径：每个入口都必须干净地报 `Unsupported`，而不是崩溃、返回编造值或报成功但结果为空。真正的功能验证记为 F9。
   - F8.5. 验证：clean developer 与 clean consumer 构建均 0 error 0 warning；两种模式各跑 115 tests / 41 suites 全通过（此前 99 / 38）；`tests/fixtures/` 运行后保持干净。
+
+- **F10. Swift Batch 3 — offset、parser、exception regions**
+  - F10.1. 新增 `Offset`(17)、`Parser`(9)、`ExceptionRegion`(6)，共 32 个函数。至此 313 个缺口已补 130 个。
+  - F10.2. `ExceptionHandlerSet` 用带关联值的 enum 表达 C 侧的 tag + union（`handler_kind` 0 = C++ catches、1 = SEH）。C 结构里两个字段只有一个有意义，Swift 这边非法组合直接无法构造。
+  - F10.3. `ExceptionRegion.add` 需要构造嵌套数组树（protected regions、每个 catch 各自的 regions、SEH filter regions）。用 `ExceptionDefinitionBuilder` 显式分配再统一释放，而不是层层嵌套 `withUnsafeBufferPointer`——后者的嵌套深度会跟数据结构一样深。shim 只读不持有，普通分配即可。
+  - F10.4. `ParserLanguage` 与 `ExceptionLocation` 做成 `OptionSet`，取代 C 侧的位掩码整数。
+  - F10.5. 测试抓到一条从签名看不出来的契约：SEH handler 的 `filterRegions` 与 `disposition` **互斥且必须恰有其一**，两个都给会被拒。已写进 `ExceptionSehHandler` 的文档注释。
+  - F10.6. 验证：clean developer 与 clean consumer 均 0 error 0 warning，各跑 131 tests / 44 suites 全通过（此前 115 / 41）；`tests/fixtures/` 保持干净。

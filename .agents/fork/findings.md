@@ -165,3 +165,21 @@ tool, and both had claimed `P23.1`.
   `Plugin.swift` 有两处 `enabledBox` 死绑定告警长期存在，但连续几次增量
   构建都没有重编译该文件，于是报出了并不成立的「0 warning」。凡是要把
   告警数当作验收依据，就必须先删掉 scratch 目录重新构建。
+
+- **F20. typed throws 下写 `catch let error as IDAError` 会让 swift-frontend 6.3.3 崩溃。**
+  函数声明为 `throws(IDAError)` 时，catch 子句里的 `error` 已经是 `IDAError`，
+  再写 `as IDAError` 是静态恒真的转换。编译器先给出
+  `warning: 'as' test is always true`，随后在 SILGenCleanup 阶段崩溃：
+  `Found outside of lifetime use?!` / `Found ownership error?!`，
+  最终 `fatal error encountered during compilation`。
+  触发处是一个 `do { try f() } catch let error as IDAError { #expect(...) }`。
+  写成 `catch { ... }` 即可，语义完全相同。
+  注意：这只在 do-catch 直接包住 typed-throws 调用时发生；把调用放进
+  `() throws -> Void` 闭包（未标注类型）再 catch 就不会触发，因为那时转换不是恒真的。
+
+- **F21. SEH handler 的 filter 与 disposition 互斥，且必须恰有其一。**
+  `ida::exception::SehHandler` 要么带 filter regions（运行时求值），
+  要么带固定 disposition，两者都给或都不给都会被拒：
+  `[Validation] SEH disposition is required exactly when filter regions are absent`。
+  C 结构体把它们放成两个独立字段，从 ABI 完全看不出这个约束——
+  只有真正调用 `idax_exception_add` 才会撞上。
