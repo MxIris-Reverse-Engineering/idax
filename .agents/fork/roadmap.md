@@ -30,3 +30,9 @@ tool, and both had claimed `P23.1`.
 ## Runtime Correctness
 
 - [x] F4 Populate stack offsets in `ida::microcode::snapshot`, add a runtime regression test, rebuild the Swift development archives, and verify the downstream Swift decompiler adapter.
+
+## Swift Parity Completion (plan: `docs/plans/2026-08-27-swift-parity-completion.md`)
+
+- [x] F5 Batch 1a — adopt module-wide `MainActor` isolation across the Swift bindings, put the callback contract in the type system, and bring the CLI tool along.
+- [ ] F6 Batch 1b — add the five zero-coverage domains (bookmark, problem, undo, navigation, FilePath) plus the visible-skip integration test scaffold.
+- [ ] F7 Rebuild the packaged `CIDAX.xcframework`, which has lagged the C ABI since `80b6e63` and leaves consumer mode unable to reach 281 symbols.

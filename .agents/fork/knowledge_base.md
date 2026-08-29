@@ -46,3 +46,7 @@ IDA 9.4 `dscu.h` 已公开 `get_dscu_svc()`、typed image query、`region_info_t
 `rt_cache_data` 表示 cache 全局命名数据，例如 linkedit subcache mapping；它拥有独立 request vector 与 loaded-state query，不等同于 `rt_unknown`。C++ `load_cache_data`、Swift `DyldCache.loadCacheData` 与 CLI `--load-cache-data` 应保持该语义。IDA SDK 9.3 没有 supported equivalent，调用应返回 Unsupported。macOS 26.5.2 real-cache validation 加载 6 个 regions 并保存成功。
 ### 35.40. 重复的 SDK-to-public 转换必须由路径级 integration test 约束 [F4]
 `LocalVariable` 同时由 ctree 的 `make_local_variable` 与 microcode 的 `snapshot` 构造；共享输出类型不代表共享转换逻辑。前者填写 `lvar_t::get_stkoff()`，后者遗漏后会让所有 microcode 栈变量暴露默认 `-1`，而编译与普通 binding test 都不会发现。对这类重复转换，修复时必须搜索全部构造点，并让 regression test 直接调用发生遗漏的公开入口、读取真实 fixture 中至少一个该类别值，再断言字段语义而非只断言 API 存在。
+### 35.41. 面向 C 回调的 Swift 隔离模型 [F13][F14]
+IDA 通过 C 函数指针同步回调，而 C 函数指针只能由 `nonisolated` 函数构成，所以 trampoline 与被隔离的用户代码之间必然有一道边界。可用的形态是：trampoline 标 `nonisolated`，每个指针参数 `nonisolated(unsafe) let x = x` 就地遮蔽，整个函数体（含取 box）包进 `MainActor.assumeIsolated`。三者缺一不可——只包最后一句会因 box 非 Sendable 而失败，不遮蔽指针会因参数非 Sendable 而失败。`assumeIsolated` 是断言而非跳转，回调若真的到达非主线程会 trap，这正是想要的结果。对外则把回调参数标注为 `@IDAActor`，让调用方从签名就看到执行线程与可回调 IDA 的事实。
+### 35.42. 模块级默认隔离只能选 MainActor [F12]
+`SwiftSetting.defaultIsolation` 的签名是 `(MainActor.Type?)`，自定义全局 actor 传不进去。若仍想在源码里表达「这是 IDA 约束而非 UI 约束」，用 `typealias IDAActor = MainActor`：它能作为 global-actor attribute 使用，与模块级默认隔离并存。代价是语义上并未真正分离，将来 IDA 若放宽线程要求，换掉别名会改变所有下游的隔离语义。

@@ -30,7 +30,7 @@ public struct ShowWidgetOptions: Sendable {
 }
 
 /// Popup event snapshot from the IDA kernel.
-public struct PopupEvent: @unchecked Sendable {
+public nonisolated struct PopupEvent: @unchecked Sendable {
     public let widgetID: UInt64
     public let widgetTitle: String
     public let widgetType: Int32
@@ -136,7 +136,7 @@ public struct Widget: @unchecked Sendable {
     ///
     /// The host pointer is valid only for the duration of the closure.
     public func withHost(
-        _ body: @escaping (UnsafeMutableRawPointer) -> Void
+        _ body: @escaping @IDAActor (UnsafeMutableRawPointer) -> Void
     ) throws(IDAError) {
         let box = WidgetHostBox(callback: body)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -455,7 +455,7 @@ public enum UI {
     /// Returns a `UITimer` token that unregisters the timer on deinit.
     public static func registerTimer(
         intervalMs: Int32,
-        callback: @escaping () -> Int32
+        callback: @escaping @IDAActor () -> Int32
     ) throws(IDAError) -> UITimer {
         let box = TimerCallbackBox(callback: callback)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -477,7 +477,7 @@ public enum UI {
     /// Subscribe to a UI event by kind (legacy generic callback).
     public static func subscribe(
         kind: Int32,
-        handler: @escaping (Int32, UInt64) -> Void
+        handler: @escaping @IDAActor (Int32, UInt64) -> Void
     ) throws(IDAError) -> UISubscription {
         let box = LegacyUIEventBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -498,7 +498,7 @@ public enum UI {
 
     /// Subscribe to database-closed events.
     public static func onDatabaseClosed(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onDatabaseClosed", handler) {
             idax_ui_on_database_closed($0, $1, $2)
@@ -507,7 +507,7 @@ public enum UI {
 
     /// Subscribe to database-initialized events.
     public static func onDatabaseInited(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onDatabaseInited", handler) {
             idax_ui_on_database_inited($0, $1, $2)
@@ -516,7 +516,7 @@ public enum UI {
 
     /// Subscribe to ready-to-run events.
     public static func onReadyToRun(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onReadyToRun", handler) {
             idax_ui_on_ready_to_run($0, $1, $2)
@@ -525,7 +525,7 @@ public enum UI {
 
     /// Subscribe to screen-address-changed events.
     public static func onScreenAddressChanged(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onScreenAddressChanged", handler) {
             idax_ui_on_screen_ea_changed($0, $1, $2)
@@ -534,7 +534,7 @@ public enum UI {
 
     /// Subscribe to current-widget-changed events.
     public static func onCurrentWidgetChanged(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onCurrentWidgetChanged", handler) {
             idax_ui_on_current_widget_changed($0, $1, $2)
@@ -543,7 +543,7 @@ public enum UI {
 
     /// Subscribe to widget-visible events (any widget).
     public static func onWidgetVisible(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onWidgetVisible", handler) {
             idax_ui_on_widget_visible($0, $1, $2)
@@ -552,7 +552,7 @@ public enum UI {
 
     /// Subscribe to widget-invisible events (any widget).
     public static func onWidgetInvisible(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onWidgetInvisible", handler) {
             idax_ui_on_widget_invisible($0, $1, $2)
@@ -561,7 +561,7 @@ public enum UI {
 
     /// Subscribe to widget-closing events (any widget).
     public static func onWidgetClosing(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onWidgetClosing", handler) {
             idax_ui_on_widget_closing($0, $1, $2)
@@ -571,7 +571,7 @@ public enum UI {
     /// Subscribe to widget-visible events for a specific widget.
     public static func onWidgetVisibleForWidget(
         _ widget: Widget,
-        handler: @escaping (UIEvent) -> Void
+        handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onWidgetVisibleForWidget", handler) {
             idax_ui_on_widget_visible_for_widget(widget.handle, $0, $1, $2)
@@ -581,7 +581,7 @@ public enum UI {
     /// Subscribe to widget-invisible events for a specific widget.
     public static func onWidgetInvisibleForWidget(
         _ widget: Widget,
-        handler: @escaping (UIEvent) -> Void
+        handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onWidgetInvisibleForWidget", handler) {
             idax_ui_on_widget_invisible_for_widget(widget.handle, $0, $1, $2)
@@ -591,7 +591,7 @@ public enum UI {
     /// Subscribe to widget-closing events for a specific widget.
     public static func onWidgetClosingForWidget(
         _ widget: Widget,
-        handler: @escaping (UIEvent) -> Void
+        handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onWidgetClosingForWidget", handler) {
             idax_ui_on_widget_closing_for_widget(widget.handle, $0, $1, $2)
@@ -600,7 +600,7 @@ public enum UI {
 
     /// Subscribe to cursor-changed events.
     public static func onCursorChanged(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onCursorChanged", handler) {
             idax_ui_on_cursor_changed($0, $1, $2)
@@ -609,7 +609,7 @@ public enum UI {
 
     /// Subscribe to view-activated events.
     public static func onViewActivated(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onViewActivated", handler) {
             idax_ui_on_view_activated($0, $1, $2)
@@ -618,7 +618,7 @@ public enum UI {
 
     /// Subscribe to view-deactivated events.
     public static func onViewDeactivated(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onViewDeactivated", handler) {
             idax_ui_on_view_deactivated($0, $1, $2)
@@ -627,7 +627,7 @@ public enum UI {
 
     /// Subscribe to view-created events.
     public static func onViewCreated(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onViewCreated", handler) {
             idax_ui_on_view_created($0, $1, $2)
@@ -636,7 +636,7 @@ public enum UI {
 
     /// Subscribe to view-closed events.
     public static func onViewClosed(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onViewClosed", handler) {
             idax_ui_on_view_closed($0, $1, $2)
@@ -645,7 +645,7 @@ public enum UI {
 
     /// Subscribe to all UI events.
     public static func onEvent(
-        _ handler: @escaping (UIEvent) -> Void
+        _ handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         try subscribeUIEvent("ui.onEvent", handler) {
             idax_ui_on_event($0, $1, $2)
@@ -657,8 +657,8 @@ public enum UI {
     /// Only events accepted by `filter` (returning `true`) are delivered
     /// to `handler`.
     public static func onEventFiltered(
-        filter: @escaping (UIEvent) -> Bool,
-        handler: @escaping (UIEvent) -> Void
+        filter: @escaping @IDAActor (UIEvent) -> Bool,
+        handler: @escaping @IDAActor (UIEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         let box = UIEventFilteredBox(filter: filter, handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -682,7 +682,7 @@ public enum UI {
     /// The handler receives a `PopupEvent` whose raw pointers can be passed
     /// to `attachDynamicAction`.
     public static func onPopupReady(
-        _ handler: @escaping (PopupEvent) -> Void
+        _ handler: @escaping @IDAActor (PopupEvent) -> Void
     ) throws(IDAError) -> UISubscription {
         let box = PopupEventBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -716,7 +716,7 @@ public enum UI {
         widget: Widget,
         actionId: String,
         label: String,
-        callback: @escaping () -> Void,
+        callback: @escaping @IDAActor () -> Void,
         menuPath: String = "",
         icon: Int32 = -1
     ) throws(IDAError) {
@@ -750,7 +750,7 @@ public enum UI {
     ///
     /// The handler receives a `RenderingContext` to which entries can be added.
     public static func onRenderingInfo(
-        _ handler: @escaping (RenderingContext) -> Void
+        _ handler: @escaping @IDAActor (RenderingContext) -> Void
     ) throws(IDAError) -> UISubscription {
         let box = RenderingEventBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -803,136 +803,169 @@ public struct RenderingContext: @unchecked Sendable {
 
 // MARK: - Callback boxes
 
-private final class TimerCallbackBox {
-    let callback: () -> Int32
-    init(callback: @escaping () -> Int32) { self.callback = callback }
+private nonisolated final class TimerCallbackBox {
+    let callback: @IDAActor () -> Int32
+    init(callback: @escaping @IDAActor () -> Int32) { self.callback = callback }
 }
 
-private final class LegacyUIEventBox {
-    let handler: (Int32, UInt64) -> Void
-    init(handler: @escaping (Int32, UInt64) -> Void) { self.handler = handler }
+private nonisolated final class LegacyUIEventBox {
+    let handler: @IDAActor (Int32, UInt64) -> Void
+    init(handler: @escaping @IDAActor (Int32, UInt64) -> Void) { self.handler = handler }
 }
 
-private final class UIEventBox {
-    let handler: (UIEvent) -> Void
-    init(handler: @escaping (UIEvent) -> Void) { self.handler = handler }
+private nonisolated final class UIEventBox {
+    let handler: @IDAActor (UIEvent) -> Void
+    init(handler: @escaping @IDAActor (UIEvent) -> Void) { self.handler = handler }
 }
 
-private final class UIEventFilteredBox {
-    let filter: (UIEvent) -> Bool
-    let handler: (UIEvent) -> Void
-    init(filter: @escaping (UIEvent) -> Bool, handler: @escaping (UIEvent) -> Void) {
+private nonisolated final class UIEventFilteredBox {
+    let filter: @IDAActor (UIEvent) -> Bool
+    let handler: @IDAActor (UIEvent) -> Void
+    init(filter: @escaping @IDAActor (UIEvent) -> Bool, handler: @escaping @IDAActor (UIEvent) -> Void) {
         self.filter = filter
         self.handler = handler
     }
 }
 
-private final class PopupEventBox {
-    let handler: (PopupEvent) -> Void
-    init(handler: @escaping (PopupEvent) -> Void) { self.handler = handler }
+private nonisolated final class PopupEventBox {
+    let handler: @IDAActor (PopupEvent) -> Void
+    init(handler: @escaping @IDAActor (PopupEvent) -> Void) { self.handler = handler }
 }
 
-private final class ActionCallbackBox {
-    let callback: () -> Void
-    init(callback: @escaping () -> Void) { self.callback = callback }
+private nonisolated final class ActionCallbackBox {
+    let callback: @IDAActor () -> Void
+    init(callback: @escaping @IDAActor () -> Void) { self.callback = callback }
 }
 
-private final class RenderingEventBox {
-    let handler: (RenderingContext) -> Void
-    init(handler: @escaping (RenderingContext) -> Void) {
+private nonisolated final class RenderingEventBox {
+    let handler: @IDAActor (RenderingContext) -> Void
+    init(handler: @escaping @IDAActor (RenderingContext) -> Void) {
         self.handler = handler
     }
 }
 
-private final class WidgetHostBox {
-    let callback: (UnsafeMutableRawPointer) -> Void
-    init(callback: @escaping (UnsafeMutableRawPointer) -> Void) {
+private nonisolated final class WidgetHostBox {
+    let callback: @IDAActor (UnsafeMutableRawPointer) -> Void
+    init(callback: @escaping @IDAActor (UnsafeMutableRawPointer) -> Void) {
         self.callback = callback
     }
 }
 
 // MARK: - Trampolines
 
-private func timerTrampoline(ctx: UnsafeMutableRawPointer?) -> Int32 {
-    guard let ctx else { return 0 }
-    let box = Unmanaged<TimerCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
-    return box.callback()
+private nonisolated func timerTrampoline(ctx: UnsafeMutableRawPointer?) -> Int32 {
+    nonisolated(unsafe) let ctx = ctx
+    return onIDAThread {
+        guard let ctx else { return 0 }
+        let box = Unmanaged<TimerCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
+        return box.callback()
+    }
 }
 
-private func legacyUIEventTrampoline(
+private nonisolated func legacyUIEventTrampoline(
     ctx: UnsafeMutableRawPointer?,
     eventKind: Int32,
     address: UInt64
 ) {
-    guard let ctx else { return }
-    let box = Unmanaged<LegacyUIEventBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(eventKind, address)
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<LegacyUIEventBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(eventKind, address)
+    }
 }
 
-private func uiEventExTrampoline(
+private nonisolated func uiEventExTrampoline(
     ctx: UnsafeMutableRawPointer?,
     event: UnsafePointer<IdaxUIEvent>?
 ) {
-    guard let ctx, let event else { return }
-    let box = Unmanaged<UIEventBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(makeUIEvent(event))
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let event = event
+    onIDAThread {
+        guard let ctx, let event else { return }
+        let box = Unmanaged<UIEventBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(makeUIEvent(event))
+    }
 }
 
-private func uiEventFilterTrampoline(
+private nonisolated func uiEventFilterTrampoline(
     ctx: UnsafeMutableRawPointer?,
     event: UnsafePointer<IdaxUIEvent>?
 ) -> Int32 {
-    guard let ctx, let event else { return 0 }
-    let box = Unmanaged<UIEventFilteredBox>.fromOpaque(ctx).takeUnretainedValue()
-    return box.filter(makeUIEvent(event)) ? 1 : 0
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let event = event
+    return onIDAThread {
+        guard let ctx, let event else { return 0 }
+        let box = Unmanaged<UIEventFilteredBox>.fromOpaque(ctx).takeUnretainedValue()
+        return box.filter(makeUIEvent(event)) ? 1 : 0
+    }
 }
 
-private func uiEventFilteredHandlerTrampoline(
+private nonisolated func uiEventFilteredHandlerTrampoline(
     ctx: UnsafeMutableRawPointer?,
     event: UnsafePointer<IdaxUIEvent>?
 ) {
-    guard let ctx, let event else { return }
-    let box = Unmanaged<UIEventFilteredBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(makeUIEvent(event))
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let event = event
+    onIDAThread {
+        guard let ctx, let event else { return }
+        let box = Unmanaged<UIEventFilteredBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(makeUIEvent(event))
+    }
 }
 
-private func popupEventTrampoline(
+private nonisolated func popupEventTrampoline(
     ctx: UnsafeMutableRawPointer?,
     event: UnsafePointer<IdaxPopupEvent>?
 ) {
-    guard let ctx, let event else { return }
-    let box = Unmanaged<PopupEventBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(makePopupEvent(event))
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let event = event
+    onIDAThread {
+        guard let ctx, let event else { return }
+        let box = Unmanaged<PopupEventBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(makePopupEvent(event))
+    }
 }
 
-private func actionCallbackTrampoline(ctx: UnsafeMutableRawPointer?) {
-    guard let ctx else { return }
-    let box = Unmanaged<ActionCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.callback()
+private nonisolated func actionCallbackTrampoline(ctx: UnsafeMutableRawPointer?) {
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<ActionCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.callback()
+    }
 }
 
-private func renderingEventTrampoline(
+private nonisolated func renderingEventTrampoline(
     ctx: UnsafeMutableRawPointer?,
     event: UnsafeMutablePointer<IdaxRenderingEvent>?
 ) {
-    guard let ctx, let event else { return }
-    let box = Unmanaged<RenderingEventBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(RenderingContext(event))
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let event = event
+    onIDAThread {
+        guard let ctx, let event else { return }
+        let box = Unmanaged<RenderingEventBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(RenderingContext(event))
+    }
 }
 
-private func widgetHostTrampoline(
+private nonisolated func widgetHostTrampoline(
     ctx: UnsafeMutableRawPointer?,
     host: UnsafeMutableRawPointer?
 ) -> Int32 {
-    guard let ctx, let host else { return 1 }
-    let box = Unmanaged<WidgetHostBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.callback(host)
-    return 0
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let host = host
+    return onIDAThread {
+        guard let ctx, let host else { return 1 }
+        let box = Unmanaged<WidgetHostBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.callback(host)
+        return 0
+    }
 }
 
 // MARK: - Conversion helpers
 
-private func makeUIEvent(_ raw: UnsafePointer<IdaxUIEvent>) -> UIEvent {
+private nonisolated func makeUIEvent(_ raw: UnsafePointer<IdaxUIEvent>) -> UIEvent {
     UIEvent(
         kind: raw.pointee.kind,
         address: raw.pointee.address,
@@ -945,7 +978,7 @@ private func makeUIEvent(_ raw: UnsafePointer<IdaxUIEvent>) -> UIEvent {
     )
 }
 
-private func makePopupEvent(_ raw: UnsafePointer<IdaxPopupEvent>) -> PopupEvent {
+private nonisolated func makePopupEvent(_ raw: UnsafePointer<IdaxPopupEvent>) -> PopupEvent {
     PopupEvent(
         widgetID: raw.pointee.widget_id,
         widgetTitle: borrowCString(raw.pointee.widget_title),
@@ -963,7 +996,7 @@ private func makePopupEvent(_ raw: UnsafePointer<IdaxPopupEvent>) -> PopupEvent 
 /// in a `UISubscription`.
 private func subscribeUIEvent(
     _ fallback: String,
-    _ handler: @escaping (UIEvent) -> Void,
+    _ handler: @escaping @IDAActor (UIEvent) -> Void,
     _ shimCall: (IdaxUIEventExCallback?, UnsafeMutableRawPointer?, UnsafeMutablePointer<UInt64>) -> Int32
 ) throws(IDAError) -> UISubscription {
     let box = UIEventBox(handler: handler)

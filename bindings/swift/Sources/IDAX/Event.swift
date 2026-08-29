@@ -29,7 +29,7 @@ public struct EventSubscription: ~Copyable, @unchecked Sendable {
 public enum Event {
 
     public static func onRenamed(
-        _ handler: @escaping (Address, String, String) -> Void
+        _ handler: @escaping @IDAActor (Address, String, String) -> Void
     ) throws(IDAError) -> EventSubscription {
         let box = RenamedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -47,7 +47,7 @@ public enum Event {
     }
 
     public static func onFunctionAdded(
-        _ handler: @escaping (Address) -> Void
+        _ handler: @escaping @IDAActor (Address) -> Void
     ) throws(IDAError) -> EventSubscription {
         let box = AddressBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -65,7 +65,7 @@ public enum Event {
     }
 
     public static func onFunctionDeleted(
-        _ handler: @escaping (Address) -> Void
+        _ handler: @escaping @IDAActor (Address) -> Void
     ) throws(IDAError) -> EventSubscription {
         let box = AddressBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -83,7 +83,7 @@ public enum Event {
     }
 
     public static func onBytePatched(
-        _ handler: @escaping (Address, UInt32) -> Void
+        _ handler: @escaping @IDAActor (Address, UInt32) -> Void
     ) throws(IDAError) -> EventSubscription {
         let box = BytePatchedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -106,7 +106,7 @@ public enum Event {
 
     public static func subscribe(
         kind: Int32,
-        handler: @escaping (Int32, UInt64, UInt64) -> Void
+        handler: @escaping @IDAActor (Int32, UInt64, UInt64) -> Void
     ) throws(IDAError) -> EventSubscription {
         let box = GenericEventBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -124,7 +124,7 @@ public enum Event {
     }
 
     public static func onSegmentAdded(
-        _ handler: @escaping (Address) -> Void
+        _ handler: @escaping @IDAActor (Address) -> Void
     ) throws(IDAError) -> EventSubscription {
         let box = AddressBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -142,7 +142,7 @@ public enum Event {
     }
 
     public static func onSegmentDeleted(
-        _ handler: @escaping (Address, Address) -> Void
+        _ handler: @escaping @IDAActor (Address, Address) -> Void
     ) throws(IDAError) -> EventSubscription {
         let box = SegmentDeletedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -160,7 +160,7 @@ public enum Event {
     }
 
     public static func onCommentChanged(
-        _ handler: @escaping (Address, Bool) -> Void
+        _ handler: @escaping @IDAActor (Address, Bool) -> Void
     ) throws(IDAError) -> EventSubscription {
         let box = CommentChangedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -178,7 +178,7 @@ public enum Event {
     }
 
     public static func onEvent(
-        _ handler: @escaping (IDAEvent) -> Void
+        _ handler: @escaping @IDAActor (IDAEvent) -> Void
     ) throws(IDAError) -> EventSubscription {
         let box = EventExBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -196,8 +196,8 @@ public enum Event {
     }
 
     public static func onEventFiltered(
-        filter: @escaping (IDAEvent) -> Bool,
-        handler: @escaping (IDAEvent) -> Void
+        filter: @escaping @IDAActor (IDAEvent) -> Bool,
+        handler: @escaping @IDAActor (IDAEvent) -> Void
     ) throws(IDAError) -> EventSubscription {
         let box = EventFilteredBox(filter: filter, handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -217,91 +217,117 @@ public enum Event {
 
 // MARK: - Callback boxes and trampolines
 
-private final class RenamedBox {
-    let handler: (Address, String, String) -> Void
-    init(handler: @escaping (Address, String, String) -> Void) { self.handler = handler }
+private nonisolated final class RenamedBox {
+    let handler: @IDAActor (Address, String, String) -> Void
+    init(handler: @escaping @IDAActor (Address, String, String) -> Void) { self.handler = handler }
 }
 
-private final class AddressBox {
-    let handler: (Address) -> Void
-    init(handler: @escaping (Address) -> Void) { self.handler = handler }
+private nonisolated final class AddressBox {
+    let handler: @IDAActor (Address) -> Void
+    init(handler: @escaping @IDAActor (Address) -> Void) { self.handler = handler }
 }
 
-private final class BytePatchedBox {
-    let handler: (Address, UInt32) -> Void
-    init(handler: @escaping (Address, UInt32) -> Void) { self.handler = handler }
+private nonisolated final class BytePatchedBox {
+    let handler: @IDAActor (Address, UInt32) -> Void
+    init(handler: @escaping @IDAActor (Address, UInt32) -> Void) { self.handler = handler }
 }
 
-private func renamedTrampoline(
+private nonisolated func renamedTrampoline(
     ctx: UnsafeMutableRawPointer?,
     address: UInt64,
     newName: UnsafePointer<CChar>?,
     oldName: UnsafePointer<CChar>?
 ) {
-    guard let ctx else { return }
-    let box = Unmanaged<RenamedBox>.fromOpaque(ctx).takeUnretainedValue()
-    let nn = newName.map { String(cString: $0) } ?? ""
-    let on = oldName.map { String(cString: $0) } ?? ""
-    box.handler(address, nn, on)
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let newName = newName
+    nonisolated(unsafe) let oldName = oldName
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<RenamedBox>.fromOpaque(ctx).takeUnretainedValue()
+        let nn = newName.map { String(cString: $0) } ?? ""
+        let on = oldName.map { String(cString: $0) } ?? ""
+        box.handler(address, nn, on)
+    }
 }
 
-private func functionAddedTrampoline(ctx: UnsafeMutableRawPointer?, entry: UInt64) {
-    guard let ctx else { return }
-    let box = Unmanaged<AddressBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(entry)
+private nonisolated func functionAddedTrampoline(ctx: UnsafeMutableRawPointer?, entry: UInt64) {
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<AddressBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(entry)
+    }
 }
 
-private func functionDeletedTrampoline(ctx: UnsafeMutableRawPointer?, entry: UInt64) {
-    guard let ctx else { return }
-    let box = Unmanaged<AddressBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(entry)
+private nonisolated func functionDeletedTrampoline(ctx: UnsafeMutableRawPointer?, entry: UInt64) {
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<AddressBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(entry)
+    }
 }
 
-private func bytePatchedTrampoline(ctx: UnsafeMutableRawPointer?, address: UInt64, oldValue: UInt32) {
-    guard let ctx else { return }
-    let box = Unmanaged<BytePatchedBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(address, oldValue)
+private nonisolated func bytePatchedTrampoline(ctx: UnsafeMutableRawPointer?, address: UInt64, oldValue: UInt32) {
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<BytePatchedBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(address, oldValue)
+    }
 }
 
 // MARK: - New callback boxes and trampolines
 
-private final class GenericEventBox {
-    let handler: (Int32, UInt64, UInt64) -> Void
-    init(handler: @escaping (Int32, UInt64, UInt64) -> Void) { self.handler = handler }
+private nonisolated final class GenericEventBox {
+    let handler: @IDAActor (Int32, UInt64, UInt64) -> Void
+    init(handler: @escaping @IDAActor (Int32, UInt64, UInt64) -> Void) { self.handler = handler }
 }
 
-private func genericEventTrampoline(ctx: UnsafeMutableRawPointer?, kind: Int32, addr: UInt64, secondary: UInt64) {
-    guard let ctx else { return }
-    let box = Unmanaged<GenericEventBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(kind, addr, secondary)
+private nonisolated func genericEventTrampoline(ctx: UnsafeMutableRawPointer?, kind: Int32, addr: UInt64, secondary: UInt64) {
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<GenericEventBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(kind, addr, secondary)
+    }
 }
 
-private func segmentAddedTrampoline(ctx: UnsafeMutableRawPointer?, start: UInt64) {
-    guard let ctx else { return }
-    let box = Unmanaged<AddressBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(start)
+private nonisolated func segmentAddedTrampoline(ctx: UnsafeMutableRawPointer?, start: UInt64) {
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<AddressBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(start)
+    }
 }
 
-private final class SegmentDeletedBox {
-    let handler: (Address, Address) -> Void
-    init(handler: @escaping (Address, Address) -> Void) { self.handler = handler }
+private nonisolated final class SegmentDeletedBox {
+    let handler: @IDAActor (Address, Address) -> Void
+    init(handler: @escaping @IDAActor (Address, Address) -> Void) { self.handler = handler }
 }
 
-private func segmentDeletedTrampoline(ctx: UnsafeMutableRawPointer?, start: UInt64, end: UInt64) {
-    guard let ctx else { return }
-    let box = Unmanaged<SegmentDeletedBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(start, end)
+private nonisolated func segmentDeletedTrampoline(ctx: UnsafeMutableRawPointer?, start: UInt64, end: UInt64) {
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<SegmentDeletedBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(start, end)
+    }
 }
 
-private final class CommentChangedBox {
-    let handler: (Address, Bool) -> Void
-    init(handler: @escaping (Address, Bool) -> Void) { self.handler = handler }
+private nonisolated final class CommentChangedBox {
+    let handler: @IDAActor (Address, Bool) -> Void
+    init(handler: @escaping @IDAActor (Address, Bool) -> Void) { self.handler = handler }
 }
 
-private func commentChangedTrampoline(ctx: UnsafeMutableRawPointer?, address: UInt64, repeatable: Int32) {
-    guard let ctx else { return }
-    let box = Unmanaged<CommentChangedBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(address, repeatable != 0)
+private nonisolated func commentChangedTrampoline(ctx: UnsafeMutableRawPointer?, address: UInt64, repeatable: Int32) {
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<CommentChangedBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(address, repeatable != 0)
+    }
 }
 
 /// Swift representation of a raw IDB event.
@@ -315,7 +341,7 @@ public struct IDAEvent: Sendable {
     public let repeatable: Bool
 }
 
-private func makeIDAEvent(_ raw: UnsafePointer<IdaxEvent>) -> IDAEvent {
+private nonisolated func makeIDAEvent(_ raw: UnsafePointer<IdaxEvent>) -> IDAEvent {
     IDAEvent(
         kind: raw.pointee.kind,
         address: raw.pointee.address,
@@ -327,34 +353,46 @@ private func makeIDAEvent(_ raw: UnsafePointer<IdaxEvent>) -> IDAEvent {
     )
 }
 
-private final class EventExBox {
-    let handler: (IDAEvent) -> Void
-    init(handler: @escaping (IDAEvent) -> Void) { self.handler = handler }
+private nonisolated final class EventExBox {
+    let handler: @IDAActor (IDAEvent) -> Void
+    init(handler: @escaping @IDAActor (IDAEvent) -> Void) { self.handler = handler }
 }
 
-private func eventExTrampoline(ctx: UnsafeMutableRawPointer?, event: UnsafePointer<IdaxEvent>?) {
-    guard let ctx, let event else { return }
-    let box = Unmanaged<EventExBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(makeIDAEvent(event))
+private nonisolated func eventExTrampoline(ctx: UnsafeMutableRawPointer?, event: UnsafePointer<IdaxEvent>?) {
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let event = event
+    onIDAThread {
+        guard let ctx, let event else { return }
+        let box = Unmanaged<EventExBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(makeIDAEvent(event))
+    }
 }
 
-private final class EventFilteredBox {
-    let filter: (IDAEvent) -> Bool
-    let handler: (IDAEvent) -> Void
-    init(filter: @escaping (IDAEvent) -> Bool, handler: @escaping (IDAEvent) -> Void) {
+private nonisolated final class EventFilteredBox {
+    let filter: @IDAActor (IDAEvent) -> Bool
+    let handler: @IDAActor (IDAEvent) -> Void
+    init(filter: @escaping @IDAActor (IDAEvent) -> Bool, handler: @escaping @IDAActor (IDAEvent) -> Void) {
         self.filter = filter
         self.handler = handler
     }
 }
 
-private func eventFilterTrampoline(ctx: UnsafeMutableRawPointer?, event: UnsafePointer<IdaxEvent>?) -> Int32 {
-    guard let ctx, let event else { return 0 }
-    let box = Unmanaged<EventFilteredBox>.fromOpaque(ctx).takeUnretainedValue()
-    return box.filter(makeIDAEvent(event)) ? 1 : 0
+private nonisolated func eventFilterTrampoline(ctx: UnsafeMutableRawPointer?, event: UnsafePointer<IdaxEvent>?) -> Int32 {
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let event = event
+    return onIDAThread {
+        guard let ctx, let event else { return 0 }
+        let box = Unmanaged<EventFilteredBox>.fromOpaque(ctx).takeUnretainedValue()
+        return box.filter(makeIDAEvent(event)) ? 1 : 0
+    }
 }
 
-private func eventFilteredHandlerTrampoline(ctx: UnsafeMutableRawPointer?, event: UnsafePointer<IdaxEvent>?) {
-    guard let ctx, let event else { return }
-    let box = Unmanaged<EventFilteredBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(makeIDAEvent(event))
+private nonisolated func eventFilteredHandlerTrampoline(ctx: UnsafeMutableRawPointer?, event: UnsafePointer<IdaxEvent>?) {
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let event = event
+    onIDAThread {
+        guard let ctx, let event else { return }
+        let box = Unmanaged<EventFilteredBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(makeIDAEvent(event))
+    }
 }

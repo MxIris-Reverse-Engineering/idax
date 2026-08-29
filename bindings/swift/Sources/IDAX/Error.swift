@@ -1,7 +1,7 @@
 internal import CIDAX
 
 /// Error classification matching C++ `ida::ErrorCategory`.
-public enum IDAErrorCategory: Int32, Sendable, CustomStringConvertible {
+public nonisolated enum IDAErrorCategory: Int32, Sendable, CustomStringConvertible {
     case validation  = 1
     case notFound    = 2
     case conflict    = 3
@@ -24,7 +24,7 @@ public enum IDAErrorCategory: Int32, Sendable, CustomStringConvertible {
 /// Structured error carried through every throwing IDA operation.
 ///
 /// Maps directly to C++ `ida::Error`.
-public struct IDAError: Error, Sendable, CustomStringConvertible {
+public nonisolated struct IDAError: Error, Sendable, CustomStringConvertible {
     public let category: IDAErrorCategory
     public let code: Int32
     public let message: String
@@ -97,7 +97,7 @@ func takeCString(_ ptr: UnsafeMutablePointer<CChar>?) -> String {
 
 /// Read a C string without freeing it. Used when a separate `_free` function
 /// owns the lifecycle of the containing struct.
-func borrowCString(_ ptr: UnsafePointer<CChar>?) -> String {
+nonisolated func borrowCString(_ ptr: UnsafePointer<CChar>?) -> String {
     guard let ptr else { return "" }
     return String(cString: ptr)
 }

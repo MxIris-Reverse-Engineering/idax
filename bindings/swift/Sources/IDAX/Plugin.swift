@@ -93,8 +93,8 @@ public enum Plugin {
         hotkey: String = "",
         tooltip: String = "",
         icon: Int32 = -1,
-        handler: @escaping () -> Void,
-        enabledCheck: (() -> Bool)? = nil
+        handler: @escaping @IDAActor () -> Void,
+        enabledCheck: (@IDAActor () -> Bool)? = nil
     ) throws(IDAError) -> ActionRegistration {
         let handlerBox = ActionHandlerBox(handler: handler)
         let handlerCtx = Unmanaged.passRetained(handlerBox).toOpaque()
@@ -167,10 +167,10 @@ public enum Plugin {
         hotkey: String = "",
         tooltip: String = "",
         icon: Int32 = -1,
-        handler: @escaping () -> Void,
-        handlerEx: @escaping (ActionContext) -> Void,
-        enabledCheck: (() -> Bool)? = nil,
-        enabledCheckEx: ((ActionContext) -> Bool)? = nil
+        handler: @escaping @IDAActor () -> Void,
+        handlerEx: @escaping @IDAActor (ActionContext) -> Void,
+        enabledCheck: (@IDAActor () -> Bool)? = nil,
+        enabledCheckEx: (@IDAActor (ActionContext) -> Bool)? = nil
     ) throws(IDAError) -> ActionRegistration {
         let handlerBox = ActionHandlerExBox(handler: handler, handlerEx: handlerEx)
         let handlerCtx = Unmanaged.passRetained(handlerBox).toOpaque()
@@ -359,7 +359,7 @@ public enum Plugin {
     /// The host pointer is valid only for the duration of the closure.
     public static func withWidgetHost(
         from context: ActionContext,
-        _ body: @escaping (UnsafeMutableRawPointer) -> Void
+        _ body: @escaping @IDAActor (UnsafeMutableRawPointer) -> Void
     ) throws(IDAError) {
         var raw = makeRawContext(context)
         defer { freeRawContext(&raw) }
@@ -396,7 +396,7 @@ public enum Plugin {
     /// The host pointer is valid only for the duration of the closure.
     public static func withDecompilerViewHost(
         from context: ActionContext,
-        _ body: @escaping (UnsafeMutableRawPointer) -> Void
+        _ body: @escaping @IDAActor (UnsafeMutableRawPointer) -> Void
     ) throws(IDAError) {
         var raw = makeRawContext(context)
         defer { freeRawContext(&raw) }
@@ -444,97 +444,121 @@ public enum Plugin {
 
 // MARK: - Callback Boxes
 
-private final class ActionHandlerBox {
-    let handler: () -> Void
-    init(handler: @escaping () -> Void) { self.handler = handler }
+private nonisolated final class ActionHandlerBox {
+    let handler: @IDAActor () -> Void
+    init(handler: @escaping @IDAActor () -> Void) { self.handler = handler }
 }
 
-private final class ActionEnabledCheckBox {
-    let check: () -> Bool
-    init(check: @escaping () -> Bool) { self.check = check }
+private nonisolated final class ActionEnabledCheckBox {
+    let check: @IDAActor () -> Bool
+    init(check: @escaping @IDAActor () -> Bool) { self.check = check }
 }
 
-private final class ActionHandlerExBox {
-    let handler: () -> Void
-    let handlerEx: (ActionContext) -> Void
-    init(handler: @escaping () -> Void,
-         handlerEx: @escaping (ActionContext) -> Void) {
+private nonisolated final class ActionHandlerExBox {
+    let handler: @IDAActor () -> Void
+    let handlerEx: @IDAActor (ActionContext) -> Void
+    init(handler: @escaping @IDAActor () -> Void,
+         handlerEx: @escaping @IDAActor (ActionContext) -> Void) {
         self.handler = handler
         self.handlerEx = handlerEx
     }
 }
 
-private final class ActionEnabledCheckExBox {
-    let check: (() -> Bool)?
-    let checkEx: ((ActionContext) -> Bool)?
-    init(check: (() -> Bool)?,
-         checkEx: ((ActionContext) -> Bool)?) {
+private nonisolated final class ActionEnabledCheckExBox {
+    let check: (@IDAActor () -> Bool)?
+    let checkEx: (@IDAActor (ActionContext) -> Bool)?
+    init(check: (@IDAActor () -> Bool)?,
+         checkEx: (@IDAActor (ActionContext) -> Bool)?) {
         self.check = check
         self.checkEx = checkEx
     }
 }
 
-private final class HostCallbackBox {
-    let callback: (UnsafeMutableRawPointer) -> Void
-    init(callback: @escaping (UnsafeMutableRawPointer) -> Void) {
+private nonisolated final class HostCallbackBox {
+    let callback: @IDAActor (UnsafeMutableRawPointer) -> Void
+    init(callback: @escaping @IDAActor (UnsafeMutableRawPointer) -> Void) {
         self.callback = callback
     }
 }
 
 // MARK: - Trampolines
 
-private func actionHandlerTrampoline(context: UnsafeMutableRawPointer?) {
-    guard let context else { return }
-    let box = Unmanaged<ActionHandlerBox>.fromOpaque(context).takeUnretainedValue()
-    box.handler()
+private nonisolated func actionHandlerTrampoline(context: UnsafeMutableRawPointer?) {
+    nonisolated(unsafe) let context = context
+    onIDAThread {
+        guard let context else { return }
+        let box = Unmanaged<ActionHandlerBox>.fromOpaque(context).takeUnretainedValue()
+        box.handler()
+    }
 }
 
-private func actionEnabledCheckTrampoline(context: UnsafeMutableRawPointer?) -> Int32 {
-    guard let context else { return 0 }
-    let box = Unmanaged<ActionEnabledCheckBox>.fromOpaque(context).takeUnretainedValue()
-    return box.check() ? 1 : 0
+private nonisolated func actionEnabledCheckTrampoline(context: UnsafeMutableRawPointer?) -> Int32 {
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let context else { return 0 }
+        let box = Unmanaged<ActionEnabledCheckBox>.fromOpaque(context).takeUnretainedValue()
+        return box.check() ? 1 : 0
+    }
 }
 
-private func actionHandlerExSimpleTrampoline(context: UnsafeMutableRawPointer?) {
-    guard let context else { return }
-    let box = Unmanaged<ActionHandlerExBox>.fromOpaque(context).takeUnretainedValue()
-    box.handler()
+private nonisolated func actionHandlerExSimpleTrampoline(context: UnsafeMutableRawPointer?) {
+    nonisolated(unsafe) let context = context
+    onIDAThread {
+        guard let context else { return }
+        let box = Unmanaged<ActionHandlerExBox>.fromOpaque(context).takeUnretainedValue()
+        box.handler()
+    }
 }
 
-private func actionHandlerExTrampoline(
+private nonisolated func actionHandlerExTrampoline(
     context: UnsafeMutableRawPointer?,
     actionContext: UnsafePointer<IdaxPluginActionContext>?
 ) {
-    guard let context, let actionContext else { return }
-    let box = Unmanaged<ActionHandlerExBox>.fromOpaque(context).takeUnretainedValue()
-    box.handlerEx(ActionContext(raw: actionContext.pointee))
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let actionContext = actionContext
+    onIDAThread {
+        guard let context, let actionContext else { return }
+        let box = Unmanaged<ActionHandlerExBox>.fromOpaque(context).takeUnretainedValue()
+        box.handlerEx(ActionContext(raw: actionContext.pointee))
+    }
 }
 
-private func actionEnabledCheckExSimpleTrampoline(
+private nonisolated func actionEnabledCheckExSimpleTrampoline(
     context: UnsafeMutableRawPointer?
 ) -> Int32 {
-    guard let context else { return 0 }
-    let box = Unmanaged<ActionEnabledCheckExBox>.fromOpaque(context).takeUnretainedValue()
-    return (box.check?() ?? true) ? 1 : 0
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let context else { return 0 }
+        let box = Unmanaged<ActionEnabledCheckExBox>.fromOpaque(context).takeUnretainedValue()
+        return (box.check?() ?? true) ? 1 : 0
+    }
 }
 
-private func actionEnabledCheckExTrampoline(
+private nonisolated func actionEnabledCheckExTrampoline(
     context: UnsafeMutableRawPointer?,
     actionContext: UnsafePointer<IdaxPluginActionContext>?
 ) -> Int32 {
-    guard let context, let actionContext else { return 0 }
-    let box = Unmanaged<ActionEnabledCheckExBox>.fromOpaque(context).takeUnretainedValue()
-    return (box.checkEx?(ActionContext(raw: actionContext.pointee)) ?? true) ? 1 : 0
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let actionContext = actionContext
+    return onIDAThread {
+        guard let context, let actionContext else { return 0 }
+        let box = Unmanaged<ActionEnabledCheckExBox>.fromOpaque(context).takeUnretainedValue()
+        return (box.checkEx?(ActionContext(raw: actionContext.pointee)) ?? true) ? 1 : 0
+    }
 }
 
-private func hostCallbackTrampoline(
+private nonisolated func hostCallbackTrampoline(
     context: UnsafeMutableRawPointer?,
     host: UnsafeMutableRawPointer?
 ) -> Int32 {
-    guard let context, let host else { return 1 }
-    let box = Unmanaged<HostCallbackBox>.fromOpaque(context).takeUnretainedValue()
-    box.callback(host)
-    return 0
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let host = host
+    return onIDAThread {
+        guard let context, let host else { return 1 }
+        let box = Unmanaged<HostCallbackBox>.fromOpaque(context).takeUnretainedValue()
+        box.callback(host)
+        return 0
+    }
 }
 
 // MARK: - Internal Helpers

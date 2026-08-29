@@ -107,3 +107,31 @@ tool, and both had claimed `P23.1`.
   `stack_offset`，后者却让它保持默认值 `-1`。消费方因此会误以为
   `.lvars` maturity 没有栈槽信息。修复一条路径后，应搜索同一输出类型
   的全部构造点，并用真实 database 的 integration test 直接覆盖每条路径。
+
+- **F12. `SwiftSetting.defaultIsolation` 的参数类型写死为 `MainActor.Type?`。**
+  自定义全局 actor 在 API 层面就传不进去，不是 manifest 可见性问题。
+  所以「独立的 `@IDAActor` + 模块级默认隔离」这个组合不存在；要么放弃
+  模块级隔离改逐域标注，要么让 `IDAActor` 成为 `MainActor` 的 typealias。
+  实测 typealias 可以正常用作 global-actor attribute，两者兼容。
+
+- **F13. C trampoline 的指针参数不是 Sendable，整个函数体必须与它们同侧。**
+  `nonisolated` 的 trampoline 里，把 `UnsafeMutableRawPointer?` 或
+  `UnsafePointer<CChar>?` 交给 `MainActor.assumeIsolated` 闭包会得到
+  `error: sending 'ctx' risks causing data races`——即便闭包体完整包住整个函数体
+  也一样，因为参数本身就在捕获列表里。可行写法是先
+  `nonisolated(unsafe) let ctx = ctx` 就地同名遮蔽，函数体则一字不用改。
+  取 box 的 `Unmanaged.fromOpaque` 也必须在闭包内：`box` 是非 Sendable 的类实例，
+  在闭包外取再传进去同样越界。
+
+- **F14. `ParsableCommand` 强制 nonisolated，且 `ParsableArguments` 不要求实例 Sendable。**
+  `run()` / `validate()` 是协议要求，模块级默认隔离管不到它们。而
+  `ParsableArguments: Decodable, _SendableMetatype` 只保证元类型 Sendable，
+  所以 `self` 和它的副本都不能进入 `@MainActor` 闭包
+  （`note: task-isolated 'self' is captured by a main actor-isolated closure`）。
+  唯一干净的写法是把闭包真正需要的 Sendable 值先取成局部常量。
+
+- **F15. swift-testing 的 `@MainActor` 测试确实跑在进程主线程上。**
+  24 个并发测试的实测：`@MainActor` 标注的 24/24 落在 `pthread_main_np() == 1`，
+  `nonisolated` 的 24/24 落在非主线程。所以 Swift 侧不需要 Rust 那种
+  `harness = false` 的自定义主线程 runner。注意测试数量少时探针没有区分力——
+  三个测试时两种标注都落在主线程，要制造并行才看得出差别。

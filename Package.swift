@@ -72,6 +72,33 @@ let cidaxTarget: Target = devMode
         path: "bindings/swift/Frameworks/CIDAX.xcframework"
     )
 
+// Every call into idalib has to happen on the thread that initialised it, which
+// in practice is process main — the reasoning and the evidence are in
+// Sources/IDAX/Concurrency.swift. Module-wide default isolation is what turns
+// that from a convention into a compile-time guarantee: one setting covers every
+// declaration in the module, including ones added years from now by someone who
+// never read the rule.
+//
+// `defaultIsolation` accepts only `MainActor.Type?` — the parameter type is
+// hardcoded in PackageDescription — which is why `IDAActor` is a typealias for
+// `MainActor` rather than an independent global actor.
+//
+// The upcoming features below are what Xcode bundles as its "Approachable
+// Concurrency" switch, minus the three that Swift 6 already enables by default
+// (DisableOutwardActorInference, GlobalActorIsolatedTypesUsability,
+// InferSendableFromCaptures). NonisolatedNonsendingByDefault is the load-bearing
+// one here: without it a `nonisolated` async function hops to the global
+// executor, and hopping off the main thread is a deadlock, not a slowdown.
+let idaxSwiftSettings: [SwiftSetting] = [
+    .swiftLanguageMode(.v6),
+    .defaultIsolation(MainActor.self),
+    .enableExperimentalFeature("SafeInteropWrappers"),
+    .enableUpcomingFeature("NonisolatedNonsendingByDefault"),
+    .enableUpcomingFeature("InferIsolatedConformances"),
+    .enableUpcomingFeature("ImmutableWeakCaptures"),
+    .enableUpcomingFeature("MemberImportVisibility"),
+]
+
 let package = Package(
     name: "IDAX",
     platforms: [.macOS(.v13)],
@@ -94,14 +121,13 @@ let package = Package(
             name: "IDAX",
             dependencies: ["CIDAX"],
             path: "bindings/swift/Sources/IDAX",
-            swiftSettings: [
-                .enableExperimentalFeature("SafeInteropWrappers"),
-            ]
+            swiftSettings: idaxSwiftSettings
         ),
         .executableTarget(
             name: "idax-example",
             dependencies: ["IDAX"],
-            path: "bindings/swift/Examples"
+            path: "bindings/swift/Examples",
+            swiftSettings: idaxSwiftSettings
         ),
         .target(
             name: "IDAXDyldCacheDatabaseCreatorCore",
@@ -109,17 +135,23 @@ let package = Package(
                 "IDAX",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "bindings/swift/Tools/DyldCacheDatabaseCreatorCore"
+            path: "bindings/swift/Tools/DyldCacheDatabaseCreatorCore",
+            swiftSettings: idaxSwiftSettings
         ),
         .executableTarget(
             name: "IDAXDyldCacheDatabaseCreator",
-            dependencies: ["IDAXDyldCacheDatabaseCreatorCore"],
-            path: "bindings/swift/Tools/DyldCacheDatabaseCreator"
+            dependencies: [
+                "IDAXDyldCacheDatabaseCreatorCore",
+                .product(name: "ArgumentParser", package: "swift-argument-parser"),
+            ],
+            path: "bindings/swift/Tools/DyldCacheDatabaseCreator",
+            swiftSettings: idaxSwiftSettings
         ),
         .testTarget(
             name: "IDAXTests",
             dependencies: ["IDAX"],
-            path: "bindings/swift/Tests/IDAXTests"
+            path: "bindings/swift/Tests/IDAXTests",
+            swiftSettings: idaxSwiftSettings
         ),
         .testTarget(
             name: "IDAXDyldCacheDatabaseCreatorTests",
@@ -127,7 +159,8 @@ let package = Package(
                 "IDAXDyldCacheDatabaseCreatorCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "bindings/swift/Tests/IDAXDyldCacheDatabaseCreatorTests"
+            path: "bindings/swift/Tests/IDAXDyldCacheDatabaseCreatorTests",
+            swiftSettings: idaxSwiftSettings
         ),
         .plugin(
             name: "BuildXCFramework",

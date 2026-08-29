@@ -111,7 +111,7 @@ public struct AppcallResult: Sendable {
 // MARK: - Appcall conversion helpers
 
 /// Convert a Swift `AppcallValue` to the C struct representation.
-private func makeCAppcallValue(_ value: AppcallValue) -> IdaxDebuggerAppcallValue {
+private nonisolated func makeCAppcallValue(_ value: AppcallValue) -> IdaxDebuggerAppcallValue {
     var c = IdaxDebuggerAppcallValue()
     switch value {
     case .signedInteger(let v):
@@ -137,7 +137,7 @@ private func makeCAppcallValue(_ value: AppcallValue) -> IdaxDebuggerAppcallValu
 }
 
 /// Convert a C `IdaxDebuggerAppcallValue` to the Swift enum. Does not free the C value.
-private func makeSwiftAppcallValue(_ c: IdaxDebuggerAppcallValue) -> AppcallValue {
+private nonisolated func makeSwiftAppcallValue(_ c: IdaxDebuggerAppcallValue) -> AppcallValue {
     switch AppcallValueKind(rawValue: c.kind) {
     case .signedInteger:
         return .signedInteger(c.signed_value)
@@ -203,67 +203,67 @@ public struct DebuggerSubscription: ~Copyable, @unchecked Sendable {
 
 // MARK: - Callback boxes
 
-private final class ProcessStartedBox {
-    let handler: (ModuleInfo) -> Void
-    init(handler: @escaping (ModuleInfo) -> Void) { self.handler = handler }
+private nonisolated final class ProcessStartedBox {
+    let handler: @IDAActor (ModuleInfo) -> Void
+    init(handler: @escaping @IDAActor (ModuleInfo) -> Void) { self.handler = handler }
 }
 
-private final class ProcessExitedBox {
-    let handler: (Int32) -> Void
-    init(handler: @escaping (Int32) -> Void) { self.handler = handler }
+private nonisolated final class ProcessExitedBox {
+    let handler: @IDAActor (Int32) -> Void
+    init(handler: @escaping @IDAActor (Int32) -> Void) { self.handler = handler }
 }
 
-private final class ProcessSuspendedBox {
-    let handler: (Address) -> Void
-    init(handler: @escaping (Address) -> Void) { self.handler = handler }
+private nonisolated final class ProcessSuspendedBox {
+    let handler: @IDAActor (Address) -> Void
+    init(handler: @escaping @IDAActor (Address) -> Void) { self.handler = handler }
 }
 
-private final class BreakpointHitBox {
-    let handler: (Int32, Address) -> Void
-    init(handler: @escaping (Int32, Address) -> Void) { self.handler = handler }
+private nonisolated final class BreakpointHitBox {
+    let handler: @IDAActor (Int32, Address) -> Void
+    init(handler: @escaping @IDAActor (Int32, Address) -> Void) { self.handler = handler }
 }
 
-private final class TraceBox {
-    let handler: (Int32, Address) -> Bool
-    init(handler: @escaping (Int32, Address) -> Bool) { self.handler = handler }
+private nonisolated final class TraceBox {
+    let handler: @IDAActor (Int32, Address) -> Bool
+    init(handler: @escaping @IDAActor (Int32, Address) -> Bool) { self.handler = handler }
 }
 
-private final class ExceptionBox {
-    let handler: (ExceptionInfo) -> Void
-    init(handler: @escaping (ExceptionInfo) -> Void) { self.handler = handler }
+private nonisolated final class ExceptionBox {
+    let handler: @IDAActor (ExceptionInfo) -> Void
+    init(handler: @escaping @IDAActor (ExceptionInfo) -> Void) { self.handler = handler }
 }
 
-private final class ThreadStartedBox {
-    let handler: (Int32, String) -> Void
-    init(handler: @escaping (Int32, String) -> Void) { self.handler = handler }
+private nonisolated final class ThreadStartedBox {
+    let handler: @IDAActor (Int32, String) -> Void
+    init(handler: @escaping @IDAActor (Int32, String) -> Void) { self.handler = handler }
 }
 
-private final class ThreadExitedBox {
-    let handler: (Int32, Int32) -> Void
-    init(handler: @escaping (Int32, Int32) -> Void) { self.handler = handler }
+private nonisolated final class ThreadExitedBox {
+    let handler: @IDAActor (Int32, Int32) -> Void
+    init(handler: @escaping @IDAActor (Int32, Int32) -> Void) { self.handler = handler }
 }
 
-private final class LibraryLoadedBox {
-    let handler: (ModuleInfo) -> Void
-    init(handler: @escaping (ModuleInfo) -> Void) { self.handler = handler }
+private nonisolated final class LibraryLoadedBox {
+    let handler: @IDAActor (ModuleInfo) -> Void
+    init(handler: @escaping @IDAActor (ModuleInfo) -> Void) { self.handler = handler }
 }
 
-private final class LibraryUnloadedBox {
-    let handler: (String) -> Void
-    init(handler: @escaping (String) -> Void) { self.handler = handler }
+private nonisolated final class LibraryUnloadedBox {
+    let handler: @IDAActor (String) -> Void
+    init(handler: @escaping @IDAActor (String) -> Void) { self.handler = handler }
 }
 
-private final class BreakpointChangedBox {
-    let handler: (BreakpointChange, Address) -> Void
-    init(handler: @escaping (BreakpointChange, Address) -> Void) { self.handler = handler }
+private nonisolated final class BreakpointChangedBox {
+    let handler: @IDAActor (BreakpointChange, Address) -> Void
+    init(handler: @escaping @IDAActor (BreakpointChange, Address) -> Void) { self.handler = handler }
 }
 
-private final class AppcallExecutorBox {
-    let callback: (Address, UnsafeMutableRawPointer?, [AppcallValue], AppcallOptions) -> AppcallResult?
-    let cleanup: () -> Void
+private nonisolated final class AppcallExecutorBox {
+    let callback: @IDAActor (Address, UnsafeMutableRawPointer?, [AppcallValue], AppcallOptions) -> AppcallResult?
+    let cleanup: @IDAActor () -> Void
     init(
-        callback: @escaping (Address, UnsafeMutableRawPointer?, [AppcallValue], AppcallOptions) -> AppcallResult?,
-        cleanup: @escaping () -> Void
+        callback: @escaping @IDAActor (Address, UnsafeMutableRawPointer?, [AppcallValue], AppcallOptions) -> AppcallResult?,
+        cleanup: @escaping @IDAActor () -> Void
     ) {
         self.callback = callback
         self.cleanup = cleanup
@@ -272,168 +272,214 @@ private final class AppcallExecutorBox {
 
 // MARK: - Trampolines
 
-private func processStartedTrampoline(
+private nonisolated func processStartedTrampoline(
     ctx: UnsafeMutableRawPointer?,
     info: UnsafePointer<IdaxDebuggerModuleInfo>?
 ) {
-    guard let ctx, let info else { return }
-    let box = Unmanaged<ProcessStartedBox>.fromOpaque(ctx).takeUnretainedValue()
-    let mi = ModuleInfo(
-        name: borrowCString(info.pointee.name),
-        base: info.pointee.base,
-        size: info.pointee.size
-    )
-    box.handler(mi)
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let info = info
+    onIDAThread {
+        guard let ctx, let info else { return }
+        let box = Unmanaged<ProcessStartedBox>.fromOpaque(ctx).takeUnretainedValue()
+        let mi = ModuleInfo(
+            name: borrowCString(info.pointee.name),
+            base: info.pointee.base,
+            size: info.pointee.size
+        )
+        box.handler(mi)
+    }
 }
 
-private func processExitedTrampoline(
+private nonisolated func processExitedTrampoline(
     ctx: UnsafeMutableRawPointer?,
     exitCode: Int32
 ) {
-    guard let ctx else { return }
-    let box = Unmanaged<ProcessExitedBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(exitCode)
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<ProcessExitedBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(exitCode)
+    }
 }
 
-private func processSuspendedTrampoline(
+private nonisolated func processSuspendedTrampoline(
     ctx: UnsafeMutableRawPointer?,
     address: UInt64
 ) {
-    guard let ctx else { return }
-    let box = Unmanaged<ProcessSuspendedBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(address)
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<ProcessSuspendedBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(address)
+    }
 }
 
-private func breakpointHitTrampoline(
+private nonisolated func breakpointHitTrampoline(
     ctx: UnsafeMutableRawPointer?,
     threadId: Int32,
     address: UInt64
 ) {
-    guard let ctx else { return }
-    let box = Unmanaged<BreakpointHitBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(threadId, address)
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<BreakpointHitBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(threadId, address)
+    }
 }
 
-private func traceTrampoline(
+private nonisolated func traceTrampoline(
     ctx: UnsafeMutableRawPointer?,
     threadId: Int32,
     ip: UInt64
 ) -> Int32 {
-    guard let ctx else { return 0 }
-    let box = Unmanaged<TraceBox>.fromOpaque(ctx).takeUnretainedValue()
-    return box.handler(threadId, ip) ? 1 : 0
+    nonisolated(unsafe) let ctx = ctx
+    return onIDAThread {
+        guard let ctx else { return 0 }
+        let box = Unmanaged<TraceBox>.fromOpaque(ctx).takeUnretainedValue()
+        return box.handler(threadId, ip) ? 1 : 0
+    }
 }
 
-private func exceptionTrampoline(
+private nonisolated func exceptionTrampoline(
     ctx: UnsafeMutableRawPointer?,
     info: UnsafePointer<IdaxDebuggerExceptionInfo>?
 ) {
-    guard let ctx, let info else { return }
-    let box = Unmanaged<ExceptionBox>.fromOpaque(ctx).takeUnretainedValue()
-    let ei = ExceptionInfo(
-        address: info.pointee.ea,
-        code: info.pointee.code,
-        canContinue: info.pointee.can_continue != 0,
-        message: borrowCString(info.pointee.message)
-    )
-    box.handler(ei)
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let info = info
+    onIDAThread {
+        guard let ctx, let info else { return }
+        let box = Unmanaged<ExceptionBox>.fromOpaque(ctx).takeUnretainedValue()
+        let ei = ExceptionInfo(
+            address: info.pointee.ea,
+            code: info.pointee.code,
+            canContinue: info.pointee.can_continue != 0,
+            message: borrowCString(info.pointee.message)
+        )
+        box.handler(ei)
+    }
 }
 
-private func threadStartedTrampoline(
+private nonisolated func threadStartedTrampoline(
     ctx: UnsafeMutableRawPointer?,
     threadId: Int32,
     name: UnsafePointer<CChar>?
 ) {
-    guard let ctx else { return }
-    let box = Unmanaged<ThreadStartedBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(threadId, borrowCString(name))
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let name = name
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<ThreadStartedBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(threadId, borrowCString(name))
+    }
 }
 
-private func threadExitedTrampoline(
+private nonisolated func threadExitedTrampoline(
     ctx: UnsafeMutableRawPointer?,
     threadId: Int32,
     exitCode: Int32
 ) {
-    guard let ctx else { return }
-    let box = Unmanaged<ThreadExitedBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(threadId, exitCode)
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<ThreadExitedBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(threadId, exitCode)
+    }
 }
 
-private func libraryLoadedTrampoline(
+private nonisolated func libraryLoadedTrampoline(
     ctx: UnsafeMutableRawPointer?,
     info: UnsafePointer<IdaxDebuggerModuleInfo>?
 ) {
-    guard let ctx, let info else { return }
-    let box = Unmanaged<LibraryLoadedBox>.fromOpaque(ctx).takeUnretainedValue()
-    let mi = ModuleInfo(
-        name: borrowCString(info.pointee.name),
-        base: info.pointee.base,
-        size: info.pointee.size
-    )
-    box.handler(mi)
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let info = info
+    onIDAThread {
+        guard let ctx, let info else { return }
+        let box = Unmanaged<LibraryLoadedBox>.fromOpaque(ctx).takeUnretainedValue()
+        let mi = ModuleInfo(
+            name: borrowCString(info.pointee.name),
+            base: info.pointee.base,
+            size: info.pointee.size
+        )
+        box.handler(mi)
+    }
 }
 
-private func libraryUnloadedTrampoline(
+private nonisolated func libraryUnloadedTrampoline(
     ctx: UnsafeMutableRawPointer?,
     name: UnsafePointer<CChar>?
 ) {
-    guard let ctx else { return }
-    let box = Unmanaged<LibraryUnloadedBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler(borrowCString(name))
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let name = name
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<LibraryUnloadedBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.handler(borrowCString(name))
+    }
 }
 
-private func breakpointChangedTrampoline(
+private nonisolated func breakpointChangedTrampoline(
     ctx: UnsafeMutableRawPointer?,
     change: Int32,
     address: UInt64
 ) {
-    guard let ctx else { return }
-    let box = Unmanaged<BreakpointChangedBox>.fromOpaque(ctx).takeUnretainedValue()
-    let kind = BreakpointChange(rawValue: change) ?? .changed
-    box.handler(kind, address)
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<BreakpointChangedBox>.fromOpaque(ctx).takeUnretainedValue()
+        let kind = BreakpointChange(rawValue: change) ?? .changed
+        box.handler(kind, address)
+    }
 }
 
-private func appcallExecutorTrampoline(
+private nonisolated func appcallExecutorTrampoline(
     ctx: UnsafeMutableRawPointer?,
     request: UnsafePointer<IdaxDebuggerAppcallRequest>?,
     outResult: UnsafeMutablePointer<IdaxDebuggerAppcallResult>?
 ) -> Int32 {
-    guard let ctx, let request, let outResult else { return 0 }
-    let box = Unmanaged<AppcallExecutorBox>.fromOpaque(ctx).takeUnretainedValue()
+    nonisolated(unsafe) let ctx = ctx
+    nonisolated(unsafe) let request = request
+    nonisolated(unsafe) let outResult = outResult
+    return onIDAThread {
+        guard let ctx, let request, let outResult else { return 0 }
+        let box = Unmanaged<AppcallExecutorBox>.fromOpaque(ctx).takeUnretainedValue()
 
-    // Convert arguments
-    var args: [AppcallValue] = []
-    if let argPtr = request.pointee.arguments, request.pointee.argument_count > 0 {
-        let buf = UnsafeBufferPointer(start: argPtr, count: request.pointee.argument_count)
-        args = buf.map { makeSwiftAppcallValue($0) }
+        // Convert arguments
+        var args: [AppcallValue] = []
+        if let argPtr = request.pointee.arguments, request.pointee.argument_count > 0 {
+            let buf = UnsafeBufferPointer(start: argPtr, count: request.pointee.argument_count)
+            args = buf.map { makeSwiftAppcallValue($0) }
+        }
+
+        // Convert options
+        var opts = AppcallOptions()
+        let cOpts = request.pointee.options
+        if cOpts.has_thread_id != 0 { opts.threadId = cOpts.thread_id }
+        opts.manual = cOpts.manual != 0
+        opts.includeDebugEvent = cOpts.include_debug_event != 0
+        if cOpts.has_timeout_milliseconds != 0 { opts.timeoutMilliseconds = cOpts.timeout_milliseconds }
+
+        guard let result = box.callback(
+            request.pointee.function_address,
+            request.pointee.function_type,
+            args,
+            opts
+        ) else {
+            return 0
+        }
+
+        outResult.pointee.return_value = makeCAppcallValue(result.returnValue)
+        outResult.pointee.diagnostics = result.diagnostics.isEmpty ? nil : strdup(result.diagnostics)
+        return 1
     }
-
-    // Convert options
-    var opts = AppcallOptions()
-    let cOpts = request.pointee.options
-    if cOpts.has_thread_id != 0 { opts.threadId = cOpts.thread_id }
-    opts.manual = cOpts.manual != 0
-    opts.includeDebugEvent = cOpts.include_debug_event != 0
-    if cOpts.has_timeout_milliseconds != 0 { opts.timeoutMilliseconds = cOpts.timeout_milliseconds }
-
-    guard let result = box.callback(
-        request.pointee.function_address,
-        request.pointee.function_type,
-        args,
-        opts
-    ) else {
-        return 0
-    }
-
-    outResult.pointee.return_value = makeCAppcallValue(result.returnValue)
-    outResult.pointee.diagnostics = result.diagnostics.isEmpty ? nil : strdup(result.diagnostics)
-    return 1
 }
 
-private func appcallExecutorCleanupTrampoline(ctx: UnsafeMutableRawPointer?) {
-    guard let ctx else { return }
-    let box = Unmanaged<AppcallExecutorBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.cleanup()
+private nonisolated func appcallExecutorCleanupTrampoline(ctx: UnsafeMutableRawPointer?) {
+    nonisolated(unsafe) let ctx = ctx
+    onIDAThread {
+        guard let ctx else { return }
+        let box = Unmanaged<AppcallExecutorBox>.fromOpaque(ctx).takeUnretainedValue()
+        box.cleanup()
+    }
 }
 
 // MARK: - Debugger namespace
@@ -863,8 +909,8 @@ public enum Debugger {
     /// Register an appcall executor with the given name.
     public static func registerExecutor(
         name: String,
-        callback: @escaping (Address, UnsafeMutableRawPointer?, [AppcallValue], AppcallOptions) -> AppcallResult?,
-        cleanup: @escaping () -> Void = {}
+        callback: @escaping @IDAActor (Address, UnsafeMutableRawPointer?, [AppcallValue], AppcallOptions) -> AppcallResult?,
+        cleanup: @escaping @IDAActor () -> Void = {}
     ) throws(IDAError) {
         let box = AppcallExecutorBox(callback: callback, cleanup: cleanup)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -935,7 +981,7 @@ public enum Debugger {
 
     /// Subscribe to process-started events.
     public static func onProcessStarted(
-        _ handler: @escaping (ModuleInfo) -> Void
+        _ handler: @escaping @IDAActor (ModuleInfo) -> Void
     ) throws(IDAError) -> DebuggerSubscription {
         let box = ProcessStartedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -954,7 +1000,7 @@ public enum Debugger {
 
     /// Subscribe to process-exited events.
     public static func onProcessExited(
-        _ handler: @escaping (Int32) -> Void
+        _ handler: @escaping @IDAActor (Int32) -> Void
     ) throws(IDAError) -> DebuggerSubscription {
         let box = ProcessExitedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -973,7 +1019,7 @@ public enum Debugger {
 
     /// Subscribe to process-suspended events.
     public static func onProcessSuspended(
-        _ handler: @escaping (Address) -> Void
+        _ handler: @escaping @IDAActor (Address) -> Void
     ) throws(IDAError) -> DebuggerSubscription {
         let box = ProcessSuspendedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -992,7 +1038,7 @@ public enum Debugger {
 
     /// Subscribe to breakpoint-hit events.
     public static func onBreakpointHit(
-        _ handler: @escaping (Int32, Address) -> Void
+        _ handler: @escaping @IDAActor (Int32, Address) -> Void
     ) throws(IDAError) -> DebuggerSubscription {
         let box = BreakpointHitBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1011,7 +1057,7 @@ public enum Debugger {
 
     /// Subscribe to trace events. Return `true` from the handler to continue tracing.
     public static func onTrace(
-        _ handler: @escaping (Int32, Address) -> Bool
+        _ handler: @escaping @IDAActor (Int32, Address) -> Bool
     ) throws(IDAError) -> DebuggerSubscription {
         let box = TraceBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1030,7 +1076,7 @@ public enum Debugger {
 
     /// Subscribe to exception events.
     public static func onException(
-        _ handler: @escaping (ExceptionInfo) -> Void
+        _ handler: @escaping @IDAActor (ExceptionInfo) -> Void
     ) throws(IDAError) -> DebuggerSubscription {
         let box = ExceptionBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1049,7 +1095,7 @@ public enum Debugger {
 
     /// Subscribe to thread-started events.
     public static func onThreadStarted(
-        _ handler: @escaping (Int32, String) -> Void
+        _ handler: @escaping @IDAActor (Int32, String) -> Void
     ) throws(IDAError) -> DebuggerSubscription {
         let box = ThreadStartedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1068,7 +1114,7 @@ public enum Debugger {
 
     /// Subscribe to thread-exited events.
     public static func onThreadExited(
-        _ handler: @escaping (Int32, Int32) -> Void
+        _ handler: @escaping @IDAActor (Int32, Int32) -> Void
     ) throws(IDAError) -> DebuggerSubscription {
         let box = ThreadExitedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1087,7 +1133,7 @@ public enum Debugger {
 
     /// Subscribe to library-loaded events.
     public static func onLibraryLoaded(
-        _ handler: @escaping (ModuleInfo) -> Void
+        _ handler: @escaping @IDAActor (ModuleInfo) -> Void
     ) throws(IDAError) -> DebuggerSubscription {
         let box = LibraryLoadedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1106,7 +1152,7 @@ public enum Debugger {
 
     /// Subscribe to library-unloaded events.
     public static func onLibraryUnloaded(
-        _ handler: @escaping (String) -> Void
+        _ handler: @escaping @IDAActor (String) -> Void
     ) throws(IDAError) -> DebuggerSubscription {
         let box = LibraryUnloadedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1125,7 +1171,7 @@ public enum Debugger {
 
     /// Subscribe to breakpoint-changed events.
     public static func onBreakpointChanged(
-        _ handler: @escaping (BreakpointChange, Address) -> Void
+        _ handler: @escaping @IDAActor (BreakpointChange, Address) -> Void
     ) throws(IDAError) -> DebuggerSubscription {
         let box = BreakpointChangedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()

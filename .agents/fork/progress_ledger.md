@@ -124,3 +124,12 @@ tool, and both had claimed `P23.1`.
   - F4.3. 从当前 checkout 以 IDA SDK 9.4 重建实际 Swift development archives；`libidax.a` 与 `libidax_shim.a` 随后在隔离 SwiftPM package 中完成 clean build，Swift full suite 83 tests / 33 suites 全部通过。
   - F4.4. 下游 `swift-decompiler` 移除重复的 `-undefined dynamic_lookup` 后，adapter package clean build 与 131 tests 全部通过；产物直接链接 `@rpath/libida.dylib` / `@rpath/libidalib.dylib`，并携带 IDA 9.4 runtime rpath。
   - F4.5. 使用 macOS 26.5.2 的 SwiftUI + SwiftUICore + AppKit database 克隆运行原崩溃函数：2/2 函数均完成 LIR / MIR / HIR，HIR failures 为 0，进程正常输出 `Done.`，关闭后没有 `.id0` / `.id1` / `.nam` / `.til` 残留。`idax_shim.cpp` 单 translation unit 仍是 link-size debt，但不再是 runtime blocker。
+
+- **F5. Swift MainActor Isolation**
+  - F5.1. `Package.swift` 现在给 IDAX 与全部依赖它的 target 套用同一份 `idaxSwiftSettings`：`.swiftLanguageMode(.v6)`（显式声明，防止将来 tools-version 变动静默漂移）、`.defaultIsolation(MainActor.self)`，以及 `NonisolatedNonsendingByDefault` / `InferIsolatedConformances` / `ImmutableWeakCaptures` / `MemberImportVisibility` 四个 upcoming feature。
+  - F5.2. 新增 `Sources/IDAX/Concurrency.swift`：`public typealias IDAActor = MainActor` 与 `public func onIDAThread`。后者是 `MainActor.assumeIsolated` 的具名封装，把「凭什么可以 assume」的论证收在一处，而不是抄进 64 个 trampoline。
+  - F5.3. 契约进类型：108 个 `@escaping` 回调参数、17 个 optional 闭包参数、53 个存储闭包属性全部标注 `@IDAActor`。此前调用方从签名看不出回调在哪个线程执行，也看不出能否在其中回调 IDA。
+  - F5.4. 64 个 C trampoline 标 `nonisolated`（C 函数指针只能由 nonisolated 函数构成），函数体整体包进 `onIDAThread`，指针参数逐个 `nonisolated(unsafe)` 就地同名遮蔽。39 个 Box 容器与 8 个纯转换 helper 标 `nonisolated`。
+  - F5.5. 全部 117 处 `Sendable` 提及中的 23 处 `@unchecked Sendable` 移除；其余 93 处是普通遵循，保留。
+  - F5.6. CLI 工具跟着改：`ParsableCommand` 的 `run()` / `validate()` 是协议要求的 nonisolated，`run()` 的 IDA 调用改为先把 plan 与 8 个 Bool flag 取成局部常量再进 `onIDAThread`；`validate()` 只碰 FileManager 与 URL，不需要包裹。
+  - F5.7. 验证：`IDAX_DEV=1 swift build` 与 `swift test` 均 0 error 0 warning，83 tests / 33 suites 通过，与改动前基线一致。Consumer 模式在本 commit 前后同为 13 个 error（`IdaxDecompilerCommentPosition` 等符号缺失），已用 HEAD 的 baseline worktree 确证是 XCFramework 过期的既有问题，与本次改动无关；修复归 F7。

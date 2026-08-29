@@ -238,10 +238,10 @@ public struct DecompiledFunction: ~Copyable, @unchecked Sendable {
 
     // MARK: - Visitors
 
-    public func forEachExpression(_ visitor: @escaping (Int, Address) -> Bool) throws(IDAError) -> Int {
+    public func forEachExpression(_ visitor: @escaping @IDAActor (Int, Address) -> Bool) throws(IDAError) -> Int {
         final class VisitorBox {
-            let visitor: (Int, Address) -> Bool
-            init(_ visitor: @escaping (Int, Address) -> Bool) { self.visitor = visitor }
+            let visitor: @IDAActor (Int, Address) -> Bool
+            init(_ visitor: @escaping @IDAActor (Int, Address) -> Bool) { self.visitor = visitor }
         }
         let box = VisitorBox(visitor)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -260,15 +260,15 @@ public struct DecompiledFunction: ~Copyable, @unchecked Sendable {
     }
 
     public func forEachItem(
-        expressionVisitor: @escaping (Int, Address) -> Bool,
-        statementVisitor: @escaping (Int, Address) -> Bool
+        expressionVisitor: @escaping @IDAActor (Int, Address) -> Bool,
+        statementVisitor: @escaping @IDAActor (Int, Address) -> Bool
     ) throws(IDAError) -> Int {
         final class ItemVisitorBox {
-            let exprVisitor: (Int, Address) -> Bool
-            let stmtVisitor: (Int, Address) -> Bool
+            let exprVisitor: @IDAActor (Int, Address) -> Bool
+            let stmtVisitor: @IDAActor (Int, Address) -> Bool
             init(
-                _ exprVisitor: @escaping (Int, Address) -> Bool,
-                _ stmtVisitor: @escaping (Int, Address) -> Bool
+                _ exprVisitor: @escaping @IDAActor (Int, Address) -> Bool,
+                _ stmtVisitor: @escaping @IDAActor (Int, Address) -> Bool
             ) {
                 self.exprVisitor = exprVisitor
                 self.stmtVisitor = stmtVisitor
@@ -303,15 +303,15 @@ public struct DecompiledFunction: ~Copyable, @unchecked Sendable {
     /// Return `.continue` to keep traversing, `.stop` to halt, `.skipChildren` to skip subtree.
     public func visitCtree(
         postOrder: Bool = false,
-        expressionVisitor: ((CtreeExpression) -> CtreeVisitAction)? = nil,
-        statementVisitor: ((CtreeStatement) -> CtreeVisitAction)? = nil
+        expressionVisitor: (@IDAActor (CtreeExpression) -> CtreeVisitAction)? = nil,
+        statementVisitor: (@IDAActor (CtreeStatement) -> CtreeVisitAction)? = nil
     ) throws(IDAError) -> Int {
         final class VisitorBox {
-            let exprVisitor: ((CtreeExpression) -> CtreeVisitAction)?
-            let stmtVisitor: ((CtreeStatement) -> CtreeVisitAction)?
+            let exprVisitor: (@IDAActor (CtreeExpression) -> CtreeVisitAction)?
+            let stmtVisitor: (@IDAActor (CtreeStatement) -> CtreeVisitAction)?
             init(
-                _ exprVisitor: ((CtreeExpression) -> CtreeVisitAction)?,
-                _ stmtVisitor: ((CtreeStatement) -> CtreeVisitAction)?
+                _ exprVisitor: (@IDAActor (CtreeExpression) -> CtreeVisitAction)?,
+                _ stmtVisitor: (@IDAActor (CtreeStatement) -> CtreeVisitAction)?
             ) {
                 self.exprVisitor = exprVisitor
                 self.stmtVisitor = stmtVisitor
@@ -458,10 +458,10 @@ public struct DecompiledFunction: ~Copyable, @unchecked Sendable {
     /// Return `.continue` to keep traversing, `.stop` to halt, `.skipChildren` to skip subtree.
     public func visitCtreeEx(
         postOrder: Bool = false,
-        expressionVisitor: ((CtreeExpression) -> CtreeVisitAction)? = nil,
-        statementVisitor: ((CtreeStatement) -> CtreeVisitAction)? = nil,
-        expressionLeave: ((CtreeExpression) -> CtreeVisitAction)? = nil,
-        statementLeave: ((CtreeStatement) -> CtreeVisitAction)? = nil
+        expressionVisitor: (@IDAActor (CtreeExpression) -> CtreeVisitAction)? = nil,
+        statementVisitor: (@IDAActor (CtreeStatement) -> CtreeVisitAction)? = nil,
+        expressionLeave: (@IDAActor (CtreeExpression) -> CtreeVisitAction)? = nil,
+        statementLeave: (@IDAActor (CtreeStatement) -> CtreeVisitAction)? = nil
     ) throws(IDAError) -> Int {
         // Fall back to the simpler visit when no leave callbacks are needed.
         if expressionLeave == nil && statementLeave == nil {
@@ -473,15 +473,15 @@ public struct DecompiledFunction: ~Copyable, @unchecked Sendable {
         }
 
         final class VisitorExBox {
-            let exprVisitor: ((CtreeExpression) -> CtreeVisitAction)?
-            let stmtVisitor: ((CtreeStatement) -> CtreeVisitAction)?
-            let exprLeave: ((CtreeExpression) -> CtreeVisitAction)?
-            let stmtLeave: ((CtreeStatement) -> CtreeVisitAction)?
+            let exprVisitor: (@IDAActor (CtreeExpression) -> CtreeVisitAction)?
+            let stmtVisitor: (@IDAActor (CtreeStatement) -> CtreeVisitAction)?
+            let exprLeave: (@IDAActor (CtreeExpression) -> CtreeVisitAction)?
+            let stmtLeave: (@IDAActor (CtreeStatement) -> CtreeVisitAction)?
             init(
-                _ exprVisitor: ((CtreeExpression) -> CtreeVisitAction)?,
-                _ stmtVisitor: ((CtreeStatement) -> CtreeVisitAction)?,
-                _ exprLeave: ((CtreeExpression) -> CtreeVisitAction)?,
-                _ stmtLeave: ((CtreeStatement) -> CtreeVisitAction)?
+                _ exprVisitor: (@IDAActor (CtreeExpression) -> CtreeVisitAction)?,
+                _ stmtVisitor: (@IDAActor (CtreeStatement) -> CtreeVisitAction)?,
+                _ exprLeave: (@IDAActor (CtreeExpression) -> CtreeVisitAction)?,
+                _ stmtLeave: (@IDAActor (CtreeStatement) -> CtreeVisitAction)?
             ) {
                 self.exprVisitor = exprVisitor
                 self.stmtVisitor = stmtVisitor
@@ -1436,32 +1436,32 @@ public struct MicrocodeFilterSubscription: ~Copyable, @unchecked Sendable {
 
 // MARK: - Decompiler callback boxes and trampolines
 
-private final class MaturityChangedBox {
-    let handler: (Address, Int) -> Void
-    init(handler: @escaping (Address, Int) -> Void) { self.handler = handler }
+private nonisolated final class MaturityChangedBox {
+    let handler: @IDAActor (Address, Int) -> Void
+    init(handler: @escaping @IDAActor (Address, Int) -> Void) { self.handler = handler }
 }
 
-private final class PseudocodeEventBox {
-    let handler: (Address) -> Void
-    init(handler: @escaping (Address) -> Void) { self.handler = handler }
+private nonisolated final class PseudocodeEventBox {
+    let handler: @IDAActor (Address) -> Void
+    init(handler: @escaping @IDAActor (Address) -> Void) { self.handler = handler }
 }
 
-private final class CursorPositionBox {
-    let handler: (Address, Address) -> Void
-    init(handler: @escaping (Address, Address) -> Void) { self.handler = handler }
+private nonisolated final class CursorPositionBox {
+    let handler: @IDAActor (Address, Address) -> Void
+    init(handler: @escaping @IDAActor (Address, Address) -> Void) { self.handler = handler }
 }
 
-private final class CreateHintBox {
-    let handler: (Address, Address) -> (String, Int)?
-    init(handler: @escaping (Address, Address) -> (String, Int)?) { self.handler = handler }
+private nonisolated final class CreateHintBox {
+    let handler: @IDAActor (Address, Address) -> (String, Int)?
+    init(handler: @escaping @IDAActor (Address, Address) -> (String, Int)?) { self.handler = handler }
 }
 
-private final class MicrocodeFilterBox {
-    let match: (Address, Int) -> Bool
-    let apply: (MicrocodeContext) -> Bool
+private nonisolated final class MicrocodeFilterBox {
+    let match: @IDAActor (Address, Int) -> Bool
+    let apply: @IDAActor (MicrocodeContext) -> Bool
     init(
-        match: @escaping (Address, Int) -> Bool,
-        apply: @escaping (MicrocodeContext) -> Bool
+        match: @escaping @IDAActor (Address, Int) -> Bool,
+        apply: @escaping @IDAActor (MicrocodeContext) -> Bool
     ) {
         self.match = match
         self.apply = apply
@@ -1601,7 +1601,7 @@ public enum Decompiler {
     // MARK: - Event subscriptions
 
     public static func onMaturityChanged(
-        _ handler: @escaping (Address, Int) -> Void
+        _ handler: @escaping @IDAActor (Address, Int) -> Void
     ) throws(IDAError) -> DecompilerSubscription {
         let box = MaturityChangedBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1619,7 +1619,7 @@ public enum Decompiler {
     }
 
     public static func onFuncPrinted(
-        _ handler: @escaping (Address) -> Void
+        _ handler: @escaping @IDAActor (Address) -> Void
     ) throws(IDAError) -> DecompilerSubscription {
         let box = PseudocodeEventBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1637,7 +1637,7 @@ public enum Decompiler {
     }
 
     public static func onRefreshPseudocode(
-        _ handler: @escaping (Address) -> Void
+        _ handler: @escaping @IDAActor (Address) -> Void
     ) throws(IDAError) -> DecompilerSubscription {
         let box = PseudocodeEventBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1655,7 +1655,7 @@ public enum Decompiler {
     }
 
     public static func onCursorPositionChanged(
-        _ handler: @escaping (Address, Address) -> Void
+        _ handler: @escaping @IDAActor (Address, Address) -> Void
     ) throws(IDAError) -> DecompilerSubscription {
         let box = CursorPositionBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1673,7 +1673,7 @@ public enum Decompiler {
     }
 
     public static func onCreateHint(
-        _ handler: @escaping (Address, Address) -> (String, Int)?
+        _ handler: @escaping @IDAActor (Address, Address) -> (String, Int)?
     ) throws(IDAError) -> DecompilerSubscription {
         let box = CreateHintBox(handler: handler)
         let ctx = Unmanaged.passRetained(box).toOpaque()
@@ -1693,8 +1693,8 @@ public enum Decompiler {
     // MARK: - Microcode filter
 
     public static func registerMicrocodeFilter(
-        match: @escaping (Address, Int) -> Bool,
-        apply: @escaping (MicrocodeContext) -> Bool
+        match: @escaping @IDAActor (Address, Int) -> Bool,
+        apply: @escaping @IDAActor (MicrocodeContext) -> Bool
     ) throws(IDAError) -> MicrocodeFilterSubscription {
         let box = MicrocodeFilterBox(match: match, apply: apply)
         let ctx = Unmanaged.passRetained(box).toOpaque()

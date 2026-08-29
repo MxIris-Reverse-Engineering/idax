@@ -270,7 +270,7 @@ public struct SwitchCase: Sendable {
 }
 
 /// Opaque, SDK-free description of a detected switch idiom.
-public struct SwitchDescription: Sendable {
+public nonisolated struct SwitchDescription: Sendable {
     public var kind: SwitchTableKind
     public var jumpTable: Address
     public var valuesTable: Address
@@ -668,7 +668,7 @@ public func registerProcessor(_ module: some ProcessorModule) throws(IDAError) -
 
 // MARK: - Private callback box
 
-private final class ProcessorBox {
+private nonisolated final class ProcessorBox {
     let module: any ProcessorModule
     init(module: any ProcessorModule) { self.module = module }
 }
@@ -676,407 +676,492 @@ private final class ProcessorBox {
 // MARK: - C trampoline functions
 
 // Helper to extract box from opaque context.
-private func extractModule(_ context: UnsafeMutableRawPointer?) -> (any ProcessorModule)? {
+private nonisolated func extractModule(_ context: UnsafeMutableRawPointer?) -> (any ProcessorModule)? {
     guard let context else { return nil }
     return Unmanaged<ProcessorBox>.fromOpaque(context).takeUnretainedValue().module
 }
 
 // ── Required trampolines ───────────────────────────────────────────────
 
-private func processorInfoTrampoline(
+private nonisolated func processorInfoTrampoline(
     context: UnsafeMutableRawPointer?,
     out: UnsafeMutablePointer<IdaxProcessorInfo>?
 ) {
-    guard let module = extractModule(context), let out else { return }
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let out = out
+    onIDAThread {
+        guard let module = extractModule(context), let out else { return }
 
-    let processorInfo = module.info
+        let processorInfo = module.info
 
-    // Zero-initialize the output.
-    out.pointee = IdaxProcessorInfo()
+        // Zero-initialize the output.
+        out.pointee = IdaxProcessorInfo()
 
-    out.pointee.id = processorInfo.id
-    out.pointee.flags = processorInfo.flags.rawValue
-    out.pointee.flags2 = processorInfo.flags2
-    out.pointee.code_bits_per_byte = processorInfo.codeBitsPerByte
-    out.pointee.data_bits_per_byte = processorInfo.dataBitsPerByte
-    out.pointee.code_segment_register = processorInfo.codeSegmentRegister
-    out.pointee.data_segment_register = processorInfo.dataSegmentRegister
-    out.pointee.first_segment_register = processorInfo.firstSegmentRegister
-    out.pointee.last_segment_register = processorInfo.lastSegmentRegister
-    out.pointee.segment_register_size = processorInfo.segmentRegisterSize
-    out.pointee.return_icode = processorInfo.returnIcode
-    out.pointee.default_bitness = processorInfo.defaultBitness
+        out.pointee.id = processorInfo.id
+        out.pointee.flags = processorInfo.flags.rawValue
+        out.pointee.flags2 = processorInfo.flags2
+        out.pointee.code_bits_per_byte = processorInfo.codeBitsPerByte
+        out.pointee.data_bits_per_byte = processorInfo.dataBitsPerByte
+        out.pointee.code_segment_register = processorInfo.codeSegmentRegister
+        out.pointee.data_segment_register = processorInfo.dataSegmentRegister
+        out.pointee.first_segment_register = processorInfo.firstSegmentRegister
+        out.pointee.last_segment_register = processorInfo.lastSegmentRegister
+        out.pointee.segment_register_size = processorInfo.segmentRegisterSize
+        out.pointee.return_icode = processorInfo.returnIcode
+        out.pointee.default_bitness = processorInfo.defaultBitness
 
-    // Short names
-    if !processorInfo.shortNames.isEmpty {
-        let count = processorInfo.shortNames.count
-        let array = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: count)
-        for (index, name) in processorInfo.shortNames.enumerated() {
-            array[index] = strdup(name)
+        // Short names
+        if !processorInfo.shortNames.isEmpty {
+            let count = processorInfo.shortNames.count
+            let array = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: count)
+            for (index, name) in processorInfo.shortNames.enumerated() {
+                array[index] = strdup(name)
+            }
+            out.pointee.short_names = array
+            out.pointee.short_name_count = count
         }
-        out.pointee.short_names = array
-        out.pointee.short_name_count = count
-    }
 
-    // Long names
-    if !processorInfo.longNames.isEmpty {
-        let count = processorInfo.longNames.count
-        let array = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: count)
-        for (index, name) in processorInfo.longNames.enumerated() {
-            array[index] = strdup(name)
+        // Long names
+        if !processorInfo.longNames.isEmpty {
+            let count = processorInfo.longNames.count
+            let array = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: count)
+            for (index, name) in processorInfo.longNames.enumerated() {
+                array[index] = strdup(name)
+            }
+            out.pointee.long_names = array
+            out.pointee.long_name_count = count
         }
-        out.pointee.long_names = array
-        out.pointee.long_name_count = count
-    }
 
-    // Registers
-    if !processorInfo.registers.isEmpty {
-        let count = processorInfo.registers.count
-        let array = UnsafeMutablePointer<IdaxRegisterInfo>.allocate(capacity: count)
-        for (index, register) in processorInfo.registers.enumerated() {
-            array[index] = IdaxRegisterInfo(
-                name: strdup(register.name),
-                read_only: register.readOnly ? 1 : 0
-            )
+        // Registers
+        if !processorInfo.registers.isEmpty {
+            let count = processorInfo.registers.count
+            let array = UnsafeMutablePointer<IdaxRegisterInfo>.allocate(capacity: count)
+            for (index, register) in processorInfo.registers.enumerated() {
+                array[index] = IdaxRegisterInfo(
+                    name: strdup(register.name),
+                    read_only: register.readOnly ? 1 : 0
+                )
+            }
+            out.pointee.registers = array
+            out.pointee.register_count = count
         }
-        out.pointee.registers = array
-        out.pointee.register_count = count
-    }
 
-    // Instructions
-    if !processorInfo.instructions.isEmpty {
-        let count = processorInfo.instructions.count
-        let array = UnsafeMutablePointer<IdaxInstructionDescriptor>.allocate(capacity: count)
-        for (index, instruction) in processorInfo.instructions.enumerated() {
-            array[index] = IdaxInstructionDescriptor(
-                mnemonic: strdup(instruction.mnemonic),
-                feature_flags: instruction.featureFlags.rawValue,
-                operand_count: instruction.operandCount,
-                description: strdup(instruction.description),
-                privileged: instruction.privileged ? 1 : 0
-            )
+        // Instructions
+        if !processorInfo.instructions.isEmpty {
+            let count = processorInfo.instructions.count
+            let array = UnsafeMutablePointer<IdaxInstructionDescriptor>.allocate(capacity: count)
+            for (index, instruction) in processorInfo.instructions.enumerated() {
+                array[index] = IdaxInstructionDescriptor(
+                    mnemonic: strdup(instruction.mnemonic),
+                    feature_flags: instruction.featureFlags.rawValue,
+                    operand_count: instruction.operandCount,
+                    description: strdup(instruction.description),
+                    privileged: instruction.privileged ? 1 : 0
+                )
+            }
+            out.pointee.instructions = array
+            out.pointee.instruction_count = count
         }
-        out.pointee.instructions = array
-        out.pointee.instruction_count = count
-    }
 
-    // Assemblers
-    if !processorInfo.assemblers.isEmpty {
-        let count = processorInfo.assemblers.count
-        let array = UnsafeMutablePointer<IdaxAssemblerInfo>.allocate(capacity: count)
-        for (index, assembler) in processorInfo.assemblers.enumerated() {
-            array[index] = IdaxAssemblerInfo(
-                name: strdup(assembler.name),
-                comment_prefix: strdup(assembler.commentPrefix),
-                origin: strdup(assembler.origin),
-                end_directive: strdup(assembler.endDirective),
-                string_delim: assembler.stringDelimiter,
-                char_delim: assembler.characterDelimiter,
-                byte_directive: strdup(assembler.byteDirective),
-                word_directive: strdup(assembler.wordDirective),
-                dword_directive: strdup(assembler.dwordDirective),
-                qword_directive: strdup(assembler.qwordDirective),
-                oword_directive: strdup(assembler.owordDirective),
-                float_directive: strdup(assembler.floatDirective),
-                double_directive: strdup(assembler.doubleDirective),
-                tbyte_directive: strdup(assembler.tbyteDirective),
-                align_directive: strdup(assembler.alignDirective),
-                include_directive: strdup(assembler.includeDirective),
-                public_directive: strdup(assembler.publicDirective),
-                weak_directive: strdup(assembler.weakDirective),
-                external_directive: strdup(assembler.externalDirective),
-                current_ip_symbol: strdup(assembler.currentIPSymbol),
-                uppercase_mnemonics: assembler.uppercaseMnemonics ? 1 : 0,
-                uppercase_registers: assembler.uppercaseRegisters ? 1 : 0,
-                requires_colon_after_labels: assembler.requiresColonAfterLabels ? 1 : 0,
-                supports_quoted_names: assembler.supportsQuotedNames ? 1 : 0
-            )
+        // Assemblers
+        if !processorInfo.assemblers.isEmpty {
+            let count = processorInfo.assemblers.count
+            let array = UnsafeMutablePointer<IdaxAssemblerInfo>.allocate(capacity: count)
+            for (index, assembler) in processorInfo.assemblers.enumerated() {
+                array[index] = IdaxAssemblerInfo(
+                    name: strdup(assembler.name),
+                    comment_prefix: strdup(assembler.commentPrefix),
+                    origin: strdup(assembler.origin),
+                    end_directive: strdup(assembler.endDirective),
+                    string_delim: assembler.stringDelimiter,
+                    char_delim: assembler.characterDelimiter,
+                    byte_directive: strdup(assembler.byteDirective),
+                    word_directive: strdup(assembler.wordDirective),
+                    dword_directive: strdup(assembler.dwordDirective),
+                    qword_directive: strdup(assembler.qwordDirective),
+                    oword_directive: strdup(assembler.owordDirective),
+                    float_directive: strdup(assembler.floatDirective),
+                    double_directive: strdup(assembler.doubleDirective),
+                    tbyte_directive: strdup(assembler.tbyteDirective),
+                    align_directive: strdup(assembler.alignDirective),
+                    include_directive: strdup(assembler.includeDirective),
+                    public_directive: strdup(assembler.publicDirective),
+                    weak_directive: strdup(assembler.weakDirective),
+                    external_directive: strdup(assembler.externalDirective),
+                    current_ip_symbol: strdup(assembler.currentIPSymbol),
+                    uppercase_mnemonics: assembler.uppercaseMnemonics ? 1 : 0,
+                    uppercase_registers: assembler.uppercaseRegisters ? 1 : 0,
+                    requires_colon_after_labels: assembler.requiresColonAfterLabels ? 1 : 0,
+                    supports_quoted_names: assembler.supportsQuotedNames ? 1 : 0
+                )
+            }
+            out.pointee.assemblers = array
+            out.pointee.assembler_count = count
         }
-        out.pointee.assemblers = array
-        out.pointee.assembler_count = count
     }
 }
 
-private func processorAnalyzeTrampoline(
+private nonisolated func processorAnalyzeTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64,
     outSize: UnsafeMutablePointer<Int32>?
 ) -> Int32 {
-    guard let module = extractModule(context), let outSize else { return -1 }
-    do {
-        let size = try module.analyze(at: address)
-        outSize.pointee = Int32(size)
-        return 0
-    } catch {
-        return -1
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let outSize = outSize
+    return onIDAThread {
+        guard let module = extractModule(context), let outSize else { return -1 }
+        do {
+            let size = try module.analyze(at: address)
+            outSize.pointee = Int32(size)
+            return 0
+        } catch {
+            return -1
+        }
     }
 }
 
-private func processorEmulateTrampoline(
+private nonisolated func processorEmulateTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64
 ) -> Int32 {
-    guard let module = extractModule(context) else {
-        return EmulateResult.notImplemented.rawValue
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else {
+            return EmulateResult.notImplemented.rawValue
+        }
+        return module.emulate(at: address).rawValue
     }
-    return module.emulate(at: address).rawValue
 }
 
-private func processorOutputInstructionTrampoline(
+private nonisolated func processorOutputInstructionTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64
 ) {
-    guard let module = extractModule(context) else { return }
-    module.outputInstruction(at: address)
+    nonisolated(unsafe) let context = context
+    onIDAThread {
+        guard let module = extractModule(context) else { return }
+        module.outputInstruction(at: address)
+    }
 }
 
-private func processorOutputOperandTrampoline(
+private nonisolated func processorOutputOperandTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64,
     operandIndex: Int32
 ) -> Int32 {
-    guard let module = extractModule(context) else {
-        return OutputOperandResult.notImplemented.rawValue
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else {
+            return OutputOperandResult.notImplemented.rawValue
+        }
+        // Create a temporary OutputContext; the C shim will provide the real pointer
+        // in with-context variants. For the bare variant, we pass a dummy.
+        // The bare output_operand in C++ doesn't receive an OutputContext.
+        // We need the context pointer here - but the bare callback doesn't get one.
+        // Actually, looking at the C callback signature, there is no output context
+        // for the bare output_operand - it just returns the result code.
+        return module.outputOperand(
+            at: address,
+            operand: Int(operandIndex),
+            to: OutputContext(UnsafeMutableRawPointer(bitPattern: 1)!)  // Placeholder - bare variant
+        ).rawValue
     }
-    // Create a temporary OutputContext; the C shim will provide the real pointer
-    // in with-context variants. For the bare variant, we pass a dummy.
-    // The bare output_operand in C++ doesn't receive an OutputContext.
-    // We need the context pointer here - but the bare callback doesn't get one.
-    // Actually, looking at the C callback signature, there is no output context
-    // for the bare output_operand - it just returns the result code.
-    return module.outputOperand(
-        at: address,
-        operand: Int(operandIndex),
-        to: OutputContext(UnsafeMutableRawPointer(bitPattern: 1)!)  // Placeholder - bare variant
-    ).rawValue
 }
 
 // ── Optional trampolines ───────────────────────────────────────────────
 
-private func processorOnNewFileTrampoline(
+private nonisolated func processorOnNewFileTrampoline(
     context: UnsafeMutableRawPointer?,
     filename: UnsafePointer<CChar>?
 ) {
-    guard let module = extractModule(context) else { return }
-    let name = filename.map { String(cString: $0) } ?? ""
-    module.onNewFile(filename: name)
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let filename = filename
+    onIDAThread {
+        guard let module = extractModule(context) else { return }
+        let name = filename.map { String(cString: $0) } ?? ""
+        module.onNewFile(filename: name)
+    }
 }
 
-private func processorOnOldFileTrampoline(
+private nonisolated func processorOnOldFileTrampoline(
     context: UnsafeMutableRawPointer?,
     filename: UnsafePointer<CChar>?
 ) {
-    guard let module = extractModule(context) else { return }
-    let name = filename.map { String(cString: $0) } ?? ""
-    module.onOldFile(filename: name)
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let filename = filename
+    onIDAThread {
+        guard let module = extractModule(context) else { return }
+        let name = filename.map { String(cString: $0) } ?? ""
+        module.onOldFile(filename: name)
+    }
 }
 
-private func processorIsCallTrampoline(
+private nonisolated func processorIsCallTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64
 ) -> Int32 {
-    guard let module = extractModule(context) else { return 0 }
-    return module.isCall(at: address)
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else { return 0 }
+        return module.isCall(at: address)
+    }
 }
 
-private func processorIsReturnTrampoline(
+private nonisolated func processorIsReturnTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64
 ) -> Int32 {
-    guard let module = extractModule(context) else { return 0 }
-    return module.isReturn(at: address)
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else { return 0 }
+        return module.isReturn(at: address)
+    }
 }
 
-private func processorMayBeFunctionTrampoline(
+private nonisolated func processorMayBeFunctionTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64
 ) -> Int32 {
-    guard let module = extractModule(context) else { return 0 }
-    return module.mayBeFunction(at: address)
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else { return 0 }
+        return module.mayBeFunction(at: address)
+    }
 }
 
-private func processorIsSaneInstructionTrampoline(
+private nonisolated func processorIsSaneInstructionTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64,
     noCodeReferences: Int32
 ) -> Int32 {
-    guard let module = extractModule(context) else { return 0 }
-    return module.isSaneInstruction(at: address, noCodeReferences: noCodeReferences != 0)
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else { return 0 }
+        return module.isSaneInstruction(at: address, noCodeReferences: noCodeReferences != 0)
+    }
 }
 
-private func processorIsIndirectJumpTrampoline(
+private nonisolated func processorIsIndirectJumpTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64
 ) -> Int32 {
-    guard let module = extractModule(context) else { return 0 }
-    return module.isIndirectJump(at: address)
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else { return 0 }
+        return module.isIndirectJump(at: address)
+    }
 }
 
-private func processorIsBasicBlockEndTrampoline(
+private nonisolated func processorIsBasicBlockEndTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64,
     callStopsBlock: Int32
 ) -> Int32 {
-    guard let module = extractModule(context) else { return 0 }
-    return module.isBasicBlockEnd(at: address, callStopsBlock: callStopsBlock != 0)
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else { return 0 }
+        return module.isBasicBlockEnd(at: address, callStopsBlock: callStopsBlock != 0)
+    }
 }
 
-private func processorCreateFunctionFrameTrampoline(
+private nonisolated func processorCreateFunctionFrameTrampoline(
     context: UnsafeMutableRawPointer?,
     functionStart: UInt64
 ) -> Int32 {
-    guard let module = extractModule(context) else { return 0 }
-    return module.createFunctionFrame(at: functionStart) ? 1 : 0
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else { return 0 }
+        return module.createFunctionFrame(at: functionStart) ? 1 : 0
+    }
 }
 
-private func processorAdjustFunctionBoundsTrampoline(
+private nonisolated func processorAdjustFunctionBoundsTrampoline(
     context: UnsafeMutableRawPointer?,
     functionStart: UInt64,
     maxFunctionEnd: UInt64,
     suggestedResult: Int32
 ) -> Int32 {
-    guard let module = extractModule(context) else { return suggestedResult }
-    return module.adjustFunctionBounds(
-        functionStart: functionStart,
-        maxFunctionEnd: maxFunctionEnd,
-        suggestedResult: suggestedResult
-    )
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else { return suggestedResult }
+        return module.adjustFunctionBounds(
+            functionStart: functionStart,
+            maxFunctionEnd: maxFunctionEnd,
+            suggestedResult: suggestedResult
+        )
+    }
 }
 
-private func processorAnalyzeFunctionPrologTrampoline(
+private nonisolated func processorAnalyzeFunctionPrologTrampoline(
     context: UnsafeMutableRawPointer?,
     functionStart: UInt64
 ) -> Int32 {
-    guard let module = extractModule(context) else { return 0 }
-    return module.analyzeFunctionProlog(at: functionStart)
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else { return 0 }
+        return module.analyzeFunctionProlog(at: functionStart)
+    }
 }
 
-private func processorStackDeltaTrampoline(
+private nonisolated func processorStackDeltaTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64,
     outDelta: UnsafeMutablePointer<Int64>?
 ) -> Int32 {
-    guard let module = extractModule(context), let outDelta else { return 0 }
-    let (handled, delta) = module.calculateStackPointerDelta(at: address)
-    outDelta.pointee = delta
-    return handled
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let outDelta = outDelta
+    return onIDAThread {
+        guard let module = extractModule(context), let outDelta else { return 0 }
+        let (handled, delta) = module.calculateStackPointerDelta(at: address)
+        outDelta.pointee = delta
+        return handled
+    }
 }
 
-private func processorReturnAddressSizeTrampoline(
+private nonisolated func processorReturnAddressSizeTrampoline(
     context: UnsafeMutableRawPointer?,
     functionStart: UInt64
 ) -> Int32 {
-    guard let module = extractModule(context) else { return 0 }
-    return module.getReturnAddressSize(at: functionStart)
+    nonisolated(unsafe) let context = context
+    return onIDAThread {
+        guard let module = extractModule(context) else { return 0 }
+        return module.getReturnAddressSize(at: functionStart)
+    }
 }
 
-private func processorDetectSwitchTrampoline(
+private nonisolated func processorDetectSwitchTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64,
     outSwitch: UnsafeMutablePointer<IdaxSwitchDescription>?
 ) -> Int32 {
-    guard let module = extractModule(context), let outSwitch else { return 0 }
-    let (result, switchDescription) = module.detectSwitch(at: address)
-    if result > 0 {
-        fillCSwitch(outSwitch, from: switchDescription)
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let outSwitch = outSwitch
+    return onIDAThread {
+        guard let module = extractModule(context), let outSwitch else { return 0 }
+        let (result, switchDescription) = module.detectSwitch(at: address)
+        if result > 0 {
+            fillCSwitch(outSwitch, from: switchDescription)
+        }
+        return result
     }
-    return result
 }
 
-private func processorCalculateSwitchCasesTrampoline(
+private nonisolated func processorCalculateSwitchCasesTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64,
     switchDescription: UnsafePointer<IdaxSwitchDescription>?,
     outCases: UnsafeMutablePointer<UnsafeMutablePointer<IdaxSwitchCase>?>?,
     outCaseCount: UnsafeMutablePointer<Int>?
 ) -> Int32 {
-    guard let module = extractModule(context),
-          let switchDescription,
-          let outCases,
-          let outCaseCount else { return 0 }
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let switchDescription = switchDescription
+    nonisolated(unsafe) let outCases = outCases
+    nonisolated(unsafe) let outCaseCount = outCaseCount
+    return onIDAThread {
+        guard let module = extractModule(context),
+              let switchDescription,
+              let outCases,
+              let outCaseCount else { return 0 }
 
-    let swiftSwitch = toSwiftSwitch(switchDescription.pointee)
-    let (result, cases) = module.calculateSwitchCases(
-        at: address,
-        switchDescription: swiftSwitch
-    )
+        let swiftSwitch = toSwiftSwitch(switchDescription.pointee)
+        let (result, cases) = module.calculateSwitchCases(
+            at: address,
+            switchDescription: swiftSwitch
+        )
 
-    if result > 0 && !cases.isEmpty {
-        let count = cases.count
-        let array = UnsafeMutablePointer<IdaxSwitchCase>.allocate(capacity: count)
-        for (index, switchCase) in cases.enumerated() {
-            let valuesPointer = UnsafeMutablePointer<Int64>.allocate(capacity: switchCase.values.count)
-            for (valueIndex, value) in switchCase.values.enumerated() {
-                valuesPointer[valueIndex] = value
+        if result > 0 && !cases.isEmpty {
+            let count = cases.count
+            let array = UnsafeMutablePointer<IdaxSwitchCase>.allocate(capacity: count)
+            for (index, switchCase) in cases.enumerated() {
+                let valuesPointer = UnsafeMutablePointer<Int64>.allocate(capacity: switchCase.values.count)
+                for (valueIndex, value) in switchCase.values.enumerated() {
+                    valuesPointer[valueIndex] = value
+                }
+                array[index] = IdaxSwitchCase(
+                    values: valuesPointer,
+                    value_count: switchCase.values.count,
+                    target: switchCase.target
+                )
             }
-            array[index] = IdaxSwitchCase(
-                values: valuesPointer,
-                value_count: switchCase.values.count,
-                target: switchCase.target
-            )
+            outCases.pointee = array
+            outCaseCount.pointee = count
+        } else {
+            outCases.pointee = nil
+            outCaseCount.pointee = 0
         }
-        outCases.pointee = array
-        outCaseCount.pointee = count
-    } else {
-        outCases.pointee = nil
-        outCaseCount.pointee = 0
-    }
 
-    return result
+        return result
+    }
 }
 
-private func processorCreateSwitchReferencesTrampoline(
+private nonisolated func processorCreateSwitchReferencesTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64,
     switchDescription: UnsafePointer<IdaxSwitchDescription>?
 ) -> Int32 {
-    guard let module = extractModule(context), let switchDescription else { return 0 }
-    let swiftSwitch = toSwiftSwitch(switchDescription.pointee)
-    return module.createSwitchReferences(at: address, switchDescription: swiftSwitch)
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let switchDescription = switchDescription
+    return onIDAThread {
+        guard let module = extractModule(context), let switchDescription else { return 0 }
+        let swiftSwitch = toSwiftSwitch(switchDescription.pointee)
+        return module.createSwitchReferences(at: address, switchDescription: swiftSwitch)
+    }
 }
 
-private func processorOutputMnemonicWithContextTrampoline(
+private nonisolated func processorOutputMnemonicWithContextTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64,
     outputContext: UnsafeMutableRawPointer?
 ) -> Int32 {
-    guard let module = extractModule(context), let outputContext else {
-        return OutputInstructionResult.notImplemented.rawValue
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let outputContext = outputContext
+    return onIDAThread {
+        guard let module = extractModule(context), let outputContext else {
+            return OutputInstructionResult.notImplemented.rawValue
+        }
+        return module.outputMnemonicWithContext(
+            at: address,
+            to: OutputContext(outputContext)
+        ).rawValue
     }
-    return module.outputMnemonicWithContext(
-        at: address,
-        to: OutputContext(outputContext)
-    ).rawValue
 }
 
-private func processorOutputInstructionWithContextTrampoline(
+private nonisolated func processorOutputInstructionWithContextTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64,
     outputContext: UnsafeMutableRawPointer?
 ) -> Int32 {
-    guard let module = extractModule(context), let outputContext else {
-        return OutputInstructionResult.notImplemented.rawValue
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let outputContext = outputContext
+    return onIDAThread {
+        guard let module = extractModule(context), let outputContext else {
+            return OutputInstructionResult.notImplemented.rawValue
+        }
+        return module.outputInstructionWithContext(
+            at: address,
+            to: OutputContext(outputContext)
+        ).rawValue
     }
-    return module.outputInstructionWithContext(
-        at: address,
-        to: OutputContext(outputContext)
-    ).rawValue
 }
 
-private func processorOutputOperandWithContextTrampoline(
+private nonisolated func processorOutputOperandWithContextTrampoline(
     context: UnsafeMutableRawPointer?,
     address: UInt64,
     operandIndex: Int32,
     outputContext: UnsafeMutableRawPointer?
 ) -> Int32 {
-    guard let module = extractModule(context), let outputContext else {
-        return OutputOperandResult.notImplemented.rawValue
+    nonisolated(unsafe) let context = context
+    nonisolated(unsafe) let outputContext = outputContext
+    return onIDAThread {
+        guard let module = extractModule(context), let outputContext else {
+            return OutputOperandResult.notImplemented.rawValue
+        }
+        return module.outputOperandWithContext(
+            at: address,
+            operand: Int(operandIndex),
+            to: OutputContext(outputContext)
+        ).rawValue
     }
-    return module.outputOperandWithContext(
-        at: address,
-        operand: Int(operandIndex),
-        to: OutputContext(outputContext)
-    ).rawValue
 }
 
 // MARK: - Private conversion helpers
@@ -1111,7 +1196,7 @@ private func fillCSwitch(
 }
 
 /// Convert a C IdaxSwitchDescription to a Swift SwitchDescription.
-private func toSwiftSwitch(_ raw: IdaxSwitchDescription) -> SwitchDescription {
+private nonisolated func toSwiftSwitch(_ raw: IdaxSwitchDescription) -> SwitchDescription {
     SwitchDescription(
         kind: SwitchTableKind(rawValue: raw.kind) ?? .dense,
         jumpTable: raw.jump_table,
