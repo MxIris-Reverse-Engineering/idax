@@ -36,3 +36,5 @@ tool, and both had claimed `P23.1`.
 - [x] F5 Batch 1a — adopt module-wide `MainActor` isolation across the Swift bindings, put the callback contract in the type system, and bring the CLI tool along.
 - [x] F6 Batch 1b — add the five zero-coverage domains (bookmark, problem, undo, navigation, FilePath) plus the visible-skip integration test scaffold.
 - [x] F7 Rebuild the packaged `CIDAX.xcframework`, and link the IDA runtime for consumer-mode executables and tests.
+- [x] F8 Batch 2 — registry, directory and register tracking.
+- [ ] F9 Verify register-value tracking against a processor that supports it. The aarch64 fixture exists but needs its own test executable, because all Swift tests share one process and idalib holds one database at a time.

@@ -80,3 +80,11 @@ tool, and both had claimed `P23.1`.
   - F3.1. **Action:** Run `scripts/sync_upstream.sh` monthly. The August 2026 sync cost a day because the gap had grown to four months and ~250 upstream commits.
   - F3.2. **Remaining overlap:** 29 files still coincide with upstream's change surface — 9 in the C++ core, 6 Rust, 4 tests, and a handful of user-facing documents. These are genuine (both sides edit the same code) and can only be kept small by syncing often.
   - F3.3. **Status:** Tooling in place; next sync is routine.
+
+- **F9.1. Register-value tracking 尚未在支持它的处理器上验证过。**
+  `RegisterTracking` 的 10 个函数已实现并编译通过，但共享 fixture 是
+  x86-64，IDA 在该处理器上直接返回 `Unsupported`，所以目前只验证了错误路径。
+  仓库里的 `register_tracking_aarch64` fixture 需要独立的测试可执行文件才能用：
+  Swift 全部测试共用一个进程，而 idalib 同时只持有一个数据库。
+  **下一步**：为其单独建一个 executable target，或让 `IntegrationDatabase`
+  支持关闭后重开另一个数据库（后者需先验证 idalib 是否支持进程内切换）。

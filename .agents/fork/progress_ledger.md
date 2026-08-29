@@ -149,3 +149,10 @@ tool, and both had claimed `P23.1`.
   - F7.4. 只给一个 test target 加该设置。SwiftPM 会把全部 test target 合并成单个 bundle，两个都加会让 ld 报 `duplicate -rpath`。
   - F7.5. 顺带清掉 `Plugin.swift` 两处既有告警：`enabledBox` 只被赋值从不读取，`Unmanaged.passRetained` 才是持有引用的那一方。该告警在 `aaf20ee` 即已存在，非本轮引入；此前几次「0 warning」的结论出自增量构建，未覆盖到它。
   - F7.6. 验证：clean developer 构建与 clean consumer 构建均 0 error 0 warning；两种模式各跑 99 tests / 38 suites 全通过；运行后 `tests/fixtures/` 保持干净。
+
+- **F8. Swift Batch 2 — registry、directory、register tracking**
+  - F8.1. 新增 `RegistryStore`(22)、`DirectoryTree`(25)、`RegisterTracking`(10)，共 57 个函数。前两者按 C++ 的对象语义做成持有标识（key / kind）的值类型，而不是照搬每次都传标识的扁平 C ABI。
+  - F8.2. `DirectoryBulkReport` 保留了批量操作的部分成功语义：move / remove 允许个别路径失败而整体不抛错，失败连同其在请求中的下标一起进报告。测试直接覆盖了这一点——删除不存在的路径应当进 `failures` 而不是抛异常。
+  - F8.3. Registry 测试是这批里唯一不受 fixture 副本保护的：`ida::registry` 写的是 IDA 的全局配置而非数据库。因此全部测试限定在 `idax_swift_test_scratch` 这一个 key 下，并在每个测试结束时 `eraseTree()`。
+  - F8.4. Register tracking 在 x86-64 上返回 `Unsupported`，而共享 fixture 正是 x86-64。仓库里有 `register_tracking_aarch64` fixture，C++ 的 `register_tracking_roundtrip` 用它——那能成立是因为每个 CTest 目标是独立进程、可以各开各的数据库。Swift 全部测试共用一个进程，idalib 同时只持有一个数据库，因此够不到该 fixture。这批测试转而钉住「不支持」路径：每个入口都必须干净地报 `Unsupported`，而不是崩溃、返回编造值或报成功但结果为空。真正的功能验证记为 F9。
+  - F8.5. 验证：clean developer 与 clean consumer 构建均 0 error 0 warning；两种模式各跑 115 tests / 41 suites 全通过（此前 99 / 38）；`tests/fixtures/` 运行后保持干净。
