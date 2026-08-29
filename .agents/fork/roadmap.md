@@ -35,4 +35,4 @@ tool, and both had claimed `P23.1`.
 
 - [x] F5 Batch 1a — adopt module-wide `MainActor` isolation across the Swift bindings, put the callback contract in the type system, and bring the CLI tool along.
 - [x] F6 Batch 1b — add the five zero-coverage domains (bookmark, problem, undo, navigation, FilePath) plus the visible-skip integration test scaffold.
-- [ ] F7 Rebuild the packaged `CIDAX.xcframework`, which has lagged the C ABI since `80b6e63` and leaves consumer mode unable to reach 281 symbols.
+- [x] F7 Rebuild the packaged `CIDAX.xcframework`, and link the IDA runtime for consumer-mode executables and tests.

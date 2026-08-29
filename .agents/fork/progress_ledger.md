@@ -141,3 +141,11 @@ tool, and both had claimed `P23.1`.
   - F6.4. 测试必须在 fixture 的副本上跑。首次运行把 `tests/fixtures/simple_appcall_linux64.id0` 改脏了：IDA 的 netnode 写入直接落到 `.id0`，而该文件是签入 git 的，一次 `Bookmark.set` 就会让工作区出现修改。`close(save: false)` 救不了——写入在那之前就已经发生。现在 `IntegrationEnvironment` 把整组文件（可执行文件加 `.i64` / `.id0` / `.id1` / `.id2` / `.nam` / `.til`）复制到临时目录再打开。
   - F6.5. `IDARuntime` 标 `nonisolated`：它只用 `access()` 查文件是否存在，不碰运行时，而 `.enabled(if:)` 的条件是 `@Sendable` 闭包，够不到隔离成员。
   - F6.6. 验证：`IDAX_DEV=1 swift build` 与 `swift test` 均 0 error 0 warning，99 tests / 38 suites 通过（此前 83 / 33，新增 16 个真实执行的测试），且运行后 `tests/fixtures/` 工作区保持干净。
+
+- **F7. 重建 CIDAX.xcframework 并修复 consumer 模式运行时链接**
+  - F7.1. 用本地已有的 SDK checkout 重建 XCFramework（arm64 + x86_64）。打包头文件从 785 个符号恢复到 1066 个，与 canonical C ABI 一致；二进制从 3.4 MB 增至 5.6 MB。`nm` 抽查此前缺失的 `_idax_script_evaluate`、`_idax_registry_open`、`_idax_navigation_history_back`、`_idax_type_name`、`_idax_segment_registers`、`_idax_bookmark_all`，全部存在。
+  - F7.2. 重建让 consumer 模式从 13 个编译错误降到 0，但随即暴露一个被编译失败掩盖的运行时问题：`dlopen` 报 `symbol not found in flat namespace '_eval_expr'`。`3005940` 当初的修复把 `idaRuntimeLinkerFlags` 加在 dev 模式的 CIDAX target 上，而 consumer 模式走 `binaryTarget`，后者不接受 linkerSettings，因此没有任何东西把 libida 放到链接线上。
+  - F7.3. 修复方式是把 runtime 链接放到 executable 与 test target 上，**不放在 IDAX library target 上**：library target 一旦带 `unsafeFlags`，整个包就不能被其它包依赖，而 executable 与 test bundle 本来就不会被依赖。库的下游消费者自行链接 IDA runtime。
+  - F7.4. 只给一个 test target 加该设置。SwiftPM 会把全部 test target 合并成单个 bundle，两个都加会让 ld 报 `duplicate -rpath`。
+  - F7.5. 顺带清掉 `Plugin.swift` 两处既有告警：`enabledBox` 只被赋值从不读取，`Unmanaged.passRetained` 才是持有引用的那一方。该告警在 `aaf20ee` 即已存在，非本轮引入；此前几次「0 warning」的结论出自增量构建，未覆盖到它。
+  - F7.6. 验证：clean developer 构建与 clean consumer 构建均 0 error 0 warning；两种模式各跑 99 tests / 38 suites 全通过；运行后 `tests/fixtures/` 保持干净。

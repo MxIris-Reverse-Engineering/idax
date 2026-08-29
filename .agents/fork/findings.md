@@ -150,3 +150,18 @@ tool, and both had claimed `P23.1`.
   可选/有默认值。编译期完全看不出来——C ABI 那一层是裸指针和 `const char*`，
   null 与空串都是合法的 C 值，只有真实调用才会撞上 shim 的 Validation 错误。
   为 C ABI 写绑定时，可选性必须回到 C++ 签名和校验函数去核对，不能照抄 C 头文件。
+
+- **F18. `binaryTarget` 不接受 linkerSettings，consumer 模式因此拿不到 IDA runtime。**
+  dev 模式把 `-L`/`-lida`/`-rpath` 挂在 CIDAX target 上，consumer 模式换成
+  `binaryTarget` 后这些设置无处安放，链接线上没有 libida。由于 XCFramework
+  是用 `-undefined dynamic_lookup` 链接的，缺失只在 `dlopen` 时才炸，
+  报 `symbol not found in flat namespace '_eval_expr'`。
+  能挂的位置是 executable 与 test target：library target 带 `unsafeFlags`
+  会让整个包不能被依赖，而 executable 和 test bundle 从不被依赖。
+  另外 SwiftPM 把所有 test target 合并成一个 bundle，所以该设置只加一次，
+  加两次会得到 `ld: warning: duplicate -rpath`。
+
+- **F19. 增量构建会掩盖告警，「0 warning」必须以 clean 构建为准。**
+  `Plugin.swift` 有两处 `enabledBox` 死绑定告警长期存在，但连续几次增量
+  构建都没有重编译该文件，于是报出了并不成立的「0 warning」。凡是要把
+  告警数当作验收依据，就必须先删掉 scratch 目录重新构建。

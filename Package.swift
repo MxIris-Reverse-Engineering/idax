@@ -89,6 +89,20 @@ let cidaxTarget: Target = devMode
 // InferSendableFromCaptures). NonisolatedNonsendingByDefault is the load-bearing
 // one here: without it a `nonisolated` async function hops to the global
 // executor, and hopping off the main thread is a deadlock, not a slowdown.
+// Consumer mode links CIDAX as a binaryTarget, which cannot carry linkerSettings,
+// so nothing puts libida on the link line — and libidax_shim.a is a single
+// translation unit that unconditionally references ida::script symbols such as
+// eval_expr. Developer mode gets these flags through the CIDAX target itself.
+//
+// These go on the executable and test targets only, never on the IDAX library.
+// unsafeFlags on a library target makes the whole package unusable as a
+// dependency; executables and test bundles are never depended upon, so they can
+// carry them. A downstream library consumer links the IDA runtime itself, which
+// is what the migration guide documents.
+let runtimeLinkerSettings: [LinkerSetting] = devMode || idaRuntimeLinkerFlags.isEmpty
+    ? []
+    : [.unsafeFlags(idaRuntimeLinkerFlags)]
+
 let idaxSwiftSettings: [SwiftSetting] = [
     .swiftLanguageMode(.v6),
     .defaultIsolation(MainActor.self),
@@ -127,7 +141,8 @@ let package = Package(
             name: "idax-example",
             dependencies: ["IDAX"],
             path: "bindings/swift/Examples",
-            swiftSettings: idaxSwiftSettings
+            swiftSettings: idaxSwiftSettings,
+            linkerSettings: runtimeLinkerSettings
         ),
         .target(
             name: "IDAXDyldCacheDatabaseCreatorCore",
@@ -145,13 +160,15 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "bindings/swift/Tools/DyldCacheDatabaseCreator",
-            swiftSettings: idaxSwiftSettings
+            swiftSettings: idaxSwiftSettings,
+            linkerSettings: runtimeLinkerSettings
         ),
         .testTarget(
             name: "IDAXTests",
             dependencies: ["IDAX"],
             path: "bindings/swift/Tests/IDAXTests",
-            swiftSettings: idaxSwiftSettings
+            swiftSettings: idaxSwiftSettings,
+            linkerSettings: runtimeLinkerSettings
         ),
         .testTarget(
             name: "IDAXDyldCacheDatabaseCreatorTests",

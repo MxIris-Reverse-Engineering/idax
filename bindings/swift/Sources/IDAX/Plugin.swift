@@ -99,16 +99,16 @@ public enum Plugin {
         let handlerBox = ActionHandlerBox(handler: handler)
         let handlerCtx = Unmanaged.passRetained(handlerBox).toOpaque()
 
-        let enabledBox: ActionEnabledCheckBox?
+        // `passRetained` is what keeps the box alive; the registration owns that
+        // reference until it unregisters. Holding a second one here does nothing.
         let enabledCtx: UnsafeMutableRawPointer?
         let enabledFn: IdaxActionEnabledCheck?
         if let enabledCheck {
-            let box = ActionEnabledCheckBox(check: enabledCheck)
-            enabledBox = box
-            enabledCtx = Unmanaged.passRetained(box).toOpaque()
+            enabledCtx = Unmanaged
+                .passRetained(ActionEnabledCheckBox(check: enabledCheck))
+                .toOpaque()
             enabledFn = actionEnabledCheckTrampoline
         } else {
-            enabledBox = nil
             enabledCtx = nil
             enabledFn = nil
         }
@@ -175,30 +175,29 @@ public enum Plugin {
         let handlerBox = ActionHandlerExBox(handler: handler, handlerEx: handlerEx)
         let handlerCtx = Unmanaged.passRetained(handlerBox).toOpaque()
 
-        let enabledBox: ActionEnabledCheckExBox?
+        // As above: the retained reference is the owning one.
         let enabledCtx: UnsafeMutableRawPointer?
         let enabledFn: IdaxActionEnabledCheck?
         let enabledFnEx: IdaxActionEnabledCheckEx?
         if let enabledCheck {
-            let box = ActionEnabledCheckExBox(
-                check: enabledCheck,
-                checkEx: enabledCheckEx
-            )
-            enabledBox = box
-            enabledCtx = Unmanaged.passRetained(box).toOpaque()
+            enabledCtx = Unmanaged
+                .passRetained(ActionEnabledCheckExBox(
+                    check: enabledCheck,
+                    checkEx: enabledCheckEx
+                ))
+                .toOpaque()
             enabledFn = actionEnabledCheckExSimpleTrampoline
             enabledFnEx = enabledCheckEx != nil ? actionEnabledCheckExTrampoline : nil
         } else if let enabledCheckEx {
-            let box = ActionEnabledCheckExBox(
-                check: nil,
-                checkEx: enabledCheckEx
-            )
-            enabledBox = box
-            enabledCtx = Unmanaged.passRetained(box).toOpaque()
+            enabledCtx = Unmanaged
+                .passRetained(ActionEnabledCheckExBox(
+                    check: nil,
+                    checkEx: enabledCheckEx
+                ))
+                .toOpaque()
             enabledFn = nil
             enabledFnEx = actionEnabledCheckExTrampoline
         } else {
-            enabledBox = nil
             enabledCtx = nil
             enabledFn = nil
             enabledFnEx = nil
