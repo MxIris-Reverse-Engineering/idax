@@ -164,3 +164,11 @@ tool, and both had claimed `P23.1`.
   - F10.4. `ParserLanguage` 与 `ExceptionLocation` 做成 `OptionSet`，取代 C 侧的位掩码整数。
   - F10.5. 测试抓到一条从签名看不出来的契约：SEH handler 的 `filterRegions` 与 `disposition` **互斥且必须恰有其一**，两个都给会被拒。已写进 `ExceptionSehHandler` 的文档注释。
   - F10.6. 验证：clean developer 与 clean consumer 均 0 error 0 warning，各跑 131 tests / 44 suites 全通过（此前 115 / 41）；`tests/fixtures/` 保持干净。
+
+- **F11. Swift Batch 4 — IDC script 域**
+  - F11.1. 新增 44 个函数，是全部批次里唯一需要真正设计所有权的域。至此 313 个缺口已补 174 个。
+  - F11.2. `ScriptValue` 是 `~Copyable`（句柄 owning，`deinit` 释放）。查 shim 实现确认三个 setter（`set_attribute`、`replace_slice`、`set_global`）都是**借用**——它们解引用句柄后由 C++ 拷贝，调用方保留所有权，所以这些参数标 `borrowing`。
+  - F11.3. `ScriptArguments` 存在的原因是 `~Copyable` 值进不了 `Array`。它以 `consuming` 接管每个值的所有权并在 `deinit` 统一释放，调用方不必让各个值跨调用存活。
+  - F11.4. `ScriptExecutionResult.takeValue()` 用 `mutating` 而非 `consuming`：`discard self` 要求全部存储属性 trivially-destroyed，而它含 `String`。改成把句柄置 nil，`deinit` 据此跳过释放；副作用是取值后仍能读 `succeeded` 与 `error`，反而更好用。
+  - F11.5. 六个测试先红后绿，全部是我对 IDC 语义的假设错误，非绑定缺陷：`coerce_string` 的输出格式不是契约（C++ 测试也只断言非空）；`compile_snippet` 是无参函数体，带参函数要用 `compile_text` 声明；`function_names` 枚举的是 IDC 注册/内置函数，不含刚编译的片段，且 `maximum` 为 0 会被拒；`reference_global` 对不存在的全局**失败而非创建**——最后一条我原先的文档注释写反了，已改正。
+  - F11.6. 验证：clean developer 与 clean consumer 均 0 error 0 warning，各跑 156 tests / 46 suites 全通过（此前 131 / 44）；`tests/fixtures/` 保持干净。

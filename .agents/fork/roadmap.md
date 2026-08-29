@@ -38,4 +38,5 @@ tool, and both had claimed `P23.1`.
 - [x] F7 Rebuild the packaged `CIDAX.xcframework`, and link the IDA runtime for consumer-mode executables and tests.
 - [x] F8 Batch 2 — registry, directory and register tracking.
 - [x] F10 Batch 3 — offset, parser and exception regions.
+- [x] F11 Batch 4 — the IDC script domain.
 - [ ] F9 Verify register-value tracking against a processor that supports it. The aarch64 fixture exists but needs its own test executable, because all Swift tests share one process and idalib holds one database at a time.

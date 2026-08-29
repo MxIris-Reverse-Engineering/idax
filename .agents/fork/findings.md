@@ -183,3 +183,22 @@ tool, and both had claimed `P23.1`.
   `[Validation] SEH disposition is required exactly when filter regions are absent`。
   C 结构体把它们放成两个独立字段，从 ABI 完全看不出这个约束——
   只有真正调用 `idax_exception_add` 才会撞上。
+
+- **F22. swift-testing 的 `#expect` / `#require` 宏对 `~Copyable` 类型完全不可用。**
+  两个宏展开成的辅助函数（`__checkPropertyAccess`、`__checkBinaryOperation`、
+  `require`）都带隐式的 `where T: Copyable`，所以 `~Copyable` 值、
+  以及它的 `Optional`，都不能作为操作数：
+  `error: requires that 'X' conform to 'Copyable'`。
+  可行写法是先把要断言的东西提取成 Copyable 标量（`Bool`、`Int64`、`String`），
+  再对标量断言；optional 的 `~Copyable` 用 `if let` 取出后转成布尔或标量。
+  `#expect(throws:)` 同样用不了，改用普通 `do/catch` 加一个布尔标志。
+
+- **F23. `discard self` 要求全部存储属性 trivially-destroyed。**
+  `~Copyable` 类型若含 `String`（或任何需要析构的属性），
+  `consuming func` 里写 `discard self` 会被拒：
+  `can only 'discard' type 'X' if it contains trivially-destroyed stored properties`。
+  转移内部句柄所有权的替代写法是把方法改成 `mutating`，
+  将句柄置 `nil`，由 `deinit` 判空跳过释放。这样调用方在取走资源后
+  仍能读该类型的其余字段。
+  另外 `discard` 只能作用于 `self`，所以从 `consuming` 参数里提取句柄的逻辑
+  必须写成该类型自己的 `consuming` 方法。
