@@ -107,3 +107,39 @@ tool, and both had claimed `P23.1`.
   `stack_offset`，后者却让它保持默认值 `-1`。消费方因此会误以为
   `.lvars` maturity 没有栈槽信息。修复一条路径后，应搜索同一输出类型
   的全部构造点，并用真实 database 的 integration test 直接覆盖每条路径。
+
+- **F12. idalib 的 input format 只能经 `init_library` 的 argv 传入，不能走 `open_database` 的 args。**
+  `idalib.hpp` 把 `open_database` 的第三参数写作「optional arguments, respecting
+  IDA's command-line arguments format」，传 `-T"Fat Mach-O file, 2. ARM64"` 确实能
+  选中指定 slice，database 也能正确 save。但此后任何形式的终止都会 abort：
+  `close_database()`、`close_database(true)`、以及 SDK 示例 `idalib/examples/idacli.cpp`
+  采用的 `set_database_flag(DBFL_KILL) + term_database()`，一律报
+  `FATAL ERROR: Oops! internal error 30500 occurred.`，并在输入文件旁留下
+  `.id0/.id1/.nam/.til` 解包残留——即未正常关闭的损坏状态。lldb 显示 abort 发生在
+  `_ida_hexrays.so` 内。裸 SDK（完全不链接 idax）即可复现；thin Mach-O 强制传 `-T`
+  同样复现，故与 fat 无关，是 `-T` 经该参数进入的问题。IDA 9.4 实测。
+  正确做法由逆向 `idat` 得出：`idat` 仅 33KB，其 `start` 就是
+  `init_library(argc, argv)` 的转发壳，IDA 的整个命令行由 `init_library` 解析。
+  把 `-T` 放进 `init_library` 的 argv 后，选片、save、close 全部正常，退出码 0，
+  无残留。argv 形式无需引号（`-T` 与值同为一个 argv 元素）；只有命令行**字符串**
+  形式才需要引号，因为 IDA 会按空格分词。
+
+- **F13. `init_library` 只能调用一次，且 `build_loaders_list` 必须在其之后。**
+  在 `init_library` 之前调用 `open_linput` + `build_loaders_list` 直接 SIGSEGV。
+  而「先 `init_library(1, {progname})` 列举候选、再 `init_library(2, {progname, -T...})`
+  重新初始化」这条路虽然两次都返回 0 且格式选择生效，终止时仍复现 F12 的
+  internal error 30500。因此「用 IDA 自己的候选列表决定加载哪个 slice」与
+  「format 必须在唯一一次初始化时给出」互相冲突，消费方只能在初始化前自行判定
+  目标 slice，再在 database 打开后用 `get_file_type_name()` 回验实际加载结果。
+
+- **F14. consumer 模式的 executable 必须自己链接 IDA runtime。**
+  `CIDAX.framework` 以 `-undefined dynamic_lookup` 链接，刻意不绑定 IDA，因此
+  consumer 模式（binaryTarget）下没有任何环节把 libida / libidalib 带进进程；
+  developer 模式则由 `CIDAX` target 的 linker flags 提供、executable 继承。
+  合并前的旧 xcframework 恰好不引用需要 eager binding 的符号，于是这个缺口一直
+  没有暴露；重建 xcframework 把 IDC script 域（`script.cpp`）纳入后，安装出的
+  命令在启动时即 `dyld: symbol not found in flat namespace '_eval_expr'` 并
+  abort——这正是 `Package.swift` 中既有注释预告过的情形。修复是给 executable
+  target 在非 devMode 时加上同一组 IDA runtime linker flags。
+  注意 `.unsafeFlags` 会使该 target 不能被外部 package 依赖，但只加在
+  executable target 上，library target `IDAX` 仍保持可依赖。

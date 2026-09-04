@@ -30,3 +30,4 @@ tool, and both had claimed `P23.1`.
 ## Runtime Correctness
 
 - [x] F4 Populate stack offsets in `ida::microcode::snapshot`, add a runtime regression test, rebuild the Swift development archives, and verify the downstream Swift decompiler adapter.
+- [x] F5 Add single-binary mode to the Swift command-line tool with host-architecture slice selection, and rename it to `idax`.

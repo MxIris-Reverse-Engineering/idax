@@ -28,6 +28,21 @@ The third parameter of `open_database(const char *file_path, bool run_auto, cons
 
 **The quoting is load-bearing.** `args` is split on whitespace before parsing. Passing the same value unquoted — `-TFat Mach-O file, 2.` — makes `open_database` return 1 with `Database initialization failed with error 1`. Single and double quotes both work; the quotes must be inside the C string.
 
+**But `open_database`'s `args` is the wrong channel entirely.** A database opened that way selects the right slice and saves correctly, then aborts on *any* form of teardown with `FATAL ERROR: Oops! internal error 30500 occurred.`, leaving `.id0`/`.id1`/`.nam`/`.til` unpacked files beside the input — a database that was never closed cleanly. `close_database(false)`, `close_database(true)` and the SDK sample's `set_database_flag(DBFL_KILL) + term_database()` all reproduce it. lldb puts the abort inside `_ida_hexrays.so`. It reproduces against the bare SDK with no idax linked, and on a thin Mach-O given `-T` as well, so it is neither an idax problem nor a fat-file problem.
+
+**`init_library(argc, argv)` is the right channel, and `idat` shows why.** Disassembling `idat` (33 KB) shows its entire `start` is a forwarder:
+
+```c
+__int64 start(int argc, _QWORD *argv) {
+  if (argc != 1) { v3 = init_library(argc, argv); ... qexit(v3); }
+  return init_library(2, (_QWORD[]){argv[0], "--help"});
+}
+```
+
+IDA's whole command line is parsed by `init_library`. Passing `-T` there selects the slice *and* tears down cleanly: exit code 0, no residue. No quoting is needed in the argv form — `-T` and its value are one argv entry; only the command-line *string* form needs quotes, because IDA splits that on whitespace.
+
+**The format must be on the single initialisation call.** `build_loaders_list` before `init_library` segfaults, and initialising twice — once bare to list candidates, once with `-T` — returns 0 both times and still reproduces the teardown abort. So IDA's own loader list cannot inform the choice of format.
+
 **`ftypename` is exactly the string `-T` expects.** It carries its own `N.` ordinal, so round-tripping a list entry back into `-T` needs no parsing, no ordinal arithmetic, and no prefix truncation. Verified by feeding the full `Fat Mach-O file, 2. ARM64e-pauth1` back and getting that exact slice.
 
 **arm64e format names carry a pointer-authentication ABI version suffix** (`ARM64e-pauth1`) that tracks the slice's CPU subtype. Any design that matches architecture names literally has to treat this as a prefix, not an equality test.
@@ -36,9 +51,11 @@ The third parameter of `open_database(const char *file_path, bool run_auto, cons
 
 ## Locked decisions
 
-**Slice selection goes through IDA's own loader list.** `ida::database::list_input_formats()` wraps `open_linput` + `build_loaders_list` + `free_loaders_list` and returns the `ftypename` strings verbatim. The tool picks one and hands the same string back through `-T`. Ordinals are never computed on this side, so there is no way for our numbering to disagree with IDA's.
+**The format is a runtime option, not an open option.** `RuntimeOptions::input_format` carries the format name and `init` turns it into a `-T` argv entry. It reads as belonging to `open()`, and `open_database` even accepts it there, but that path cannot be torn down (see Background). The `-T` spelling stays an implementation detail of `database_lifecycle.cpp`; no raw argument passthrough is exposed, which decision 3 in `agents.md` rules out anyway.
 
-**`OpenOptions` carries the format name, not a raw argument string.** The public surface is `struct OpenOptions { OpenMode mode; std::string file_type; }`; the `-T` flag and its quoting are an implementation detail of `database_lifecycle.cpp`. Exposing an "extra arguments" passthrough would be an escape hatch into IDA's command line, which decision 3 in `agents.md` rules out.
+**The slice is chosen from the fat header and verified against IDA afterwards.** `list_input_formats()` is the better source and is unusable for the choice: it needs an initialised library, and the format must already be set on that one initialisation call. So `MachOFatHeader` derives the ordinal from the file, the tool passes `Fat Mach-O file, N.`, and after opening it re-reads `get_file_type_name()` and fails loudly if the architecture is not the one selected. Deriving the ordinal assumes IDA numbers candidates in file order — true for every binary measured, but a slice IDA declines to load would shift it, and a silently wrong architecture is the exact failure this tool exists to remove.
+
+**The `-T` value carries a trailing dot.** IDA prefix-matches, so `Fat Mach-O file, 1` would also match `Fat Mach-O file, 10. …` in a binary with ten or more slices.
 
 **Architecture is parsed off the tail of the format name, arm64e before arm64.** The substring after the last `". "` is the architecture token: `ARM64`, `ARM64e-pauth1`, `X86_64`. Matching is case-insensitive and prefix-based, and **`arm64e` must be tested before `arm64`**, since the former has the latter as a prefix. This is a pure function and is unit-tested directly against the three measured token shapes.
 
@@ -56,7 +73,7 @@ The third parameter of `open_database(const char *file_path, bool run_auto, cons
 
 ## Rejected alternatives
 
-**Parsing the fat header ourselves.** The tool could read `fat_header` / `fat_arch` and compute a slice ordinal. It is less code in the immediate sense and it introduces exactly the class of bug being fixed: if IDA ever skips a slice it cannot load, our ordinal and IDA's disagree and the tool silently selects the wrong architecture with full confidence. Asking IDA what it is willing to load cannot drift from what IDA then loads.
+**Choosing the slice from IDA's own loader list.** The original plan, and the better design: ask IDA what it is willing to load, hand the same string back, and our numbering cannot drift from IDA's. It is impossible under the ordering constraint above — the list needs an initialised library and the format must be set on that same initialisation call. Reading the fat header ourselves reintroduces the risk of disagreeing with IDA's numbering, which is why the result is verified after opening rather than trusted.
 
 **Extracting the slice with `lipo -thin` before handing it to IDA.** Sidesteps loader selection entirely and needs no C++ change at all. Rejected because it makes every database's input path point at a temporary file, which corrupts `input_file_path()`, the input MD5, and any downstream tooling that re-resolves the original binary. It also costs a full file copy per invocation.
 
@@ -70,59 +87,32 @@ The third parameter of `open_database(const char *file_path, bool run_auto, cons
 
 ---
 
-## Task 1: C++ core
+## Task 1: C++ core  — done
 
 Files: `include/ida/database.hpp`, `src/database_lifecycle.cpp`, `tests/unit/api_surface_parity_test.cpp`.
 
-1. Add `struct InputFormat { std::string name; std::string processor; std::string loader_path; bool archive_loader; }`. The SDK's `filetype_t` value is deliberately **not** exposed — it is an SDK enum, and decision 3 forbids SDK types on the public surface.
-2. Add `Result<std::vector<InputFormat>> list_input_formats(std::string_view path)`, implemented with `open_linput` / `build_loaders_list` / `free_loaders_list` / `close_linput`, with the list freed on every exit path.
-3. Add `struct OpenOptions { OpenMode mode = OpenMode::Analyze; std::string file_type; }` and `Status open(std::string_view path, const OpenOptions& options)`. When `file_type` is non-empty, build `-T"<file_type>"` and pass it as `open_database`'s third argument; when empty, pass `nullptr` so existing behaviour is bit-identical.
-4. Reject a `file_type` containing a double quote with a `Validation` error rather than emitting a malformed argument string.
-5. Make the existing `open_binary` / `open_non_binary` stubs delegate through `OpenOptions` instead of silently forwarding, so their comments stop claiming something they do not do.
+1. `struct InputFormat { name; processor; loader_path; archive_loader; }`. The SDK's `filetype_t` is deliberately not exposed — it is an SDK enum, and decision 3 forbids SDK types on the public surface.
+2. `Result<std::vector<InputFormat>> list_input_formats(std::string_view)` over `open_linput` / `build_loaders_list` / `free_loaders_list` / `close_linput`, freed on every exit path through RAII guards.
+3. `RuntimeOptions::input_format`; `init` appends it to argv as one `-T<format>` entry, preserving any argv the caller passed.
+4. `OpenOptions` carries only `mode`. `open_binary` / `open_non_binary` route through it instead of silently forwarding.
 
-**Acceptance:** `list_input_formats` on the fat fixture returns two entries whose names match the measured strings; opening with the second entry's name reports that format from `database::file_type_name()`; opening with an empty `OpenOptions` is unchanged.
-
-## Task 2: C shim and Swift wrapper
+## Task 2: C shim and Swift wrapper — done
 
 Files: `bindings/c/include/idax_shim.h`, `bindings/rust/idax-sys/shim/idax_shim.cpp`, `bindings/swift/Sources/IDAX/Database.swift`.
 
-1. `typedef struct IdaxDatabaseInputFormat { char* name; char* processor; char* loader_path; int archive_loader; }`, plus `idax_database_list_input_formats(const char* path, IdaxDatabaseInputFormat** out, size_t* count)` and `idax_database_input_formats_free(...)`, following the allocation and partial-failure-cleanup pattern already used by `idax_database_import_modules`.
-2. `idax_database_open_with_options(const char* path, int mode, const char* file_type)`, with `file_type == nullptr` meaning "let IDA choose".
-3. Swift: `public struct InputFormat: Sendable`, `Database.listInputFormats(_:)`, `Database.OpenOptions`, and `Database.open(_:options:)`. Existing `open` overloads stay.
+`IdaxDatabaseInputFormat` + `idax_database_list_input_formats` / `..._free` following the `idax_database_import_modules` allocation pattern; `IdaxRuntimeOptions.input_format`; `idax_database_open_with_options(path, mode)`. Swift gets `InputFormat`, `Database.listInputFormats(_:)`, `RuntimeOptions.inputFormat` and `OpenOptions`.
 
-**Acceptance:** `IDAX_DEV=1 swift build` clean; a Swift integration test lists formats for the fat fixture and opens the non-default slice.
+## Task 3: Rename and split — done
 
-## Task 3: Rename and split, with no behaviour change
+Directories, targets and the product renamed to `CommandLine*` / `IDAXCommandLine*` / `idax`; root `IDAXCommand` with `dyld-cache` keeping every flag it had.
 
-Moves only — reviewable as a rename, so the behaviour change in Task 4 lands against a clean baseline.
+## Task 4: The `binary` and `formats` subcommands — done
 
-- `bindings/swift/Tools/DyldCacheDatabaseCreatorCore` → `bindings/swift/Tools/CommandLineCore`
-- `bindings/swift/Tools/DyldCacheDatabaseCreator` → `bindings/swift/Tools/CommandLine`
-- `bindings/swift/Tests/IDAXDyldCacheDatabaseCreatorTests` → `bindings/swift/Tests/IDAXCommandLineTests`
-- Targets `IDAXDyldCacheDatabaseCreatorCore` / `IDAXDyldCacheDatabaseCreator` / `IDAXDyldCacheDatabaseCreatorTests` → `IDAXCommandLineCore` / `IDAXCommandLine` / `IDAXCommandLineTests`
-- Product `idax-dyld-cache-database-creator` → `idax`
-- New root `IDAXCommand` with `subcommands: [DynamicLinkerSharedCacheDatabaseCreator.self]`; the existing type keeps its name and implementation, and its `commandName` becomes `dyld-cache`.
+Files: `MachOArchitecture.swift`, `MachOFatHeader.swift`, `BinaryDatabaseCreator.swift`, `InputFormatLister.swift`, `MachOArchitectureTests.swift`.
 
-**Acceptance:** `swift test` passes with only the import line changed in the test file; `swift run idax dyld-cache --help` shows the same flags as before.
+`MachOFatHeader` parses the fat header (both 32- and 64-bit forms, capability bits masked off cpusubtype, bounded slice count). `SliceResolver` picks the slice and builds the `-T` value. `BinaryDatabaseCreator` resolves, initialises with the format, opens, verifies via `fileTypeName()`, analyses, saves. `formats` lists what IDA offers, which is what a user needs when that verification fails.
 
-## Task 4: The `binary` subcommand
-
-Files: `bindings/swift/Tools/CommandLineCore/MachOArchitecture.swift`, `.../BinaryDatabaseCreator.swift`, `bindings/swift/Tests/IDAXCommandLineTests/MachOArchitectureTests.swift`.
-
-1. `MachOArchitecture` as a `RawRepresentable` string wrapper with `.arm64`, `.arm64e`, `.x86_64`, a `current` derived from `#if arch(...)`, and `preferenceOrder` expressing arm64-before-arm64e.
-2. `MachOArchitecture.init?(formatName:)` — the pure parse described under locked decisions, unit-tested against `Fat Mach-O file, 1. X86_64`, `Fat Mach-O file, 2. ARM64`, `Fat Mach-O file, 2. ARM64e-pauth1`, and `Mach-O file (EXECUTE). ARM64`, including the arm64e-before-arm64 ordering case.
-3. `resolveInputFormat(candidates:requested:)` — pure, returns the chosen format or a typed failure carrying the available architectures for the error message.
-4. `BinaryDatabaseCreator`: validate, initialize, list, resolve, open with the resolved format name, drain analysis unless `--skip-final-analysis`, save, close.
-
-**Acceptance:** unit tests cover the parse and resolution functions with no IDA runtime; a fixture-backed integration test creates an arm64 database from a universal binary and asserts `Database.processorName()` is the ARM module, not `metapc`.
-
-## Task 5: Documentation and records
-
-- `docs/Tools/` gains a page for the renamed tool covering both subcommands and the architecture rules.
-- `.agents/fork/roadmap.md`, `.agents/fork/progress_ledger.md`, `.agents/fork/decision_log.md` (the loader-list decision and its rejected alternatives), and `.agents/fork/findings.md` + `.agents/fork/knowledge_base.md` (the four measured IDA behaviours in Background) — all under `F`-prefixed numbering.
-- `.agents/fork/active_work.md` records the unwrapped Rust safe layer and Node addon as follow-up.
-
----
+**Acceptance met:** 109 Swift tests and 6 C++ tests pass. The architecture parse and slice resolution were mutation-tested — reversing the arm64e/arm64 order and degrading selection to "first slice" each turned 3 tests red, and both were restored to green.
 
 ## Verification
 
@@ -137,7 +127,9 @@ Files: `bindings/swift/Tools/CommandLineCore/MachOArchitecture.swift`, `.../Bina
 
 **The packaged XCFramework goes further out of date.** `bindings/swift/Frameworks/CIDAX.xcframework` already lags the C ABI badly (785 symbols against 1066) and consumer mode cannot reach the new entry points until it is rebuilt. Developer mode is unaffected, which is what the tool uses. Rebuilding it belongs to the parity plan dated 2026-08-27, not here.
 
-**`ftypename` is an IDA-internal display string.** Round-tripping it is exact today and the SDK offers no more stable identifier for a fat slice, but the strings could change between IDA versions. The architecture parse is prefix-based and centralised in one function specifically so a version bump is a one-place fix. Measured on 9.4 only.
+**IDA's format names are internal display strings.** The `-T` ordinal prefix and the architecture parse both depend on the `Fat Mach-O file, N. <ARCH>` shape, which could change between IDA versions. Both are centralised in one function each, and the post-open verification turns a format-name change into a loud failure rather than a wrong-architecture database. Measured on 9.4 only.
+
+**The teardown abort is unreported upstream.** `internal error 30500` has no public documentation and appears in neither the SDK's `err.h` nor `ida.hlp`. A minimal reproducer exists (bare SDK, ~60 lines) should this be worth filing with Hex-Rays.
 
 **Uncommitted concurrency work is in flight.** The working tree carries the module-wide `MainActor` isolation change from the 2026-08-27 parity plan, including edits to `Package.swift`, which Task 3 also modifies. Task 3 must rebase onto whatever that work settles at rather than racing it.
 

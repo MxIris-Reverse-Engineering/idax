@@ -80,3 +80,9 @@ tool, and both had claimed `P23.1`.
   - F3.1. **Action:** Run `scripts/sync_upstream.sh` monthly. The August 2026 sync cost a day because the gap had grown to four months and ~250 upstream commits.
   - F3.2. **Remaining overlap:** 29 files still coincide with upstream's change surface — 9 in the C++ core, 6 Rust, 4 tests, and a handful of user-facing documents. These are genuine (both sides edit the same code) and can only be kept small by syncing often.
   - F3.3. **Status:** Tooling in place; next sync is routine.
+
+- **F6. `input_format` 尚未铺到 Rust safe 层与 Node 绑定**
+  - F6.1. **现状：** C shim 为 Rust/Swift 共用，故 `idax-sys` 已自动获得 `idax_database_list_input_formats` 与 `IdaxRuntimeOptions.input_format`，但 `bindings/rust/idax/` 的安全封装层与 Node addon 都还没有对应 API。
+  - F6.2. **影响：** 仅限这两条绑定的使用者无法选择 fat Mach-O 的架构 slice，且会沉默地拿到第一个 slice（Apple 工具链下即 x86_64）。C++ 与 Swift 消费者不受影响。
+  - F6.3. **注意：** 补齐时必须把 format 放在 runtime/初始化选项上，不要暴露成 open 参数——后者会触发 [F12] 的终止 abort。
+  - F6.4. **下一步：** 在 `bindings/rust/idax/src/database.rs` 与 Node 的 database bind 文件中镜像 `RuntimeOptions::input_format` 与 `list_input_formats`。
