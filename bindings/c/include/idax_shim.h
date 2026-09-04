@@ -231,6 +231,26 @@ int idax_database_init(int argc, char** argv);
 int idax_database_open(const char* path, int auto_analysis);
 int idax_database_open_binary(const char* path, int mode);
 int idax_database_open_non_binary(const char* path, int mode);
+
+typedef struct IdaxDatabaseInputFormat {
+    char* name;
+    char* processor;
+    char* loader_path;
+    int   archive_loader;
+} IdaxDatabaseInputFormat;
+
+/* Lists the formats IDA would offer for `path`, in IDA's own order.
+ * Requires an initialised library. */
+int idax_database_list_input_formats(const char* path,
+                                     IdaxDatabaseInputFormat** out,
+                                     size_t* count);
+void idax_database_input_formats_free(IdaxDatabaseInputFormat* formats,
+                                      size_t count);
+
+/* Opens `path` with structured options. The input format is not accepted
+ * here — set IdaxRuntimeOptions.input_format before initialising. */
+int idax_database_open_with_options(const char* path, int mode);
+
 int idax_database_save(void);
 int idax_database_save_to(const char* output_database_path);
 int idax_database_close(int save);
@@ -314,6 +334,10 @@ int idax_database_address_span(uint64_t* out);
 typedef struct {
     int  quiet;               /* default 0 — suppress idalib progress output */
     int  disable_user_plugins; /* default 0 — set 1 to skip user plugin loading */
+    /* IdaxDatabaseInputFormat.name of the loader to use for files opened
+     * afterwards; NULL lets IDA choose. IDA only accepts this at
+     * initialisation, which is why it is here and not on open. */
+    const char* input_format;
 } IdaxRuntimeOptions;
 
 int idax_database_init_with_options(const IdaxRuntimeOptions* options);

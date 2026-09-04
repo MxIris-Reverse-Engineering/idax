@@ -122,19 +122,14 @@ Real-world port parity notes are tracked in
 current ida-cdump migration checklist in
 [`docs/codedump_migration_checklist.md`](docs/codedump_migration_checklist.md).
 
-### Swift dyld cache database creator
+### The `idax` command-line tool
 
-The Swift package includes `idax-dyld-cache-database-creator`, a headless tool
-for creating one IDA database from one or more selected dyld shared cache
-images. It supports optional dyld header, branch-island, branch-mapping, global
-offset table, unknown-region, and cache-wide data loading. The committed
-`CIDAX.xcframework` is built against IDA SDK 9.4.
-
-Build and install it for the current user with:
+The Swift package includes `idax`, a headless tool for creating IDA databases.
+The committed `CIDAX.xcframework` is built against IDA SDK 9.4.
 
 ```bash
-./scripts/install_dyld_cache_database_creator.sh
-idax-dyld-cache-database-creator --help
+./scripts/install_idax_command_line.sh
+idax --help
 ```
 
 The installer places a launcher in `~/.local/bin` and keeps the executable with
@@ -143,8 +138,28 @@ its `CIDAX.framework` runtime dependency under `~/.local/libexec`. Set
 
 ```bash
 export IDADIR="/Applications/IDA Professional 9.4.app/Contents/MacOS"
+```
 
-idax-dyld-cache-database-creator \
+**`idax binary`** creates a database from a single binary. For a universal
+("fat") Mach-O it selects the slice matching the host architecture, preferring
+`arm64` over `arm64e` when a file offers both — IDA left to itself takes the
+first slice, which for anything Apple's toolchain builds is x86_64.
+
+```bash
+idax binary /path/to/UniversalApp
+idax binary --arch x86_64 /path/to/UniversalApp
+```
+
+A file offering neither the requested nor the host architecture is an error
+listing what it does contain, never a silent substitution. `idax formats <path>`
+shows the slices and the loaders IDA offers for them.
+
+**`idax dyld-cache`** creates one database from one or more selected dyld shared
+cache images, with optional dyld header, branch-island, branch-mapping, global
+offset table, unknown-region, and cache-wide data loading.
+
+```bash
+idax dyld-cache \
   --cache /Volumes/DyldSharedCaches/macOS/26.5.2_25F84/dyld_shared_cache_arm64e \
   --image-name AppKit SwiftUI SwiftUICore \
   --load-got \
@@ -155,7 +170,7 @@ idax-dyld-cache-database-creator \
 Images can instead be selected by complete cache paths with `--image-path`.
 Without `--output`, this example writes `AppKit+SwiftUI+SwiftUICore.i64` in the
 current directory. See
-[`docs/Tools/DyldCacheDatabaseCreator.md`](docs/Tools/DyldCacheDatabaseCreator.md)
+[`docs/Tools/IDAXCommandLine.md`](docs/Tools/IDAXCommandLine.md)
 for all options and operational details.
 
 The C++ sources continue to build against IDA SDK 9.3 through the legacy dscu

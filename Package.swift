@@ -119,8 +119,8 @@ let package = Package(
     products: [
         .library(name: "IDAX", targets: ["IDAX"]),
         .executable(
-            name: "idax-dyld-cache-database-creator",
-            targets: ["IDAXDyldCacheDatabaseCreator"]
+            name: "idax",
+            targets: ["IDAXCommandLine"]
         ),
     ],
     dependencies: [
@@ -145,22 +145,29 @@ let package = Package(
             linkerSettings: runtimeLinkerSettings
         ),
         .target(
-            name: "IDAXDyldCacheDatabaseCreatorCore",
+            name: "IDAXCommandLineCore",
             dependencies: [
                 "IDAX",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "bindings/swift/Tools/DyldCacheDatabaseCreatorCore",
+            path: "bindings/swift/Tools/CommandLineCore",
             swiftSettings: idaxSwiftSettings
         ),
         .executableTarget(
-            name: "IDAXDyldCacheDatabaseCreator",
+            name: "IDAXCommandLine",
             dependencies: [
-                "IDAXDyldCacheDatabaseCreatorCore",
+                "IDAXCommandLineCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "bindings/swift/Tools/DyldCacheDatabaseCreator",
+            path: "bindings/swift/Tools/CommandLine",
             swiftSettings: idaxSwiftSettings,
+            // In developer mode the CIDAX target carries these and the
+            // executable inherits them. In consumer mode CIDAX is a
+            // binaryTarget, which cannot carry linker settings, and the
+            // prebuilt framework is linked with `-undefined dynamic_lookup` —
+            // so nothing pulls in the IDA runtime and the first symbol needing
+            // eager binding aborts the process at launch (`_eval_expr`, from
+            // the IDC script domain). The executable has to link it itself.
             linkerSettings: runtimeLinkerSettings
         ),
         .testTarget(
@@ -171,12 +178,12 @@ let package = Package(
             linkerSettings: runtimeLinkerSettings
         ),
         .testTarget(
-            name: "IDAXDyldCacheDatabaseCreatorTests",
+            name: "IDAXCommandLineTests",
             dependencies: [
-                "IDAXDyldCacheDatabaseCreatorCore",
+                "IDAXCommandLineCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "bindings/swift/Tests/IDAXDyldCacheDatabaseCreatorTests",
+            path: "bindings/swift/Tests/IDAXCommandLineTests",
             swiftSettings: idaxSwiftSettings
         ),
         .plugin(

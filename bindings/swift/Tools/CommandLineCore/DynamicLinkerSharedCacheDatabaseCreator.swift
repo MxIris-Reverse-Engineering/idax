@@ -5,7 +5,7 @@ import IDAX
 
 public nonisolated struct DynamicLinkerSharedCacheDatabaseCreator: ParsableCommand {
     public static let configuration = CommandConfiguration(
-        commandName: "idax-dyld-cache-database-creator",
+        commandName: "dyld-cache",
         abstract: "Create an IDA database from selected dyld shared cache images.",
         discussion: """
         Select images by name with --image-name or by their complete cache path

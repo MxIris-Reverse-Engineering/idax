@@ -1336,6 +1336,64 @@ int idax_database_open_non_binary(const char* path, int mode) {
     return 0;
 }
 
+int idax_database_list_input_formats(const char* path,
+                                     IdaxDatabaseInputFormat** out,
+                                     size_t* count) {
+    clear_error();
+    auto r = ida::database::list_input_formats(path);
+    if (!r) return fail(r.error());
+    auto& formats = *r;
+    *count = formats.size();
+    if (formats.empty()) {
+        *out = nullptr;
+        return 0;
+    }
+
+    *out = static_cast<IdaxDatabaseInputFormat*>(
+        std::calloc(formats.size(), sizeof(IdaxDatabaseInputFormat)));
+    if (*out == nullptr) return fail(ida::Error::internal("malloc failed"));
+
+    for (size_t i = 0; i < formats.size(); ++i) {
+        (*out)[i].archive_loader = formats[i].archive_loader ? 1 : 0;
+        (*out)[i].name = dup_string(formats[i].name);
+        (*out)[i].processor = dup_string(formats[i].processor);
+        (*out)[i].loader_path = dup_string(formats[i].loader_path);
+        const bool allocation_failed =
+            ((*out)[i].name == nullptr && !formats[i].name.empty())
+            || ((*out)[i].processor == nullptr && !formats[i].processor.empty())
+            || ((*out)[i].loader_path == nullptr && !formats[i].loader_path.empty());
+        if (allocation_failed) {
+            idax_database_input_formats_free(*out, i + 1);
+            *out = nullptr;
+            *count = 0;
+            return fail(ida::Error::internal("malloc failed"));
+        }
+    }
+    return 0;
+}
+
+void idax_database_input_formats_free(IdaxDatabaseInputFormat* formats,
+                                      size_t count) {
+    if (formats == nullptr) return;
+    for (size_t i = 0; i < count; ++i) {
+        std::free(formats[i].name);
+        std::free(formats[i].processor);
+        std::free(formats[i].loader_path);
+    }
+    std::free(formats);
+}
+
+int idax_database_open_with_options(const char* path, int mode) {
+    clear_error();
+    auto parsed = parse_database_open_mode(mode);
+    if (!parsed) return fail(parsed.error());
+    ida::database::OpenOptions options;
+    options.mode = *parsed;
+    auto s = ida::database::open(path, options);
+    if (!s) return fail(s.error());
+    return 0;
+}
+
 int idax_database_save(void) {
     RETURN_STATUS(ida::database::save());
 }
@@ -13250,6 +13308,7 @@ int idax_database_init_with_options(const IdaxRuntimeOptions* options) {
     if (options) {
         opts.quiet = (options->quiet != 0);
         opts.plugin_policy.disable_user_plugins = (options->disable_user_plugins != 0);
+        if (options->input_format != nullptr) opts.input_format = options->input_format;
     }
     RETURN_STATUS(ida::database::init(opts));
 }

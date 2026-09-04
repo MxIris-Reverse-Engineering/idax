@@ -1,9 +1,14 @@
-# Dyld Cache Database Creator
+# The `idax` command-line tool
 
-`idax-dyld-cache-database-creator` is a macOS command-line tool that creates an
-IDA database from selected images in a dyld shared cache. It uses the IDAX
-Swift API for database lifecycle, dyld cache image loading, optional region
-loading, analysis control, and explicit output-path saving.
+`idax` is a macOS command-line tool that creates IDA databases headlessly. It
+uses the IDAX Swift API for database lifecycle, loading, analysis control, and
+explicit output-path saving.
+
+| Subcommand | Purpose |
+|---|---|
+| `idax binary` | Create a database from a single binary, selecting the architecture slice |
+| `idax dyld-cache` | Create a database from selected dyld shared cache images |
+| `idax formats` | List the slices and loaders IDA offers for a file |
 
 ## Requirements
 
@@ -31,13 +36,13 @@ The executable is a Swift Package product and uses
 To build and install it for the current user:
 
 ```bash
-./scripts/install_dyld_cache_database_creator.sh
-idax-dyld-cache-database-creator --help
+./scripts/install_idax_command_line.sh
+idax --help
 ```
 
 By default, the installer places the launcher in `~/.local/bin` and the
 executable plus `CIDAX.framework` in
-`~/.local/libexec/idax-dyld-cache-database-creator`. If `~/.local/bin` is not
+`~/.local/libexec/idax`. If `~/.local/bin` is not
 already on `PATH`, the installer adds it to `~/.zshrc` for new terminal
 sessions. Set `IDAX_INSTALLATION_PREFIX` to select a different user-writable
 installation prefix.
@@ -46,14 +51,84 @@ For a repository-local build instead:
 
 ```bash
 swift package update
-swift build --product idax-dyld-cache-database-creator
-swift run idax-dyld-cache-database-creator --help
+swift build --product idax
+swift run idax --help
 ```
+
+## `idax binary` — a single binary
+
+```bash
+idax binary /path/to/UniversalApp
+idax binary --arch x86_64 /path/to/UniversalApp
+idax binary /path/to/App --output /tmp/App --overwrite
+```
+
+### Architecture selection
+
+A universal ("fat") Mach-O contains several architecture slices. IDA running
+unattended loads the *first* one, and `lipo` orders slices by CPU type, which
+puts x86_64 ahead of arm64 in everything Apple's toolchain builds — so an
+unattended IDA analyses the x86_64 slice of an arm64 application.
+
+`idax binary` instead selects the slice matching the host architecture,
+preferring `arm64` over `arm64e` when a file offers both. `--arch` overrides
+this and accepts `arm64`, `arm64e`, or `x86_64`.
+
+A file that offers neither the requested nor the host architecture is an error
+naming what it does contain:
+
+```
+error: The input does not contain arm64. It contains: x86_64, i386.
+       Pass --arch to select one explicitly.
+```
+
+Substituting a different slice would reproduce the very failure this
+subcommand exists to remove, so it is never done silently. `--arch` on an input
+that is not a universal binary is likewise an error rather than a silent no-op.
+
+After the database opens, the tool re-reads the format IDA actually loaded and
+fails without saving if it is not the architecture that was selected. Non-fat
+inputs — a thin Mach-O, an ELF, a PE — are opened with IDA's own detection
+untouched.
+
+### Options
+
+| Option | Effect |
+|---|---|
+| `--arch <name>` | Architecture to load: `arm64`, `arm64e`, `x86_64`. Defaults to the host's |
+| `--output <path>` | Output database path; a missing extension is completed with `.i64` |
+| `--overwrite` | Replace an existing output database |
+| `--skip-final-analysis` | Save without draining the final auto-analysis queue |
+
+Without `--output`, the database is named after the input file with `.i64` in
+the current directory.
+
+## `idax formats` — what IDA sees
+
+```bash
+idax formats /path/to/UniversalApp
+```
+
+```
+Universal binary with 2 slices:
+  1. arm64
+  2. arm64e
+IDA loaders:
+  Fat Mach-O file, 1. ARM64  [processor: arm]
+  Fat Mach-O file, 2. ARM64e-pauth1  [processor: arm]
+Host architecture: arm64
+`idax binary` would select: arm64 (slice 1)
+```
+
+No database is created. This is the diagnostic to reach for when `idax binary`
+reports that it could not confirm the loaded architecture.
+
+## `idax dyld-cache` — shared cache images
 
 Create a database containing three images:
 
 ```bash
-swift run idax-dyld-cache-database-creator \
+swift run idax dyld-cache \
   --cache /Volumes/DyldSharedCaches/macOS/26.5.2_25F84/dyld_shared_cache_arm64e \
   --image-name AppKit SwiftUI SwiftUICore
 ```
@@ -65,7 +140,7 @@ extension. For example, `libobjc.A` matches `/usr/lib/libobjc.A.dylib`.
 Images can instead be selected by complete cache paths:
 
 ```bash
-swift run idax-dyld-cache-database-creator \
+swift run idax dyld-cache \
   --cache /path/to/dyld_shared_cache_arm64e \
   --image-path \
     /System/Library/Frameworks/AppKit.framework/Versions/C/AppKit \
@@ -82,10 +157,11 @@ through `DyldCache.loadModule`.
 
 ## Output naming
 
-Use `--output` to select the output path:
+These rules apply to `idax dyld-cache`; `idax binary` names its default output
+after the input file instead. Use `--output` to select the output path:
 
 ```bash
-swift run idax-dyld-cache-database-creator \
+swift run idax dyld-cache \
   --cache /path/to/dyld_shared_cache_arm64e \
   --image-name AppKit \
   --output /tmp/SystemInterface
@@ -121,6 +197,25 @@ each call. By default the tool drains the queue once before saving. Use
 does not require a quiescent analysis state.
 
 ## Lifecycle behavior
+
+### Why the architecture is chosen before IDA starts
+
+IDA accepts an input format only on its initialisation call — `idat` is a thin
+shell over `init_library(argc, argv)`, and the whole IDA command line is parsed
+there. Two consequences shape `idax binary`:
+
+- IDA's own loader list (`Database.listInputFormats(_:)`) cannot inform the
+  choice. Building it requires an initialised library, and by then the format
+  is already fixed; re-initialising to change it does not work. So the slice is
+  derived from the file's fat header before IDA starts, and the result is
+  verified against IDA once the database is open.
+- `open_database`'s argument string also accepts a format and must not be used
+  for it. A database opened that way saves correctly but cannot be closed
+  cleanly on IDA 9.4, leaving unpacked `.id0`/`.id1`/`.nam`/`.til` files beside
+  the input. `RuntimeOptions.inputFormat` therefore carries the format into
+  initialisation, which is both the working path and the honest one.
+
+### Dyld cache loading
 
 The tool first enumerates the cache directly with `DyldCache.listModules(in:)`
 so image names can be resolved before a database exists. It temporarily sets

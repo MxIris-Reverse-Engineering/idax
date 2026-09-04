@@ -1,7 +1,7 @@
 import ArgumentParser
 import Foundation
 import Testing
-@testable import IDAXDyldCacheDatabaseCreatorCore
+@testable import IDAXCommandLineCore
 
 @Suite("Dyld Cache Database Creator")
 struct DynamicLinkerSharedCacheDatabaseCreatorTests {

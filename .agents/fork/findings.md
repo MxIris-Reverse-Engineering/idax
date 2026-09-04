@@ -202,3 +202,50 @@ tool, and both had claimed `P23.1`.
   仍能读该类型的其余字段。
   另外 `discard` 只能作用于 `self`，所以从 `consuming` 参数里提取句柄的逻辑
   必须写成该类型自己的 `consuming` 方法。
+
+- **F24. idalib 的 input format 只能经 `init_library` 的 argv 传入，不能走 `open_database` 的 args。**
+  `idalib.hpp` 把 `open_database` 的第三参数写作「optional arguments, respecting
+  IDA's command-line arguments format」，传 `-T"Fat Mach-O file, 2. ARM64"` 确实能
+  选中指定 slice，database 也能正确 save。但此后任何形式的终止都会 abort：
+  `close_database()`、`close_database(true)`、以及 SDK 示例 `idalib/examples/idacli.cpp`
+  采用的 `set_database_flag(DBFL_KILL) + term_database()`，一律报
+  `FATAL ERROR: Oops! internal error 30500 occurred.`，并在输入文件旁留下
+  `.id0/.id1/.nam/.til` 解包残留——即未正常关闭的损坏状态。lldb 显示 abort 发生在
+  `_ida_hexrays.so` 内。裸 SDK（完全不链接 idax）即可复现；thin Mach-O 强制传 `-T`
+  同样复现，故与 fat 无关，是 `-T` 经该参数进入的问题。IDA 9.4 实测。
+  正确做法由逆向 `idat` 得出：`idat` 仅 33KB，其 `start` 就是
+  `init_library(argc, argv)` 的转发壳，IDA 的整个命令行由 `init_library` 解析。
+  把 `-T` 放进 `init_library` 的 argv 后，选片、save、close 全部正常，退出码 0，
+  无残留。argv 形式无需引号（`-T` 与值同为一个 argv 元素）；只有命令行**字符串**
+  形式才需要引号，因为 IDA 会按空格分词。
+
+- **F25. `init_library` 只能调用一次，且 `build_loaders_list` 必须在其之后。**
+  在 `init_library` 之前调用 `open_linput` + `build_loaders_list` 直接 SIGSEGV。
+  而「先 `init_library(1, {progname})` 列举候选、再 `init_library(2, {progname, -T...})`
+  重新初始化」这条路虽然两次都返回 0 且格式选择生效，终止时仍复现 F12 的
+  internal error 30500。因此「用 IDA 自己的候选列表决定加载哪个 slice」与
+  「format 必须在唯一一次初始化时给出」互相冲突，消费方只能在初始化前自行判定
+  目标 slice，再在 database 打开后用 `get_file_type_name()` 回验实际加载结果。
+
+- **F26. consumer 模式的 executable 必须自己链接 IDA runtime。**
+  `CIDAX.framework` 以 `-undefined dynamic_lookup` 链接，刻意不绑定 IDA，因此
+  consumer 模式（binaryTarget）下没有任何环节把 libida / libidalib 带进进程；
+  developer 模式则由 `CIDAX` target 的 linker flags 提供、executable 继承。
+  合并前的旧 xcframework 恰好不引用需要 eager binding 的符号，于是这个缺口一直
+  没有暴露；重建 xcframework 把 IDC script 域（`script.cpp`）纳入后，安装出的
+  命令在启动时即 `dyld: symbol not found in flat namespace '_eval_expr'` 并
+  abort——这正是 `Package.swift` 中既有注释预告过的情形。修复是给 executable
+  target 在非 devMode 时加上同一组 IDA runtime linker flags。
+  注意 `.unsafeFlags` 会使该 target 不能被外部 package 依赖，但只加在
+  executable target 上，library target `IDAX` 仍保持可依赖。
+
+- **F27. `nonisolated` 标在类型上，并不覆盖 extension 里的协议遵循。**
+  开启 `InferIsolatedConformances` 后，`public nonisolated struct X` 的成员确实
+  是 nonisolated，但写在 `extension X: SomeProtocol` 里的**遵循本身**仍被推断为
+  MainActor-isolated：`main actor-isolated conformance of 'X' to 'P' cannot be
+  used in nonisolated context`；`ExpressibleByArgument` 这类还会额外报
+  `conformance crosses into main actor-isolated code and can cause data races`。
+  隔离是遵循自己的属性，不随类型声明继承，所以要写成
+  `nonisolated extension X: SomeProtocol`（SE-0449）。
+  症状有迷惑性：报错点全落在使用方——字符串插值 `\(architecture)`、
+  `map(\.description)` 的 keypath——而要改的是声明方。

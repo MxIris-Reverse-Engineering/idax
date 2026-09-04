@@ -15,17 +15,67 @@ public enum LoadIntent: Int32, Sendable {
     case nonBinary  = 2
 }
 
+/// A loader IDA is willing to use for a given input file.
+///
+/// A universal ("fat") Mach-O yields one entry per architecture slice, in the
+/// order the slices appear in the file. Opening such a file without naming a
+/// format selects the first entry, which for Apple's toolchain is x86_64 —
+/// `lipo` orders slices by CPU type, placing x86_64 ahead of arm64.
+public struct InputFormat: Sendable {
+    /// Name IDA displays for this format, carrying its own ordinal for
+    /// multi-slice inputs (for example `Fat Mach-O file, 2. ARM64e-pauth1`).
+    /// Pass it back verbatim as ``RuntimeOptions/inputFormat`` to select it;
+    /// no parsing or renumbering is needed or correct.
+    public let name: String
+    /// Processor module this format wants (for example `arm`, `metapc`).
+    public let processor: String
+    /// Loader module that produced this entry.
+    public let loaderPath: String
+    /// True when the loader treats the input as an archive of members.
+    public let archiveLoader: Bool
+
+    public init(name: String, processor: String, loaderPath: String, archiveLoader: Bool) {
+        self.name = name
+        self.processor = processor
+        self.loaderPath = loaderPath
+        self.archiveLoader = archiveLoader
+    }
+}
+
+/// Options controlling how an input file is opened.
+///
+/// Note that the input format is deliberately not here: IDA only accepts it at
+/// initialisation. See ``RuntimeOptions/inputFormat``.
+public struct OpenOptions: Sendable {
+    /// Whether to run auto-analysis to completion.
+    public var mode: OpenMode
+
+    public init(mode: OpenMode = .analyze) {
+        self.mode = mode
+    }
+}
+
 /// Options for initializing the IDA runtime.
 public struct RuntimeOptions: Sendable {
     /// Suppress idalib progress output (default: false).
     public var quiet: Bool
     /// Prevent loading of user plugins from IDAUSR (default: false).
     public var disableUserPlugins: Bool
+    /// ``InputFormat/name`` of the loader to use for files opened afterwards.
+    /// `nil` lets IDA choose, which for a universal Mach-O means the first
+    /// slice in the file — x86_64, for anything Apple's toolchain builds.
+    ///
+    /// This belongs to initialisation rather than to ``Database/open(_:options:)``
+    /// because IDA parses it from the process command line, and the library
+    /// cannot be re-initialised to change it afterwards.
+    public var inputFormat: String?
 
     public init(quiet: Bool = false,
-                disableUserPlugins: Bool = false) {
+                disableUserPlugins: Bool = false,
+                inputFormat: String? = nil) {
         self.quiet = quiet
         self.disableUserPlugins = disableUserPlugins
+        self.inputFormat = inputFormat
     }
 }
 
@@ -193,7 +243,18 @@ public enum Database {
         var raw = IdaxRuntimeOptions()
         raw.quiet = options.quiet ? 1 : 0
         raw.disable_user_plugins = options.disableUserPlugins ? 1 : 0
-        try checkStatus(idax_database_init_with_options(&raw), "database.initWithOptions")
+
+        let result: Int32
+        if let inputFormat = options.inputFormat {
+            result = inputFormat.withCString { inputFormatPointer in
+                raw.input_format = inputFormatPointer
+                return idax_database_init_with_options(&raw)
+            }
+        } else {
+            raw.input_format = nil
+            result = idax_database_init_with_options(&raw)
+        }
+        try checkStatus(result, "database.initWithOptions")
         idax_sync_ida_globals()
     }
 
@@ -211,6 +272,41 @@ public enum Database {
             idax_database_open_with_intent(pathPointer, intent.rawValue, mode.rawValue)
         }
         try checkStatus(result, "database.openWithIntent")
+    }
+
+    /// List the formats IDA would offer for `path`, in IDA's own order.
+    ///
+    /// Requires an initialised runtime — call ``initialize()`` first. Returns
+    /// an empty array when no loader recognises the input.
+    public static func listInputFormats(_ path: String) throws(IDAError) -> [InputFormat] {
+        var formatsPointer: UnsafeMutablePointer<IdaxDatabaseInputFormat>? = nil
+        var count: Int = 0
+        try checkStatus(
+            path.withCString { idax_database_list_input_formats($0, &formatsPointer, &count) },
+            "database.listInputFormats"
+        )
+        defer { idax_database_input_formats_free(formatsPointer, count) }
+        guard let formatsPointer, count > 0 else { return [] }
+        return (0..<count).map { index in
+            let raw = formatsPointer[index]
+            return InputFormat(
+                name: borrowCString(raw.name),
+                processor: borrowCString(raw.processor),
+                loaderPath: borrowCString(raw.loader_path),
+                archiveLoader: raw.archive_loader != 0
+            )
+        }
+    }
+
+    /// Open a database with structured options.
+    ///
+    /// The input format is not accepted here — set
+    /// ``RuntimeOptions/inputFormat`` before calling ``initialize(options:)``.
+    public static func open(_ path: String, options: OpenOptions) throws(IDAError) {
+        let result = path.withCString { pathPointer in
+            idax_database_open_with_options(pathPointer, options.mode.rawValue)
+        }
+        try checkStatus(result, "database.openWithOptions")
     }
 
     public static func save() throws(IDAError) {

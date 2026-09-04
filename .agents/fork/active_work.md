@@ -88,3 +88,9 @@ tool, and both had claimed `P23.1`.
   Swift 全部测试共用一个进程，而 idalib 同时只持有一个数据库。
   **下一步**：为其单独建一个 executable target，或让 `IntegrationDatabase`
   支持关闭后重开另一个数据库（后者需先验证 idalib 是否支持进程内切换）。
+
+- **F13. `input_format` 尚未铺到 Rust safe 层与 Node 绑定**
+  - F13.1. **现状：** C shim 为 Rust/Swift 共用，故 `idax-sys` 已自动获得 `idax_database_list_input_formats` 与 `IdaxRuntimeOptions.input_format`，但 `bindings/rust/idax/` 的安全封装层与 Node addon 都还没有对应 API。
+  - F13.2. **影响：** 仅限这两条绑定的使用者无法选择 fat Mach-O 的架构 slice，且会沉默地拿到第一个 slice（Apple 工具链下即 x86_64）。C++ 与 Swift 消费者不受影响。
+  - F13.3. **注意：** 补齐时必须把 format 放在 runtime/初始化选项上，不要暴露成 open 参数——后者会触发 [F24] 的终止 abort。
+  - F13.4. **下一步：** 在 `bindings/rust/idax/src/database.rs` 与 Node 的 database bind 文件中镜像 `RuntimeOptions::input_format` 与 `list_input_formats`。

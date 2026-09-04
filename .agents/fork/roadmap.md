@@ -40,3 +40,8 @@ tool, and both had claimed `P23.1`.
 - [x] F10 Batch 3 — offset, parser and exception regions.
 - [x] F11 Batch 4 — the IDC script domain.
 - [ ] F9 Verify register-value tracking against a processor that supports it. The aarch64 fixture exists but needs its own test executable, because all Swift tests share one process and idalib holds one database at a time.
+
+## Command-Line Tool (plan: `docs/plans/2026-08-28-idax-cli-binary-mode.md`)
+
+- [x] F12 Add single-binary mode to the Swift command-line tool with host-architecture slice selection, and rename it to `idax`.
+- [ ] F13 Mirror `RuntimeOptions::input_format` and `list_input_formats()` in the Rust safe layer and the Node addon.

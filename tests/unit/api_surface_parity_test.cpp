@@ -1297,6 +1297,24 @@ void check_database_surface() {
     ida::database::RuntimeOptions runtime_options;
     (void)runtime_options.quiet;
     (void)runtime_options.plugin_policy;
+    (void)runtime_options.input_format;
+
+    ida::database::InputFormat input_format;
+    (void)input_format.name;
+    (void)input_format.processor;
+    (void)input_format.loader_path;
+    (void)input_format.archive_loader;
+
+    ida::database::OpenOptions open_options;
+    (void)open_options.mode;
+
+    using ListInputFormatsFn =
+        ida::Result<std::vector<ida::database::InputFormat>>(*)(std::string_view);
+    (void)static_cast<ListInputFormatsFn>(&ida::database::list_input_formats);
+
+    using OpenWithOptionsFn =
+        ida::Status(*)(std::string_view, const ida::database::OpenOptions&);
+    (void)static_cast<OpenWithOptionsFn>(&ida::database::open);
 
     ida::database::CompilerInfo compiler;
     (void)compiler.id;
