@@ -163,6 +163,17 @@ struct PluginLoadPolicy {
 struct RuntimeOptions {
     bool quiet{false};
     PluginLoadPolicy plugin_policy{};
+    /// InputFormat::name of the loader to use for files opened afterwards.
+    /// Empty lets IDA choose, which for a universal Mach-O means the first
+    /// slice in the file (x86_64, for anything Apple's toolchain builds).
+    ///
+    /// This belongs to initialisation, not to open(), because IDA parses it
+    /// from the process command line: `idat` is a thin shell over
+    /// `init_library(argc, argv)` and the format reaches the loader that way.
+    /// Passing it later through `open_database`'s argument string selects the
+    /// right loader but corrupts teardown — see the note on that function in
+    /// database_lifecycle.cpp.
+    std::string input_format;
 };
 
 /// Normalized target-compiler metadata for the current database.
@@ -215,6 +226,44 @@ Status open_binary(std::string_view path, OpenMode mode = OpenMode::Analyze);
 
 /// Open with explicit non-binary-input intent.
 Status open_non_binary(std::string_view path, OpenMode mode = OpenMode::Analyze);
+
+/// A loader IDA is willing to use for a given input file.
+///
+/// A universal ("fat") Mach-O yields one entry per architecture slice, in the
+/// order the slices appear in the file. Opening such a file without naming a
+/// format selects the first entry, which for Apple's toolchain is x86_64 —
+/// `lipo` orders slices by CPU type, placing x86_64 ahead of arm64.
+struct InputFormat {
+    /// Name IDA displays for this format, carrying its own ordinal for
+    /// multi-slice inputs (for example `Fat Mach-O file, 2. ARM64e-pauth1`).
+    /// Pass it back verbatim through OpenOptions::file_type to select it;
+    /// no parsing or renumbering is needed or correct.
+    std::string name;
+    /// Processor module this format wants (for example `arm`, `metapc`).
+    std::string processor;
+    /// Loader module that produced this entry.
+    std::string loader_path;
+    /// True when the loader treats the input as an archive of members.
+    bool archive_loader{false};
+};
+
+/// List the formats IDA would offer for \p path, in IDA's own order.
+///
+/// Requires an initialised library — call init() first. Returns an empty list
+/// when no loader recognises the input.
+Result<std::vector<InputFormat>> list_input_formats(std::string_view path);
+
+/// Options controlling how an input file is opened.
+///
+/// Note that the input format is deliberately *not* here: IDA only accepts it
+/// at initialisation. See RuntimeOptions::input_format.
+struct OpenOptions {
+    /// Whether to run auto-analysis to completion.
+    OpenMode mode{OpenMode::Analyze};
+};
+
+/// Open (or create) a database with structured options.
+Status open(std::string_view path, const OpenOptions& options);
 
 /// Save the current database.
 /// Wraps save_database().

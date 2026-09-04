@@ -13,6 +13,7 @@
 #include <chrono>
 #include <filesystem>
 #include <system_error>
+#include <vector>
 
 namespace ida::database {
 
@@ -23,6 +24,36 @@ namespace fs = std::filesystem;
 bool should_auto_analysis(OpenMode mode) {
     return mode == OpenMode::Analyze;
 }
+
+/// Releases the SDK input handle opened for loader probing.
+struct InputHandleGuard {
+    linput_t* handle{nullptr};
+
+    explicit InputHandleGuard(linput_t* input_handle) : handle(input_handle) {}
+
+    ~InputHandleGuard() {
+        if (handle != nullptr)
+            close_linput(handle);
+    }
+
+    InputHandleGuard(const InputHandleGuard&) = delete;
+    InputHandleGuard& operator=(const InputHandleGuard&) = delete;
+};
+
+/// Releases the loader list returned by build_loaders_list().
+struct LoadersListGuard {
+    load_info_t* list{nullptr};
+
+    explicit LoadersListGuard(load_info_t* loader_list) : list(loader_list) {}
+
+    ~LoadersListGuard() {
+        if (list != nullptr)
+            free_loaders_list(list);
+    }
+
+    LoadersListGuard(const LoadersListGuard&) = delete;
+    LoadersListGuard& operator=(const LoadersListGuard&) = delete;
+};
 
 bool wildcard_match(std::string_view text, std::string_view pattern) {
     std::size_t text_index = 0;
@@ -229,6 +260,33 @@ Status init(int argc, char* argv[], const RuntimeOptions& options) {
     if (!pre)
         return std::unexpected(pre.error());
 
+    // `init_library` takes the IDA command line — `idat` is nothing but a shell
+    // around it. An input format therefore has to arrive here, as a `-T`
+    // argument, and it must be present on the single initialisation call: the
+    // library cannot be re-initialised to change it later.
+    //
+    // No quoting is applied. `-T` and its value form one argv entry, and only
+    // the command-line *string* form (which IDA splits on whitespace) needs
+    // quotes to survive a format name like `Fat Mach-O file, 2. ARM64`.
+    std::vector<std::string> argument_storage;
+    std::vector<char*> argument_pointers;
+    if (!options.input_format.empty()) {
+        argument_storage.reserve(static_cast<std::size_t>(argc) + 1);
+        for (int index = 0; index < argc; ++index)
+            argument_storage.emplace_back(argv[index] != nullptr ? argv[index] : "");
+        if (argument_storage.empty())
+            argument_storage.emplace_back("idax");
+        argument_storage.emplace_back("-T" + options.input_format);
+
+        argument_pointers.reserve(argument_storage.size() + 1);
+        for (auto& argument : argument_storage)
+            argument_pointers.push_back(argument.data());
+        argument_pointers.push_back(nullptr);
+
+        argc = static_cast<int>(argument_storage.size());
+        argv = argument_pointers.data();
+    }
+
     int rc = init_library(argc, argv);
     if (rc != 0)
         return std::unexpected(Error::sdk("init_library failed",
@@ -271,15 +329,56 @@ Status open(std::string_view path, LoadIntent intent, OpenMode mode) {
 }
 
 Status open_binary(std::string_view path, OpenMode mode) {
-    // open_database() currently performs loader selection automatically.
-    // This wrapper exists to make caller intent explicit.
-    return open(path, mode);
+    // Intent does not select a loader on its own; open_database() detects the
+    // format. Name a format through OpenOptions::file_type to control it.
+    return open(path, OpenOptions{mode});
 }
 
 Status open_non_binary(std::string_view path, OpenMode mode) {
-    // open_database() currently performs loader selection automatically.
-    // This wrapper exists to make caller intent explicit.
-    return open(path, mode);
+    // Same as open_binary(): the intent is documentation for the caller, not
+    // an instruction to IDA.
+    return open(path, OpenOptions{mode});
+}
+
+Result<std::vector<InputFormat>> list_input_formats(std::string_view path) {
+    if (path.empty())
+        return std::unexpected(Error::validation("Input file path cannot be empty"));
+
+    qstring qpath = ida::detail::to_qstring(path);
+
+    InputHandleGuard input{open_linput(qpath.c_str(), false)};
+    if (input.handle == nullptr) {
+        return std::unexpected(Error::sdk("open_linput failed", std::string(path)));
+    }
+
+    LoadersListGuard loaders{build_loaders_list(input.handle, qpath.c_str())};
+
+    std::vector<InputFormat> formats;
+    for (load_info_t* node = loaders.list; node != nullptr; node = node->next) {
+        formats.push_back(InputFormat{
+            ida::detail::to_string(node->ftypename),
+            ida::detail::to_string(node->processor),
+            ida::detail::to_string(node->dllname),
+            node->is_archldr(),
+        });
+    }
+    return formats;
+}
+
+// `open_database` accepts a third argument string of IDA command-line options,
+// and passing `-T"<format>"` there does select the right loader. Do not use it.
+// Measured on IDA 9.4: the database opens and saves correctly, but tearing it
+// down afterwards aborts the process with `internal error 30500` inside
+// `_ida_hexrays.so`, leaving unpacked `.id0`/`.id1`/`.nam`/`.til` files beside
+// the input — a database that was never closed cleanly. It reproduces against
+// the bare SDK with no idax linked in, on thin files as well as fat ones, and
+// neither `close_database` nor the SDK sample's
+// `set_database_flag(DBFL_KILL) + term_database()` avoids it.
+//
+// The format belongs on `init_library`'s argv instead; see
+// RuntimeOptions::input_format.
+Status open(std::string_view path, const OpenOptions& options) {
+    return open(path, should_auto_analysis(options.mode));
 }
 
 Status close(bool save_first) {
