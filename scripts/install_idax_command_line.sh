@@ -4,7 +4,7 @@ set -euo pipefail
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repository_root="$(cd "$script_directory/.." && pwd)"
-product_name="idax-dyld-cache-database-creator"
+product_name="idax"
 installation_prefix="${IDAX_INSTALLATION_PREFIX:-$HOME/.local}"
 binary_installation_directory="$installation_prefix/bin"
 product_installation_directory="$installation_prefix/libexec/$product_name"

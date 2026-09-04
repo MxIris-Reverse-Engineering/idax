@@ -1,3 +1,0 @@
-import IDAXDyldCacheDatabaseCreatorCore
-
-DynamicLinkerSharedCacheDatabaseCreator.main()

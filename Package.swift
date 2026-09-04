@@ -78,8 +78,8 @@ let package = Package(
     products: [
         .library(name: "IDAX", targets: ["IDAX"]),
         .executable(
-            name: "idax-dyld-cache-database-creator",
-            targets: ["IDAXDyldCacheDatabaseCreator"]
+            name: "idax",
+            targets: ["IDAXCommandLine"]
         ),
     ],
     dependencies: [
@@ -104,17 +104,25 @@ let package = Package(
             path: "bindings/swift/Examples"
         ),
         .target(
-            name: "IDAXDyldCacheDatabaseCreatorCore",
+            name: "IDAXCommandLineCore",
             dependencies: [
                 "IDAX",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "bindings/swift/Tools/DyldCacheDatabaseCreatorCore"
+            path: "bindings/swift/Tools/CommandLineCore"
         ),
         .executableTarget(
-            name: "IDAXDyldCacheDatabaseCreator",
-            dependencies: ["IDAXDyldCacheDatabaseCreatorCore"],
-            path: "bindings/swift/Tools/DyldCacheDatabaseCreator"
+            name: "IDAXCommandLine",
+            dependencies: ["IDAXCommandLineCore"],
+            path: "bindings/swift/Tools/CommandLine",
+            // In developer mode the CIDAX target carries these and the
+            // executable inherits them. In consumer mode CIDAX is a
+            // binaryTarget, which cannot carry linker settings, and the
+            // prebuilt framework is linked with `-undefined dynamic_lookup` —
+            // so nothing pulls in the IDA runtime and the first symbol needing
+            // eager binding aborts the process at launch (`_eval_expr`, from
+            // the IDC script domain). The executable has to link it itself.
+            linkerSettings: devMode ? [] : [.unsafeFlags(idaRuntimeLinkerFlags)]
         ),
         .testTarget(
             name: "IDAXTests",
@@ -122,12 +130,12 @@ let package = Package(
             path: "bindings/swift/Tests/IDAXTests"
         ),
         .testTarget(
-            name: "IDAXDyldCacheDatabaseCreatorTests",
+            name: "IDAXCommandLineTests",
             dependencies: [
-                "IDAXDyldCacheDatabaseCreatorCore",
+                "IDAXCommandLineCore",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
-            path: "bindings/swift/Tests/IDAXDyldCacheDatabaseCreatorTests"
+            path: "bindings/swift/Tests/IDAXCommandLineTests"
         ),
         .plugin(
             name: "BuildXCFramework",

@@ -1,0 +1,3 @@
+import IDAXCommandLineCore
+
+IDAXCommand.main()
