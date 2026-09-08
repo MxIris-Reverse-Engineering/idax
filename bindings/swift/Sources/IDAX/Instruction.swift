@@ -31,9 +31,10 @@ public enum BranchCondition: Int32, Sendable {
     case lessThanOrEqualUnsigned
     case greaterThanUnsigned
     case greaterThanOrEqualUnsigned
-    /// Direct register-is-zero test (ARM64 `CBZ`, `TBZ`).
+    /// Whole-register-is-zero test (ARM64 `CBZ`). Not the same predicate as
+    /// `bitZero`: this one tests every bit of the register.
     case zero
-    /// Direct register-is-not-zero test (ARM64 `CBNZ`, `TBNZ`).
+    /// Whole-register-is-not-zero test (ARM64 `CBNZ`).
     case notZero
     /// Negative / N flag set (ARM64 `B.MI`, x86 `JS`).
     case negative
@@ -47,8 +48,24 @@ public enum BranchCondition: Int32, Sendable {
     case parity
     /// Parity flag clear (x86 `JNP` / `JPO`).
     case noParity
-    /// Counter register is zero (x86 `JCXZ` / `JECXZ` / `JRCXZ`, `LOOP*`).
+    /// Counter register is zero (x86 `JCXZ` / `JECXZ` / `JRCXZ`).
     case countZero
+    /// Single-bit-is-clear test (ARM64 `TBZ`). The tested bit is an explicit
+    /// operand; this is a different predicate from `zero`.
+    case bitZero
+    /// Single-bit-is-set test (ARM64 `TBNZ`).
+    case bitNotZero
+    /// Counter register is non-zero after one decrement (x86 `LOOP`).
+    case countNotZero
+    /// Counter non-zero after one decrement, and equal (x86 `LOOPE`).
+    case countNotZeroAndEqual
+    /// Counter non-zero after one decrement, and not equal (x86 `LOOPNE`).
+    case countNotZeroAndNotEqual
+    /// A control transfer whose predicate the processor module does not
+    /// classify. Distinct from `none`, which means "not a transfer".
+    case unknown
+    /// Never taken (the historical AArch32 `NV` condition).
+    case never
 }
 
 /// Decoded instruction operand.

@@ -50,5 +50,5 @@ tool, and both had claimed `P23.1`.
 
 - [x] F14 Backport the seven core-library defects upstream fixed on `rewrite/swift-bindings`, plus the pseudocode coordinate map and build-path redaction.
 - [x] F15.1 Parse the modern dyld cache image table, and prefer it over the legacy one.
-- [ ] F15.2 Replace the mnemonic-string branch classifier with upstream's itype-based one.
+- [x] F15.2 Replace the mnemonic-string branch classifier with upstream's itype-based one.
 - [ ] F15.3 Adopt upstream's microcode semantic-metadata API.

@@ -3,6 +3,7 @@
 
 #include "detail/sdk_bridge.hpp"
 #include <ida/instruction.hpp>
+#include <allins.hpp>
 
 #include <algorithm>
 #include <cctype>
@@ -254,102 +255,179 @@ std::string decode_operand_register_name(Address address,
     return register_name;
 }
 
-BranchCondition parse_branch_condition_from_mnemonic(std::string_view mnemonic) {
-    if (mnemonic.empty())
-        return BranchCondition::None;
+// Classifying a control transfer from disassembly text cannot distinguish
+// predicates that share a mnemonic prefix -- ARM64 `TBZ` (test one bit) reads
+// as a `Zero` test just like `CBZ` (test the whole register). Decode from the
+// processor module's instruction type and condition field instead.
+BranchCondition x86_branch_condition(std::uint16_t instruction_type) {
+    switch (instruction_type) {
+        case NN_je:
+        case NN_jz:
+            return BranchCondition::Equal;
+        case NN_jne:
+        case NN_jnz:
+            return BranchCondition::NotEqual;
+        case NN_jl:
+        case NN_jnge:
+            return BranchCondition::LessThanSigned;
+        case NN_jle:
+        case NN_jng:
+            return BranchCondition::LessThanOrEqualSigned;
+        case NN_jg:
+        case NN_jnle:
+            return BranchCondition::GreaterThanSigned;
+        case NN_jge:
+        case NN_jnl:
+            return BranchCondition::GreaterThanOrEqualSigned;
+        case NN_jb:
+        case NN_jc:
+        case NN_jnae:
+            return BranchCondition::LessThanUnsigned;
+        case NN_jbe:
+        case NN_jna:
+            return BranchCondition::LessThanOrEqualUnsigned;
+        case NN_ja:
+        case NN_jnbe:
+            return BranchCondition::GreaterThanUnsigned;
+        case NN_jae:
+        case NN_jnb:
+        case NN_jnc:
+            return BranchCondition::GreaterThanOrEqualUnsigned;
+        case NN_js:
+            return BranchCondition::Negative;
+        case NN_jns:
+            return BranchCondition::NotNegative;
+        case NN_jo:
+        case NN_into:
+            return BranchCondition::Overflow;
+        case NN_jno:
+            return BranchCondition::NoOverflow;
+        case NN_jp:
+        case NN_jpe:
+            return BranchCondition::Parity;
+        case NN_jnp:
+        case NN_jpo:
+            return BranchCondition::NoParity;
+        case NN_jcxz:
+        case NN_jecxz:
+        case NN_jrcxz:
+            return BranchCondition::CountZero;
+        case NN_loop:
+        case NN_loopw:
+        case NN_loopd:
+        case NN_loopq:
+            return BranchCondition::CountNotZero;
+        case NN_loope:
+        case NN_loopwe:
+        case NN_loopde:
+        case NN_loopqe:
+            return BranchCondition::CountNotZeroAndEqual;
+        case NN_loopne:
+        case NN_loopwne:
+        case NN_loopdne:
+        case NN_loopqne:
+            return BranchCondition::CountNotZeroAndNotEqual;
+        case NN_jmp:
+        case NN_jmpfi:
+        case NN_jmpni:
+        case NN_jmpshort:
+        case NN_call:
+        case NN_callfi:
+        case NN_callni:
+        case NN_retn:
+        case NN_retnw:
+        case NN_retnd:
+        case NN_retnq:
+        case NN_retf:
+        case NN_retfw:
+        case NN_retfd:
+        case NN_retfq:
+        case NN_iret:
+        case NN_iretw:
+        case NN_iretd:
+        case NN_iretq:
+            return BranchCondition::Always;
+        default: return BranchCondition::None;
+    }
+}
 
-    std::string lowered = to_lower_ascii(std::string(mnemonic));
+BranchCondition arm_branch_condition(const insn_t& instruction) {
+    switch (instruction.itype) {
+        case ARM_cbz: return BranchCondition::Zero;
+        case ARM_cbnz: return BranchCondition::NotZero;
+        case ARM_tbz: return BranchCondition::BitZero;
+        case ARM_tbnz: return BranchCondition::BitNotZero;
+        case ARM_b:
+        case ARM_bl:
+        case ARM_bx:
+        case ARM_bxj:
+        case ARM_blx1:
+        case ARM_blx2:
+        case ARM_br:
+        case ARM_blr:
+        case ARM_ret:
+        case ARM_eret:
+        case ARM_bxaut:
+            break;
+        default: return BranchCondition::None;
+    }
 
-    auto strip_suffix = [](std::string& text, std::string_view suffix) {
-        if (text.size() > suffix.size()
-            && text.compare(text.size() - suffix.size(), suffix.size(), suffix) == 0) {
-            text.resize(text.size() - suffix.size());
+    // SDK module/arm/arm.hpp defines cond as insn_t::segpref and get_cond()
+    // as its low four bits. Use the decoded condition, which remains available
+    // when these mapped bytes have not been created as code items in the IDB.
+    switch (instruction.segpref & 0x0f) {
+        case 0x0: return BranchCondition::Equal;
+        case 0x1: return BranchCondition::NotEqual;
+        case 0x2: return BranchCondition::GreaterThanOrEqualUnsigned;
+        case 0x3: return BranchCondition::LessThanUnsigned;
+        case 0x4: return BranchCondition::Negative;
+        case 0x5: return BranchCondition::NotNegative;
+        case 0x6: return BranchCondition::Overflow;
+        case 0x7: return BranchCondition::NoOverflow;
+        case 0x8: return BranchCondition::GreaterThanUnsigned;
+        case 0x9: return BranchCondition::LessThanOrEqualUnsigned;
+        case 0xa: return BranchCondition::GreaterThanOrEqualSigned;
+        case 0xb: return BranchCondition::LessThanSigned;
+        case 0xc: return BranchCondition::GreaterThanSigned;
+        case 0xd: return BranchCondition::LessThanOrEqualSigned;
+        case 0xe: return BranchCondition::Always;
+        case 0xf: {
+            // AArch64 interprets condition 1111 as always. The historical
+            // AArch32 condition is never; unconditional forms decode as AL.
+            auto segment = ::getseg(instruction.ea);
+            return segment != nullptr && segment->is_64bit()
+                ? BranchCondition::Always : BranchCondition::Never;
         }
-    };
-    strip_suffix(lowered, ".w");
-    strip_suffix(lowered, ".n");
-
-    // ARM64 direct zero / bit-test branches.
-    if (lowered == "cbz" || lowered == "tbz")
-        return BranchCondition::Zero;
-    if (lowered == "cbnz" || lowered == "tbnz")
-        return BranchCondition::NotZero;
-
-    // Unconditional control transfers (mnemonic exact match).
-    if (lowered == "b" || lowered == "bl" || lowered == "br" || lowered == "bx"
-        || lowered == "blr" || lowered == "blx"
-        || lowered == "braa" || lowered == "brab"
-        || lowered == "blraa" || lowered == "blrab"
-        || lowered == "braaz" || lowered == "brabz"
-        || lowered == "ret" || lowered == "retaa" || lowered == "retab"
-        || lowered == "jmp" || lowered == "jmpf" || lowered == "jmpe") {
-        return BranchCondition::Always;
+        default: return BranchCondition::Unknown;
     }
+}
 
-    // x86 counter-zero family.
-    if (lowered == "jcxz" || lowered == "jecxz" || lowered == "jrcxz"
-        || lowered == "loop" || lowered == "loope" || lowered == "loopz"
-        || lowered == "loopne" || lowered == "loopnz") {
-        return BranchCondition::CountZero;
-    }
-
-    // Extract condition suffix.
-    std::string_view condition;
-    if (starts_with(lowered, "b.")) {
-        condition = std::string_view(lowered).substr(2); // ARM64: B.<cond>
-    } else if (starts_with(lowered, "b")) {
-        condition = std::string_view(lowered).substr(1); // ARM32: B<cond>
-    } else if (starts_with(lowered, "j")) {
-        condition = std::string_view(lowered).substr(1); // x86: J<cond>
-    } else {
+BranchCondition decoded_branch_condition(const insn_t& instruction) {
+    const processor_t* processor = get_ph();
+    if (processor == nullptr)
         return BranchCondition::None;
+    BranchCondition condition = BranchCondition::None;
+    if (processor->id == PLFM_386)
+        condition = x86_branch_condition(instruction.itype);
+    else if (processor->id == PLFM_ARM)
+        condition = arm_branch_condition(instruction);
+    if (condition != BranchCondition::None)
+        return condition;
+
+    // The generic SDK can identify a transfer without knowing its predicate.
+    // Do not assign another architecture's condition based on mnemonic text.
+    if (::is_call_insn(instruction) || ::is_ret_insn(instruction)
+        || ::is_indirect_jump_insn(instruction)) {
+        return BranchCondition::Unknown;
     }
-
-    if (condition == "eq" || condition == "e" || condition == "z")
-        return BranchCondition::Equal;
-    if (condition == "ne" || condition == "nz")
-        return BranchCondition::NotEqual;
-
-    if (condition == "gt" || condition == "g" || condition == "nle")
-        return BranchCondition::GreaterThanSigned;
-    if (condition == "ge" || condition == "nl")
-        return BranchCondition::GreaterThanOrEqualSigned;
-    if (condition == "lt" || condition == "l" || condition == "nge")
-        return BranchCondition::LessThanSigned;
-    if (condition == "le" || condition == "ng")
-        return BranchCondition::LessThanOrEqualSigned;
-
-    if (condition == "hi" || condition == "a" || condition == "nbe")
-        return BranchCondition::GreaterThanUnsigned;
-    if (condition == "hs" || condition == "cs"
-        || condition == "ae" || condition == "nb" || condition == "nc")
-        return BranchCondition::GreaterThanOrEqualUnsigned;
-    if (condition == "lo" || condition == "cc"
-        || condition == "b"  || condition == "nae" || condition == "c")
-        return BranchCondition::LessThanUnsigned;
-    if (condition == "ls" || condition == "be" || condition == "na")
-        return BranchCondition::LessThanOrEqualUnsigned;
-
-    if (condition == "mi" || condition == "s")
-        return BranchCondition::Negative;
-    if (condition == "pl" || condition == "ns")
-        return BranchCondition::NotNegative;
-
-    if (condition == "vs" || condition == "o")
-        return BranchCondition::Overflow;
-    if (condition == "vc" || condition == "no")
-        return BranchCondition::NoOverflow;
-
-    if (condition == "p" || condition == "pe")
-        return BranchCondition::Parity;
-    if (condition == "np" || condition == "po")
-        return BranchCondition::NoParity;
-
-    if (condition == "al")
-        return BranchCondition::Always;
-    if (condition == "nv")
-        return BranchCondition::None;
-
+    xrefblk_t references;
+    for (bool found = references.first_from(instruction.ea, XREF_ALL);
+         found; found = references.next_from()) {
+        if (references.iscode
+            && (references.type == fl_JN || references.type == fl_JF)) {
+            return BranchCondition::Unknown;
+        }
+    }
     return BranchCondition::None;
 }
 
@@ -364,7 +442,7 @@ struct InstructionAccess {
         insn.size_  = static_cast<AddressSize>(raw.size);
         insn.itype_ = raw.itype;
         insn.mnemonic_ = mnemonic_text;
-        insn.branch_condition_ = parse_branch_condition_from_mnemonic(mnemonic_text);
+        insn.branch_condition_ = decoded_branch_condition(raw);
 
         processor_t* processor = get_ph();
         const uint32 feature = processor ? raw.get_canon_feature(*processor) : 0;
@@ -975,10 +1053,8 @@ bool is_conditional_jump(Address ea) {
 }
 
 BranchCondition branch_condition(Address ea) {
-    qstring qmnem;
-    if (!print_insn_mnem(&qmnem, ea))
-        return BranchCondition::None;
-    return parse_branch_condition_from_mnemonic(ida::detail::to_string(qmnem));
+    const auto instruction = decode(ea);
+    return instruction ? instruction->branch_condition() : BranchCondition::None;
 }
 
 Result<Instruction> next(Address ea) {

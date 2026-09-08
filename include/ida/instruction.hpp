@@ -69,8 +69,7 @@ enum class RegisterCategory {
 /// Consumers building a Low-IR / MIR should use this as the source for
 /// per-terminator branch conditions.
 enum class BranchCondition {
-    /// Instruction is not a conditional control-transfer, or its condition
-    /// could not be classified from the mnemonic.
+    /// Instruction is not a control transfer at all.
     None,
     /// Unconditional jump or branch (e.g. ARM64 `B`, x86 `JMP`).
     Always,
@@ -85,9 +84,10 @@ enum class BranchCondition {
     LessThanOrEqualUnsigned,
     GreaterThanUnsigned,
     GreaterThanOrEqualUnsigned,
-    /// Direct register-is-zero test (ARM64 `CBZ`, `TBZ`).
+    /// Whole-register-is-zero test (ARM64 `CBZ`). Not the same predicate as
+    /// `BitZero`: this one tests every bit of the register.
     Zero,
-    /// Direct register-is-not-zero test (ARM64 `CBNZ`, `TBNZ`).
+    /// Whole-register-is-not-zero test (ARM64 `CBNZ`).
     NotZero,
     /// Negative / N flag set (ARM64 `B.MI`, x86 `JS`).
     Negative,
@@ -101,8 +101,24 @@ enum class BranchCondition {
     Parity,
     /// Parity flag clear (x86 `JNP` / `JPO`).
     NoParity,
-    /// Counter register is zero (x86 `JCXZ` / `JECXZ` / `JRCXZ`, `LOOP*`).
+    /// Counter register is zero (x86 `JCXZ` / `JECXZ` / `JRCXZ`).
     CountZero,
+    /// Single-bit-is-clear test (ARM64 `TBZ`). The tested bit is an explicit
+    /// operand; this is a different predicate from `Zero`.
+    BitZero,
+    /// Single-bit-is-set test (ARM64 `TBNZ`).
+    BitNotZero,
+    /// Counter register is non-zero after one decrement (x86 `LOOP`).
+    CountNotZero,
+    /// Counter non-zero after one decrement, and equal (x86 `LOOPE`).
+    CountNotZeroAndEqual,
+    /// Counter non-zero after one decrement, and not equal (x86 `LOOPNE`).
+    CountNotZeroAndNotEqual,
+    /// A control transfer whose predicate this processor module does not
+    /// classify. Distinct from `None`, which means "not a transfer".
+    Unknown,
+    /// Never taken (the historical AArch32 `NV` condition).
+    Never,
 };
 
 /// Structured representation of an operand struct-offset path.

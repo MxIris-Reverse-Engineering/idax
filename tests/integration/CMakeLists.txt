@@ -148,6 +148,10 @@ idax_add_integration_test(type_data_comment_torture        type_data_comment_tor
 idax_add_integration_test(operand_function_torture         operand_function_torture_test.cpp)
 
 
+idax_add_integration_test(instruction_branch_x86 instruction_branch_semantics_test.cpp)
+idax_add_integration_test(instruction_branch_arm64 instruction_branch_semantics_test.cpp
+    "${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/register_tracking_aarch64")
+
 # Offline dyld cache image parsing and initialized non-cache service rejection.
 idax_add_integration_test(dyld_cache dyld_cache_test.cpp)
 

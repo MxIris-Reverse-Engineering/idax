@@ -199,3 +199,10 @@ tool, and both had claimed `P23.1`.
   - F15.1.4. 顺带加严 `has_dyld_magic()`：原来只比对前 6 字节 `"dyld_v"`，magic 字段其余 10 字节是垃圾也照样当缓存解析。现在完整校验 16 字节字段（版本位、分隔空格、架构名字符集、NUL 填充后不得再有内容）。这是测试 position 7 与 15 两个用例暴露的。
   - F15.1.5. 横向排查了三类同源模式：「承诺 BadAddress 却返回错误」全库只有 fixup 三个入口与 `line_to_address()`，均已在 F14 修掉；「只校验前缀」与「多候选取第一个」在本文件外无同类。另有三处「空集合即 not_found」（`src/dyld_cache.cpp` 的在线 `list_modules()`、`src/comment.cpp` 的 `all()`、`src/directory.cpp` 的 `absolute_path()`）属设计选择而非同类缺陷，需逐个对照头文件契约判断，未在本批次处理。
   - F15.1.6. 验证：44/44 全通过。
+
+- **F15.2. 分支条件分类器改为基于 itype**
+  - F15.2.1. 原实现 `parse_branch_condition_from_mnemonic()` 解析反汇编文本，无法区分共享前缀的谓词：ARM64 `TBZ`（测单个 bit）与 `CBZ`（测整个寄存器）都被归为 `Zero`，头文件注释也把两者并列。改为按处理器模块的 `itype` 与条件码分类：x86 走 `NN_*`，ARM 走 `ARM_*` 加 `insn_t::segpref` 低四位的条件域；两者都不认时，若 SDK 的通用谓词（`is_call_insn` / `is_ret_insn` / `is_indirect_jump_insn` 或 `fl_JN`/`fl_JF` 交叉引用）确认这是控制转移，报 `Unknown` 而不是拿别的架构的助记符规则去猜。
+  - F15.2.2. `BranchCondition` 追加七个成员：`BitZero`、`BitNotZero`、`CountNotZero`、`CountNotZeroAndEqual`、`CountNotZeroAndNotEqual`、`Unknown`、`Never`。**纯追加，既有成员的整数值不变**，故 C ABI 与 Rust sys 层无需改动（两者都用 `static_cast<int>` 直通）。`None` 的含义收紧为「根本不是控制转移」，与 `Unknown`（是转移但谓词未分类）区分开。
+  - F15.2.3. 行为变更需知会下游：ARM64 `TBZ` / `TBNZ` 的结果由 `Zero` / `NotZero` 变为 `BitZero` / `BitNotZero`；x86 `LOOP` 系列由 `CountZero` 变为 `CountNotZero*`。
+  - F15.2.4. `src/instruction.cpp` 新增 `#include <allins.hpp>`（SDK 汇总各处理器 itype 枚举的头）。公开入口 `branch_condition(Address)` 改为解码后取分类结果，不再二次解析助记符。Swift 的 `BranchCondition` 同步补齐七个 case。
+  - F15.2.5. 验证：C++ 46/46（含上游 `instruction_branch_x86` 与 `instruction_branch_arm64` 两个 fixture）全通过；Swift consumer 模式 0 error，182 tests / 49 suites 全通过。
