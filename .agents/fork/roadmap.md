@@ -45,3 +45,8 @@ tool, and both had claimed `P23.1`.
 
 - [x] F12 Add single-binary mode to the Swift command-line tool with host-architecture slice selection, and rename it to `idax`.
 - [ ] F13 Mirror `RuntimeOptions::input_format` and `list_input_formats()` in the Rust safe layer and the Node addon.
+
+## Upstream Backports
+
+- [x] F14 Backport the seven core-library defects upstream fixed on `rewrite/swift-bindings`, plus the pseudocode coordinate map and build-path redaction.
+- [ ] F15 Decide on three upstream improvements found while backporting: the modern dyld cache image table, the itype-based branch classifier, and the microcode semantic-metadata API.

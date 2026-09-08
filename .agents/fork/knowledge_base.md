@@ -58,3 +58,16 @@ IDA 通过 C 函数指针同步回调，而 C 函数指针只能由 `nonisolated
 `CIDAX.framework` 以 `-undefined dynamic_lookup` 构建以避免绑定特定 IDA 安装，代价是 consumer 模式下没有任何 target 会把 libida / libidalib 引入进程；binaryTarget 本身也不能声明 linkerSettings。只要 framework 内含任何需要 eager binding 的 IDA 符号（例如 IDC script 域的 `eval_expr`），可执行文件就会在启动时 abort。因此依赖该 framework 的 executable target 必须在非 developer 模式下自带 `-L<IDADIR> -lida -lidalib` 与对应 rpath。该缺口只在 xcframework 重建后才会显现，属于「旧产物侥幸可用」掩盖的构建配置错误。
 ### 35.46. Conformance 的隔离独立于类型的隔离 [F27]
 在 `InferIsolatedConformances` 下，protocol conformance 自带隔离属性，不继承类型声明上的 `nonisolated`。把一个纯值类型标成 `nonisolated struct` 之后，它写在 extension 里的 `CustomStringConvertible` / `ExpressibleByArgument` 遵循仍是 MainActor-isolated，于是任何 nonisolated 上下文里的字符串插值或 `map(\.description)` keypath 都会被拒。修法是 `nonisolated extension`；把遵循写回类型主体同样有效，但 extension 是更常见的写法，所以这是采用模块级 `defaultIsolation(MainActor)` 的固定成本之一。
+### 35.47. SDK 头的包含顺序是逐文件的经验事实，不能整批照搬 [F28]
+把标准库头移到 `detail/sdk_bridge.hpp` 之前，是上游用来绕开旧 libc++ 中
+`<print>` 与 SDK stdio poison 宏冲突的手段。这个调整看上去纯属顺序、不改语义，
+实际不是：同一改动在 `src/type.cpp` 上无害，在 `src/database_lifecycle.cpp` 上
+会让 `open_database` 失败并段错误。`sdk_bridge.hpp` 本身不定义任何宏，所以敏感性
+来自 SDK 头。结论是这类「纯顺序」改动必须逐文件跑集成测试验证，且判定前要先在未
+改动的基线上确认该测试为绿——否则会把既有失败误认成自己引入的。
+### 35.48. dyld shared cache 有三张 image 表，现代格式在 0x1c0 [F29]
+toplevel cache 文件里可能同时存在三张表：legacy `dyld_cache_image_info`
+（uint32 offset/count @ 0x18）、`dyld_cache_image_text_info`（uint64 @ 0x88）
+与现代 `imagesOffset` / `imagesCount`（@ 0x1c0）。Big Sur 之后的 macOS 用现代表，
+而 legacy 表可能作为陈旧残留同时存在，因此解析顺序必须是现代表优先，不能「先找到
+哪张用哪张」。现代表存在但为空是合法状态，应返回空列表而非错误。

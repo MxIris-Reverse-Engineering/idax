@@ -94,3 +94,22 @@ tool, and both had claimed `P23.1`.
   - F13.2. **影响：** 仅限这两条绑定的使用者无法选择 fat Mach-O 的架构 slice，且会沉默地拿到第一个 slice（Apple 工具链下即 x86_64）。C++ 与 Swift 消费者不受影响。
   - F13.3. **注意：** 补齐时必须把 format 放在 runtime/初始化选项上，不要暴露成 open 参数——后者会触发 [F24] 的终止 abort。
   - F13.4. **下一步：** 在 `bindings/rust/idax/src/database.rs` 与 Node 的 database bind 文件中镜像 `RuntimeOptions::input_format` 与 `list_input_formats`。
+
+- **F15. 回搬上游修复时发现的三项上游改进，待决定是否采纳**
+  - F15.1. **现代 dyld cache image 表（建议优先做）。** 见 [F29]：`src/dyld_cache.cpp`
+    的离线解析不认 0x1c0 的现代表，而 Big Sur 之后的 macOS 共享缓存正是它，本 fork 的
+    `idax` 命令行工具直接依赖这条路径。上游 `dyld_cache_test.cpp` 已就绪（三处变红），
+    修完可直接搬回作为回归测试。
+  - F15.2. **基于 itype 的分支条件分类器。** 见 [F30]：上游把分类依据从助记符字符串
+    换成处理器 `itype` 与条件码位域，并扩了七个枚举成员。这是公开枚举的扩展，Swift /
+    Rust / Node 三层绑定都要同步，且 `Zero`→`BitZero` 的重新归类会改变既有调用方看到的
+    结果。上游 `instruction_branch_semantics_test.cpp` 覆盖 x86 与 aarch64 两个 fixture。
+  - F15.3. **microcode 语义元数据 API。** 上游 `6f0d3fc` 给 `MicrocodeOperand` 加了
+    `value_number`、`call_argument_properties`、`call_return_registers`、
+    `floating_point_constant`、`switch_cases`、`switch_default_target`、
+    `call_return_operands`，给 `MicrocodeFunction` 加了 `stack_frame_size`、
+    `local_stack_size`、`saved_register_size`、`return_variable_index`、
+    `local_variables`。本 fork 另有独立的 `src/microcode.cpp` 只读快照 API，两者关系需
+    先厘清再决定是并入还是各自保留。`decompiler_semantic_metadata_test.cpp`（395 行）
+    与其 fixture 是配套的。
+  - F15.4. **下一步：** 由用户挑选采纳范围。三项互不依赖，可分批做。

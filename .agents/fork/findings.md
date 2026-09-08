@@ -249,3 +249,32 @@ tool, and both had claimed `P23.1`.
   `nonisolated extension X: SomeProtocol`（SE-0449）。
   症状有迷惑性：报错点全落在使用方——字符串插值 `\(architecture)`、
   `map(\.description)` 的 keypath——而要改的是声明方。
+
+- **F28. 标准库头前置到 SDK 头之前，在 `database_lifecycle.cpp` 上会让 `open_database` 失败并段错误。**
+  上游 `fc7ba52` 为绕开旧 libc++（Xcode 16.2）的 stdio poison 宏冲突，把
+  `<chrono>` / `<filesystem>` / `<system_error>` 移到 `detail/sdk_bridge.hpp`
+  之前。同样的调整在 `src/type.cpp` 上无害，在 `src/database_lifecycle.cpp`
+  上却让 `offset_reference_roundtrip` 的重开数据库环节报
+  `open_database failed` 并以 SIGSEGV 结束。`sdk_bridge.hpp` 自身只有
+  include guard，没有任何宏定义，所以影响来自 SDK 头本身对包含顺序的敏感性；
+  根因未进一步定位。先在未改动的 HEAD 上跑通该测试确认基线为绿，再逐文件回退
+  定位到这一条。本 fork 当前工具链是 AppleClang 21，上游那条修复要解决的编译
+  失败在此不出现，故直接不搬。
+
+- **F29. 本 fork 的离线 dyld cache 解析不认现代格式的 image 表。**
+  `src/dyld_cache.cpp` 的 `list_modules(cache_path)` 只有两条策略：legacy 的
+  `dyld_cache_image_info`（uint32 offset/count @ 0x18）与
+  `dyld_cache_image_text_info`（uint64 @ 0x88），并且 legacy 优先。上游为该 API
+  写的 `dyld_cache_test.cpp` 在三处变红：现代表（offset/count @ 0x1c0）完全不
+  被识别；现代表与 legacy 表同时存在时应由现代表胜出，我们让 legacy 赢；现代表
+  为空时应返回成功的空列表，我们返回错误。Big Sur 之后的 macOS 共享缓存用的正是
+  现代表，而本 fork 的 `idax` 命令行工具依赖这条路径。该失败与 F14 的改动无关
+  ——那条代码路径只读文件、不碰数据库，也不调用任何本次改动的域。
+
+- **F30. 助记符字符串分类分支条件，会把 ARM64 的位测试与寄存器测试混为一谈。**
+  本 fork 的 `parse_branch_condition_from_mnemonic()` 靠反汇编文本判断，把
+  `TBZ` / `TBNZ`（测试单个 bit）与 `CBZ` / `CBNZ`（测试整个寄存器）一并归为
+  `Zero` / `NotZero`，头文件注释也把两者写在同一行。上游改用处理器 `itype` 与
+  条件码位域分类，并为此扩了七个枚举成员：`BitZero`、`BitNotZero`、
+  `CountNotZero`、`CountNotZeroAndEqual`、`CountNotZeroAndNotEqual`、`Unknown`、
+  `Never`。`branch_condition` 是本 fork 先做、上游接手后重写的。
