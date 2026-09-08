@@ -770,6 +770,7 @@ Result<mop_t> build_typed_instruction_operand(const MicrocodeOperand& operand,
 [[nodiscard]] bool is_empty_operand(const MicrocodeOperand& operand) noexcept;
 
 Result<minsn_t> build_typed_nested_instruction(const MicrocodeInstruction& instruction,
+                                               int containing_byte_width,
                                                mba_t* mba,
                                                ea_t instruction_address,
                                                std::string_view role,
@@ -784,15 +785,33 @@ Result<minsn_t> build_typed_nested_instruction(const MicrocodeInstruction& instr
     if (!sdk_opcode)
         return std::unexpected(sdk_opcode.error());
 
+    if (!is_mcode_propagatable(*sdk_opcode)) {
+        return std::unexpected(Error::validation(
+            "Microcode opcode cannot be used as a nested instruction",
+            std::string(role)));
+    }
+    if (containing_byte_width < 0) {
+        return std::unexpected(Error::validation(
+            "Nested instruction byte width cannot be negative",
+            std::string(role)));
+    }
+    const bool destination_empty = is_empty_operand(instruction.destination);
+    if (destination_empty && containing_byte_width == 0) {
+        return std::unexpected(Error::validation(
+            "Nested instruction with an empty destination requires a positive containing byte width",
+            std::string(role)));
+    }
+    if (instruction.destination.byte_width > 0 && containing_byte_width > 0
+        && instruction.destination.byte_width != containing_byte_width) {
+        return std::unexpected(Error::validation(
+            "Nested instruction destination width does not match containing byte width",
+            std::string(role)));
+    }
     if (instruction.opcode == MicrocodeOpcode::LoadMemory
-        || instruction.opcode == MicrocodeOpcode::StoreMemory) {
-        if (is_empty_operand(instruction.left)
-            || is_empty_operand(instruction.right)
-            || is_empty_operand(instruction.destination)) {
-            return std::unexpected(Error::validation(
-                "Nested load/store memory instructions require non-empty left/right/destination operands",
-                std::string(role)));
-        }
+        && (is_empty_operand(instruction.left) || is_empty_operand(instruction.right))) {
+        return std::unexpected(Error::validation(
+            "Nested memory load requires non-empty selector and offset operands",
+            std::string(role)));
     }
 
     auto left = build_typed_instruction_operand(instruction.left,
@@ -816,6 +835,20 @@ Result<minsn_t> build_typed_nested_instruction(const MicrocodeInstruction& instr
                                                        depth + 1);
     if (!destination)
         return std::unexpected(destination.error());
+    // create_from_insn() derives the nested operand's size from the discarded
+    // destination. Copied nested instructions normally have an empty destination.
+    if (destination_empty)
+        destination->size = containing_byte_width;
+    if (destination->size <= 0) {
+        return std::unexpected(Error::validation(
+            "Nested instruction destination must have a positive byte width",
+            std::string(role)));
+    }
+    if (containing_byte_width > 0 && destination->size != containing_byte_width) {
+        return std::unexpected(Error::validation(
+            "Nested instruction destination width does not match containing byte width",
+            std::string(role)));
+    }
 
     minsn_t nested(instruction_address);
     nested.opcode = *sdk_opcode;
@@ -944,6 +977,7 @@ Result<mop_t> build_typed_instruction_operand(const MicrocodeOperand& operand,
             }
             {
                 auto nested = build_typed_nested_instruction(*operand.nested_instruction,
+                                                             operand.byte_width,
                                                              mba,
                                                              instruction_address,
                                                              role,
@@ -1876,6 +1910,7 @@ Result<CallArgumentsBuildResult> build_call_arguments(const std::vector<Microcod
                 }
 
                 auto nested = build_typed_nested_instruction(*argument.nested_instruction,
+                                                             argument.byte_width,
                                                              mba,
                                                              instruction_address,
                                                              "call_argument_nested:" + std::to_string(i),
@@ -5145,66 +5180,56 @@ Address DecompiledFunction::entry_address() const {
 Result<Address> DecompiledFunction::line_to_address(int line_number) const {
     CHECK_IMPL();
 
-    // The pseudocode uses treeitems to map indices to items.
-    // A simpler approach: walk the eamap to find which ea maps to lines
-    // near the requested line, then correlate with pseudocode.
-    const strvec_t& sv = impl_->cfunc->get_pseudocode();
-    if (line_number < 0 || static_cast<std::size_t>(line_number) >= sv.size())
+    const strvec_t& lines = impl_->cfunc->get_pseudocode();
+    if (line_number < 0 || static_cast<std::size_t>(line_number) >= lines.size())
         return std::unexpected(Error::validation("Line number out of range"));
 
-    // After get_pseudocode(), treeitems should be populated.
-    // Each pseudocode line has an associated ea via the ctree items.
-    // We use the boundaries map for a reliable mapping.
-    // Note: get_boundaries()/get_eamap() are available for advanced mapping
-    // but treeitems (populated by get_pseudocode) is more direct for line mapping.
-
-    // Use treeitems for the given line.
-    int hdr = impl_->cfunc->hdrlines;
-    int item_line = line_number - hdr;
-
-    if (item_line >= 0
-        && static_cast<std::size_t>(item_line) < impl_->cfunc->treeitems.size()) {
-        const citem_t* item = impl_->cfunc->treeitems[item_line];
-        if (item != nullptr && item->ea != BADADDR)
-            return item->ea;
-    }
-
-    // Fallback: scan treeitems around the target line.
-    for (int delta = 1; delta <= 5; ++delta) {
-        for (int dir : {-1, 1}) {
-            int probe = item_line + dir * delta;
-            if (probe >= 0
-                && static_cast<std::size_t>(probe) < impl_->cfunc->treeitems.size()) {
-                const citem_t* item = impl_->cfunc->treeitems[probe];
-                if (item != nullptr && item->ea != BADADDR)
-                    return item->ea;
-            }
-        }
-    }
-
-    return std::unexpected(Error::not_found("No address mapping for line",
-                                             std::to_string(line_number)));
+    // Resolve against the real coordinate map rather than guessing from
+    // treeitems indices. A line that exists but carries no mapped item is not
+    // an error: the header promises BadAddress for it.
+    auto mappings = address_map();
+    if (!mappings)
+        return std::unexpected(mappings.error());
+    const auto found = std::lower_bound(
+        mappings->begin(), mappings->end(), line_number,
+        [](const AddressMapping& mapping, int line) { return mapping.line_number < line; });
+    if (found != mappings->end() && found->line_number == line_number)
+        return found->address;
+    return BadAddress;
 }
 
 Result<std::vector<AddressMapping>> DecompiledFunction::address_map() const {
     CHECK_IMPL();
 
-    // Ensure pseudocode is generated (populates treeitems).
-    impl_->cfunc->get_pseudocode();
-
-    int hdr = impl_->cfunc->hdrlines;
+    const strvec_t& lines = impl_->cfunc->get_pseudocode();
     std::vector<AddressMapping> result;
 
-    for (std::size_t i = 0; i < impl_->cfunc->treeitems.size(); ++i) {
-        const citem_t* item = impl_->cfunc->treeitems[i];
-        if (item != nullptr && item->ea != BADADDR) {
-            AddressMapping am;
-            am.address = item->ea;
-            am.line_number = static_cast<int>(i) + hdr;
-            result.push_back(am);
+    // citem_t::index is an index into cfunc_t::treeitems, not a pseudocode line
+    // number. Adding hdrlines to it produced coordinates outside the generated
+    // text; ask the decompiler where each item is actually displayed.
+    for (const citem_t* item : impl_->cfunc->treeitems) {
+        if (item == nullptr || item->ea == BADADDR)
+            continue;
+        int column = -1;
+        int line = -1;
+        if (impl_->cfunc->find_item_coords(item, &column, &line)
+            && line >= 0 && static_cast<std::size_t>(line) < lines.size()) {
+            result.push_back({item->ea, line});
         }
     }
 
+    std::sort(result.begin(), result.end(),
+              [](const AddressMapping& left, const AddressMapping& right) {
+                  if (left.line_number != right.line_number)
+                      return left.line_number < right.line_number;
+                  return left.address < right.address;
+              });
+    result.erase(std::unique(result.begin(), result.end(),
+                             [](const AddressMapping& left, const AddressMapping& right) {
+                                 return left.line_number == right.line_number
+                                        && left.address == right.address;
+                             }),
+                 result.end());
     return result;
 }
 
