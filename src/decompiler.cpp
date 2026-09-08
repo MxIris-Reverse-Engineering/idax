@@ -554,6 +554,8 @@ Result<MicrocodeInstruction> parse_sdk_instruction(const minsn_t* minsn);
 Result<MicrocodeOperand> parse_sdk_operand(const mop_t& mop) {
     MicrocodeOperand result;
     result.byte_width = mop.size;
+    if (mop.valnum != 0)
+        result.value_number = mop.valnum;
     if (mop.is_udt()) result.mark_user_defined_type = true;
     qstring operand_text;
     mop.print(&operand_text, SHINS_SHORT | SHINS_VALNUM);
@@ -585,6 +587,7 @@ Result<MicrocodeOperand> parse_sdk_operand(const mop_t& mop) {
         case mop_v:
             result.kind = MicrocodeOperandKind::GlobalAddress;
             result.global_address = mop.g;
+            result.global_name = ida::detail::to_string(::get_name(mop.g));
             break;
         case mop_b:
             result.kind = MicrocodeOperandKind::BlockReference;
@@ -634,18 +637,75 @@ Result<MicrocodeOperand> parse_sdk_operand(const mop_t& mop) {
                     ? BadAddress
                     : static_cast<Address>(mop.f->callee);
                 result.call_arguments.reserve(mop.f->args.size());
+                result.call_argument_properties.reserve(mop.f->args.size());
                 for (const auto& argument : mop.f->args) {
                     auto parsed = parse_sdk_operand(static_cast<const mop_t&>(argument));
                     if (!parsed) return std::unexpected(parsed.error());
                     result.call_arguments.push_back(std::move(*parsed));
+                    result.call_argument_properties.push_back({
+                        (argument.flags & FAI_HIDDEN) != 0,
+                        (argument.flags & FAI_RETPTR) != 0,
+                        (argument.flags & FAI_STRUCT) != 0,
+                        (argument.flags & FAI_ARRAY) != 0,
+                        (argument.flags & FAI_UNUSED) != 0,
+                        (argument.flags & FAI_SWIFTSELF) != 0,
+                    });
+                }
+                result.call_return_operands.reserve(mop.f->retregs.size());
+                for (const mop_t& operand : mop.f->retregs) {
+                    auto parsed = parse_sdk_operand(operand);
+                    if (!parsed) return std::unexpected(parsed.error());
+                    result.call_return_operands.push_back(std::move(*parsed));
+                }
+                // A bit represents one microregister byte, not one physical
+                // register. Preserve maximal contiguous byte ranges.
+                const auto& registers = mop.f->return_regs.reg;
+                for (auto it = registers.begin(); it != registers.end(); registers.inc(it)) {
+                    const int byte = *it;
+                    if (!result.call_return_registers.empty()) {
+                        auto& range = result.call_return_registers.back();
+                        if (static_cast<std::int64_t>(range.register_id)
+                                + range.byte_width == byte) {
+                            ++range.byte_width;
+                            continue;
+                        }
+                    }
+                    result.call_return_registers.push_back({byte, 1});
                 }
             }
             break;
         case mop_str:
             result.kind = MicrocodeOperandKind::StringConstant;
+            if (mop.cstr != nullptr)
+                result.string_constant = mop.cstr;
             break;
         case mop_fn:
             result.kind = MicrocodeOperandKind::FloatingPointConstant;
+            if (mop.fpc != nullptr) {
+                double converted = 0.0;
+                if (mop.fpc->fnum.to_double(&converted) == REAL_ERROR_OK)
+                    result.floating_point_constant = converted;
+            }
+            break;
+        case mop_c:
+            result.kind = MicrocodeOperandKind::SwitchCases;
+            if (mop.c != nullptr) {
+                if (mop.c->values.size() != mop.c->targets.size()) {
+                    return std::unexpected(Error::internal(
+                        "Microcode switch values and targets have different lengths"));
+                }
+                for (std::size_t index = 0; index < mop.c->values.size(); ++index) {
+                    const int target = mop.c->targets[index];
+                    if (mop.c->values[index].empty()) {
+                        result.switch_default_target = target;
+                    } else {
+                        for (const auto value : mop.c->values[index]) {
+                            result.switch_cases.push_back({
+                                static_cast<std::int64_t>(value), target});
+                        }
+                    }
+                }
+            }
             break;
         default:
             result.kind = MicrocodeOperandKind::Other;
@@ -3864,6 +3924,22 @@ static LocalVariable make_local_variable(const lvar_t& v, std::size_t index) {
     // a negative value (-1) for everything else.
     lv.stack_offset = static_cast<std::int64_t>(v.get_stkoff());
 
+    // Register pairs and scattered storage cannot be expressed as one mreg, so
+    // carry the structured location alongside `register_number`.
+    auto location = copy_microcode_location(v.location);
+    if (location.kind != MicrocodeValueLocationKind::Unspecified)
+        lv.location = std::move(location);
+
+    if (v.is_reg1() && v.width > 0) {
+        const int processor_register = mreg2reg(v.get_reg1(), v.width);
+        qstring register_name;
+        if (processor_register >= 0
+            && ::get_reg_name(&register_name, processor_register,
+                              static_cast<std::size_t>(v.width)) > 0) {
+            lv.processor_register_name = ida::detail::to_string(register_name);
+        }
+    }
+
     return lv;
 }
 
@@ -4212,31 +4288,38 @@ Result<ExpressionView> StatementView::condition() const {
         case cit_if:
             if (s->cif == nullptr)
                 return std::unexpected(Error::internal("null if details"));
-            return ExpressionView(ExpressionView::Tag{}, &s->cif->expr);
+            return ExpressionView(ExpressionView::Tag{}, &s->cif->expr,
+                                  append_parent(parents_, s), s);
         case cit_for:
             if (s->cfor == nullptr)
                 return std::unexpected(Error::internal("null for details"));
-            return ExpressionView(ExpressionView::Tag{}, &s->cfor->expr);
+            return ExpressionView(ExpressionView::Tag{}, &s->cfor->expr,
+                                  append_parent(parents_, s), s);
         case cit_while:
             if (s->cwhile == nullptr)
                 return std::unexpected(Error::internal("null while details"));
-            return ExpressionView(ExpressionView::Tag{}, &s->cwhile->expr);
+            return ExpressionView(ExpressionView::Tag{}, &s->cwhile->expr,
+                                  append_parent(parents_, s), s);
         case cit_do:
             if (s->cdo == nullptr)
                 return std::unexpected(Error::internal("null do details"));
-            return ExpressionView(ExpressionView::Tag{}, &s->cdo->expr);
+            return ExpressionView(ExpressionView::Tag{}, &s->cdo->expr,
+                                  append_parent(parents_, s), s);
         case cit_switch:
             if (s->cswitch == nullptr)
                 return std::unexpected(Error::internal("null switch details"));
-            return ExpressionView(ExpressionView::Tag{}, &s->cswitch->expr);
+            return ExpressionView(ExpressionView::Tag{}, &s->cswitch->expr,
+                                  append_parent(parents_, s), s);
         case cit_return:
             if (s->creturn == nullptr)
                 return std::unexpected(Error::internal("null return details"));
-            return ExpressionView(ExpressionView::Tag{}, &s->creturn->expr);
+            return ExpressionView(ExpressionView::Tag{}, &s->creturn->expr,
+                                  append_parent(parents_, s), s);
         case cit_throw:
             if (s->cthrow == nullptr)
                 return std::unexpected(Error::internal("null throw details"));
-            return ExpressionView(ExpressionView::Tag{}, &s->cthrow->expr);
+            return ExpressionView(ExpressionView::Tag{}, &s->cthrow->expr,
+                                  append_parent(parents_, s), s);
         default:
             return std::unexpected(Error::validation("Statement type does not have a condition expression"));
     }
@@ -4249,7 +4332,8 @@ Result<StatementView> StatementView::then_branch() const {
         return std::unexpected(Error::validation("Statement is not an if"));
     if (s->cif->ithen == nullptr)
         return std::unexpected(Error::internal("null then-branch"));
-    return StatementView(StatementView::Tag{}, s->cif->ithen);
+    return StatementView(StatementView::Tag{}, s->cif->ithen,
+                                 append_parent(parents_, s));
 }
 
 Result<StatementView> StatementView::else_branch() const {
@@ -4259,7 +4343,8 @@ Result<StatementView> StatementView::else_branch() const {
         return std::unexpected(Error::validation("Statement is not an if"));
     if (s->cif->ielse == nullptr)
         return std::unexpected(Error::validation("If statement has no else-branch"));
-    return StatementView(StatementView::Tag{}, s->cif->ielse);
+    return StatementView(StatementView::Tag{}, s->cif->ielse,
+                                 append_parent(parents_, s));
 }
 
 bool StatementView::has_else_branch() const noexcept {
@@ -4275,15 +4360,18 @@ Result<StatementView> StatementView::body() const {
         case cit_for:
             if (s->cfor == nullptr || s->cfor->body == nullptr)
                 return std::unexpected(Error::internal("null for-loop body"));
-            return StatementView(StatementView::Tag{}, s->cfor->body);
+            return StatementView(StatementView::Tag{}, s->cfor->body,
+                                 append_parent(parents_, s));
         case cit_while:
             if (s->cwhile == nullptr || s->cwhile->body == nullptr)
                 return std::unexpected(Error::internal("null while-loop body"));
-            return StatementView(StatementView::Tag{}, s->cwhile->body);
+            return StatementView(StatementView::Tag{}, s->cwhile->body,
+                                 append_parent(parents_, s));
         case cit_do:
             if (s->cdo == nullptr || s->cdo->body == nullptr)
                 return std::unexpected(Error::internal("null do-loop body"));
-            return StatementView(StatementView::Tag{}, s->cdo->body);
+            return StatementView(StatementView::Tag{}, s->cdo->body,
+                                 append_parent(parents_, s));
         default:
             return std::unexpected(Error::validation("Statement is not a loop"));
     }
@@ -4294,7 +4382,8 @@ Result<ExpressionView> StatementView::init_expression() const {
     auto* s = static_cast<cinsn_t*>(raw_);
     if (s->op != cit_for || s->cfor == nullptr)
         return std::unexpected(Error::validation("Statement is not a for-loop"));
-    return ExpressionView(ExpressionView::Tag{}, &s->cfor->init);
+    return ExpressionView(ExpressionView::Tag{}, &s->cfor->init,
+                                  append_parent(parents_, s), s);
 }
 
 Result<ExpressionView> StatementView::step_expression() const {
@@ -4302,7 +4391,8 @@ Result<ExpressionView> StatementView::step_expression() const {
     auto* s = static_cast<cinsn_t*>(raw_);
     if (s->op != cit_for || s->cfor == nullptr)
         return std::unexpected(Error::validation("Statement is not a for-loop"));
-    return ExpressionView(ExpressionView::Tag{}, &s->cfor->step);
+    return ExpressionView(ExpressionView::Tag{}, &s->cfor->step,
+                                  append_parent(parents_, s), s);
 }
 
 Result<ExpressionView> StatementView::expression() const {
@@ -4310,7 +4400,8 @@ Result<ExpressionView> StatementView::expression() const {
     auto* s = static_cast<cinsn_t*>(raw_);
     if (s->op != cit_expr || s->cexpr == nullptr)
         return std::unexpected(Error::validation("Statement is not an expression-statement"));
-    return ExpressionView(ExpressionView::Tag{}, s->cexpr);
+    return ExpressionView(ExpressionView::Tag{}, s->cexpr,
+                                  append_parent(parents_, s), s);
 }
 
 Result<std::size_t> StatementView::block_size() const {
@@ -4331,7 +4422,8 @@ Result<StatementView> StatementView::block_statement(std::size_t index) const {
     auto it = s->cblock->begin();
     for (std::size_t i = 0; i < index; ++i)
         ++it;
-    return StatementView(StatementView::Tag{}, &*it);
+    return StatementView(StatementView::Tag{}, &*it,
+                                 append_parent(parents_, s));
 }
 
 Result<std::size_t> StatementView::switch_case_count() const {
@@ -4365,7 +4457,8 @@ Result<StatementView> StatementView::switch_case_body(std::size_t index) const {
     if (index >= static_cast<std::size_t>(s->cswitch->cases.size()))
         return std::unexpected(Error::validation("Switch case index out of range"));
     // ccase_t inherits from cinsn_t, so we can treat it as a statement
-    return StatementView(StatementView::Tag{}, &s->cswitch->cases[index]);
+    return StatementView(StatementView::Tag{}, &s->cswitch->cases[index],
+                                 append_parent(parents_, s));
 }
 
 // ── CtreeVisitor default implementations ────────────────────────────────
@@ -5376,6 +5469,16 @@ generate_microcode(Address function_address,
         ? BadAddress
         : static_cast<Address>(native->entry_ea);
     result.maturity = from_sdk_microcode_maturity(native->maturity);
+    result.stack_frame_size = static_cast<std::int64_t>(native->stacksize);
+    result.local_stack_size = static_cast<std::int64_t>(native->frsize);
+    result.saved_register_size = static_cast<std::int64_t>(native->frregs);
+    result.local_variables.reserve(native->vars.size());
+    for (std::size_t index = 0; index < native->vars.size(); ++index)
+        result.local_variables.push_back(make_local_variable(native->vars[index], index));
+    if (native->retvaridx >= 0
+        && static_cast<std::size_t>(native->retvaridx) < native->vars.size()) {
+        result.return_variable_index = static_cast<std::size_t>(native->retvaridx);
+    }
 
     tinfo_t function_type;
     func_type_data_t function_details;

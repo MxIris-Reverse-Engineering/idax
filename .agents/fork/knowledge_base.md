@@ -71,3 +71,10 @@ toplevel cache 文件里可能同时存在三张表：legacy `dyld_cache_image_i
 与现代 `imagesOffset` / `imagesCount`（@ 0x1c0）。Big Sur 之后的 macOS 用现代表，
 而 legacy 表可能作为陈旧残留同时存在，因此解析顺序必须是现代表优先，不能「先找到
 哪张用哪张」。现代表存在但为空是合法状态，应返回空列表而非错误。
+### 35.49. 父链是随 view 传递的，不是访问器自动获得的 [F31]
+ctree 的 `track_parents` 只作用于 SDK visitor 的回调点：`ctree_visitor_t::parents`
+在那一刻是正确的，wrapper 把它快照进 view。任何从 view 再派生出子 view 的访问器
+（`condition()`、`body()`、`block_statement()`…）都脱离了 SDK 的遍历栈，必须自己
+`append_parent(parents_, current)`。漏掉不会报错，只会让子节点看起来没有父亲——
+所以给这类导航 API 加访问器时，父链传递要和访问器本身一起写，并用「取子节点再问
+它的父亲是不是我」这种断言覆盖，而不是只测 visitor 回调里的节点。

@@ -51,4 +51,6 @@ tool, and both had claimed `P23.1`.
 - [x] F14 Backport the seven core-library defects upstream fixed on `rewrite/swift-bindings`, plus the pseudocode coordinate map and build-path redaction.
 - [x] F15.1 Parse the modern dyld cache image table, and prefer it over the legacy one.
 - [x] F15.2 Replace the mnemonic-string branch classifier with upstream's itype-based one.
-- [ ] F15.3 Adopt upstream's microcode semantic-metadata API.
+- [x] F15.3 Adopt upstream's microcode semantic-metadata API.
+- [ ] F16 Reject embedded NUL in the ~113 public entry points that build a C string from a `string_view`.
+- [ ] F17 Surface the microcode semantic metadata through the C shim and the Swift, Rust and Node bindings.

@@ -280,9 +280,32 @@ enum class MicrocodeOperandKind : int {
     StringConstant,
     FloatingPointConstant,
     Other,
+    SwitchCases,
 };
 
 /// One typed microcode operand.
+/// Per-argument properties the decompiler records for a call argument.
+struct MicrocodeCallArgumentProperties {
+    bool hidden{false};
+    bool return_value_pointer{false};
+    bool structure_argument{false};
+    bool array_argument{false};
+    bool unused{false};
+    bool swift_self{false};
+};
+
+/// A register and the byte width used through it.
+struct MicrocodeRegisterRange {
+    int register_id{0};
+    int byte_width{0};
+};
+
+/// One arm of a decoded switch: the matched value and the block it enters.
+struct MicrocodeSwitchCase {
+    std::int64_t value{0};
+    int target_block{0};
+};
+
 struct MicrocodeOperand {
     MicrocodeOperandKind kind{MicrocodeOperandKind::Empty};
     int register_id{0};
@@ -304,6 +327,20 @@ struct MicrocodeOperand {
     std::vector<MicrocodeOperand> call_arguments{};
     Address call_target{BadAddress};
     std::string text{};
+
+    /// Owned payloads. `floating_point_constant` is absent when the value
+    /// cannot be converted to binary64; the original display stays in `text`.
+    std::string string_constant{};
+    std::optional<double> floating_point_constant{};
+    std::string global_name{};
+    /// Equal numbers denote equal values within this generated graph. This is
+    /// a value-numbering identifier, not an SSA variable version.
+    std::optional<std::uint16_t> value_number{};
+    std::vector<MicrocodeCallArgumentProperties> call_argument_properties{};
+    std::vector<MicrocodeOperand> call_return_operands{};
+    std::vector<MicrocodeRegisterRange> call_return_registers{};
+    std::vector<MicrocodeSwitchCase> switch_cases{};
+    std::optional<int> switch_default_target{};
 };
 
 /// Generic typed microcode instruction model.
@@ -422,13 +459,6 @@ struct MicrocodeBlock {
 };
 
 /// SDK-independent snapshot of a complete function-level microcode graph.
-struct MicrocodeFunction {
-    Address entry_address{BadAddress};
-    MicrocodeMaturity maturity{MicrocodeMaturity::Generated};
-    std::vector<MicrocodeFunctionArgument> arguments{};
-    std::optional<MicrocodeValueLocation> return_location{};
-    std::vector<MicrocodeBlock> blocks{};
-};
 
 /// Optional per-argument semantic flags for helper-call arguments.
 enum class MicrocodeArgumentFlag : std::uint32_t {
@@ -531,11 +561,6 @@ enum class MicrocodeFunctionRole : int {
 };
 
 /// Additional call-shaping options for emitted helper calls.
-struct MicrocodeRegisterRange {
-    int register_id{0};
-    int byte_width{0};
-};
-
 struct MicrocodeMemoryRange {
     Address address{BadAddress};
     std::uint64_t byte_size{0};
@@ -944,6 +969,29 @@ struct LocalVariable {
     /// (x0=8, x1=16, ..., x20=168), which lets consumers map argument lvars
     /// back to the physical ABI registers.
     int register_number{-1};
+
+    /// Owned register, stack, register-pair, or scattered storage metadata.
+    /// Unlike `register_number`, this describes locations a single microcode
+    /// register cannot express.
+    std::optional<MicrocodeValueLocation> location{};
+
+    /// Processor register name when a single register resolves for this
+    /// variable's width.
+    std::optional<std::string> processor_register_name{};
+};
+
+struct MicrocodeFunction {
+    Address entry_address{BadAddress};
+    MicrocodeMaturity maturity{MicrocodeMaturity::Generated};
+    std::vector<MicrocodeFunctionArgument> arguments{};
+    std::optional<MicrocodeValueLocation> return_location{};
+    std::vector<MicrocodeBlock> blocks{};
+    /// Stack layout sizes in bytes, in decompiler frame coordinates.
+    std::int64_t stack_frame_size{0};
+    std::int64_t local_stack_size{0};
+    std::int64_t saved_register_size{0};
+    std::optional<std::size_t> return_variable_index{};
+    std::vector<LocalVariable> local_variables{};
 };
 
 /// Serializable saved Hex-Rays local-variable user setting.

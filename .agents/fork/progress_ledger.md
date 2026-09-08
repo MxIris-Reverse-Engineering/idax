@@ -206,3 +206,14 @@ tool, and both had claimed `P23.1`.
   - F15.2.3. 行为变更需知会下游：ARM64 `TBZ` / `TBNZ` 的结果由 `Zero` / `NotZero` 变为 `BitZero` / `BitNotZero`；x86 `LOOP` 系列由 `CountZero` 变为 `CountNotZero*`。
   - F15.2.4. `src/instruction.cpp` 新增 `#include <allins.hpp>`（SDK 汇总各处理器 itype 枚举的头）。公开入口 `branch_condition(Address)` 改为解码后取分类结果，不再二次解析助记符。Swift 的 `BranchCondition` 同步补齐七个 case。
   - F15.2.5. 验证：C++ 46/46（含上游 `instruction_branch_x86` 与 `instruction_branch_arm64` 两个 fixture）全通过；Swift consumer 模式 0 error，182 tests / 49 suites 全通过。
+
+- **F15.3. microcode 语义元数据 API**
+  - F15.3.1. `MicrocodeOperand` 追加九个字段（`string_constant`、`floating_point_constant`、`global_name`、`value_number`、`call_argument_properties`、`call_return_operands`、`call_return_registers`、`switch_cases`、`switch_default_target`）与三个支撑类型（`MicrocodeCallArgumentProperties`、`MicrocodeRegisterRange`、`MicrocodeSwitchCase`）；`MicrocodeOperandKind` 追加 `SwitchCases`；`MicrocodeFunction` 追加栈布局三项、`return_variable_index` 与 `local_variables`。全部为追加，既有字段与枚举值不变。
+  - F15.3.2. 两处需要动结构：本 fork 早先已在别处定义过一份完全相同的 `MicrocodeRegisterRange`，删去重复的那份；`MicrocodeFunction` 因为要持有 `LocalVariable`，按上游的做法移到 `LocalVariable` 之后。
+  - F15.3.3. `LocalVariable` 分叉的处理：本 fork 有 `register_number`（裸 mreg，见提交 37cdd58），上游有 `location`（结构化，能表达寄存器对与 scattered storage）与 `processor_register_name`。两者都保留——前者已有下游消费者，后者能表达前者表达不了的位置。
+  - F15.3.4. **测试暴露了一个本 fork 自己的缺口**：`StatementView` 的 17 个子结构访问器（`condition()`、`then_branch()`、`body()`、`block_statement()`、`switch_case_body()` 等，提交 27f04b8 加入）构造子 view 时完全没有传父链，于是 `VisitOptions::track_parents` 对这些子节点静默失效——`parent()` 恒为空，`parents()` 恒为空表。179 个断言因此变红。全部补上 `append_parent(parents_, s)` 后归零。
+  - F15.3.5. 另修 `ida::database::save_to()` 不校验嵌入 NUL：路径在 C 边界被截断，数据库会存到调用方没指定的位置。
+  - F15.3.6. 横向排查该 NUL 缺陷：全库有约 113 个公开入口把 `string_view` 参数直接转成 C 字符串而不校验嵌入 NUL（`src/ui.cpp`、`src/type.cpp`、`src/plugin.cpp`、`src/directory.cpp` 等最密集）。**未在本批次一并修**——逐处都要判断静默截断是否真的有害、以及改成报错是否算破坏性变更，且会产生上百处行为变更，属独立批次。已登记为 roadmap F16。
+  - F15.3.7. 绑定层尚未透出这批新字段（C shim 与 Swift/Rust/Node 都没有对应入口）。C++ 消费者与 IDA 插件已可用。登记为 roadmap F17。
+  - F15.3.8. 重建 `CIDAX.xcframework`（arm64 + x86_64），否则 consumer 模式的 Swift 与 `idax` CLI 仍在用带这批缺陷的旧 `libidax.a`。构建前需清掉 `bindings/swift/.cmake-build-*` 等失效缓存——它们的 CMakeCache 指向此仓库的旧路径 `/Volumes/Code/Personal/idax`，会让脚本直接报错。
+  - F15.3.9. 验证：C++ 47/47 全通过（`decompiler_semantic_metadata` 14340 个断言全绿）；Swift developer 与 consumer 两种模式各 182 tests / 49 suites 全通过。

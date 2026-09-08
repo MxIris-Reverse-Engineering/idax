@@ -278,3 +278,22 @@ tool, and both had claimed `P23.1`.
   条件码位域分类，并为此扩了七个枚举成员：`BitZero`、`BitNotZero`、
   `CountNotZero`、`CountNotZeroAndEqual`、`CountNotZeroAndNotEqual`、`Unknown`、
   `Never`。`branch_condition` 是本 fork 先做、上游接手后重写的。
+
+- **F31. 子结构导航访问器不传父链，会让 `track_parents` 静默失效。**
+  `VisitOptions::track_parents` 只保证 visitor 回调收到的那个 view 带父链。
+  从它派生出来的子 view——`StatementView::condition()`、`then_branch()`、
+  `body()`、`block_statement()`、`switch_case_body()` 之类——必须自己把当前
+  节点追加进父链传下去。本 fork 的 17 个 `StatementView` 子结构访问器（提交
+  27f04b8）全部漏了这一步，于是这些子节点的 `parent()` 恒为空、`parents()`
+  恒为空表，而 API 本身不报错，调用方只会看到「这个节点没有父亲」。
+  `ExpressionView` 的对应访问器当时做对了，所以缺口只在语句侧。
+  症状只有在既开启 `track_parents`、又经由子结构访问器取节点时才出现，
+  单看 visitor 回调收到的节点一切正常。
+
+- **F32. 把 `string_view` 直接转成 C 字符串的公开入口普遍不校验嵌入 NUL。**
+  `std::string(view).c_str()` 会在第一个 NUL 处截断，于是
+  `save_to(std::string("bad\0path", 8))` 静默存到 `bad`。全库约有 113 个公开
+  入口是这个形状（`src/ui.cpp`、`src/type.cpp`、`src/plugin.cpp`、
+  `src/directory.cpp` 最密集）。危害随入口而异：写路径类会落到调用方没指定的
+  位置，查询类多半只是查不到。本批次只修了 `save_to`（有测试覆盖），其余登记
+  为 roadmap F16——每处都要单独判断截断是否有害，以及改成报错算不算破坏性变更。

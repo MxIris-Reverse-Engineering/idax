@@ -47,6 +47,12 @@ Status save() {
 Status save_to(std::string_view output_database_path) {
     if (output_database_path.empty())
         return std::unexpected(Error::validation("Output database path cannot be empty"));
+    // A NUL inside the view would silently truncate the path at the C boundary
+    // and save the database somewhere the caller never named.
+    if (output_database_path.find('\0') != std::string_view::npos) {
+        return std::unexpected(Error::validation(
+            "Output database path contains an embedded NUL"));
+    }
 
     std::string output_database_path_string(output_database_path);
     if (!save_database(output_database_path_string.c_str(), 0))
