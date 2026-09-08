@@ -148,6 +148,9 @@ idax_add_integration_test(type_data_comment_torture        type_data_comment_tor
 idax_add_integration_test(operand_function_torture         operand_function_torture_test.cpp)
 
 
+# Offline dyld cache image parsing and initialized non-cache service rejection.
+idax_add_integration_test(dyld_cache dyld_cache_test.cpp)
+
 # Place the descriptor's initializer before the user registration translation
 # unit to exercise loader construction without relying on normal archive order.
 idax_add_integration_test(loader_initialization_order

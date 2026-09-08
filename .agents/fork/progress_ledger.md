@@ -191,3 +191,11 @@ tool, and both had claimed `P23.1`.
   - F14.5. 同批搬入的上游回归测试：`data_mutation_safety_test.cpp`（+44）、`fixup_relocation_test.cpp`（+41）、`type_roundtrip_test.cpp`（+31）、`loader_processor_scenario_test.cpp`（+45）、`debugger_ui_graph_event_test.cpp`（+118）与新文件 `loader_initialization_order_test.cpp`（54 行，把 `src/loader.cpp` 排在注册翻译单元之前以固定构造顺序）。
   - F14.6. 三个上游测试**已撤回**，因为它们依赖本 fork 尚未拥有的上游 API 或暴露了范围外的既有缺陷：`instruction_branch_semantics_test.cpp`、`decompiler_semantic_metadata_test.cpp`、`dyld_cache_test.cpp`。三者对应的待决事项记在 active_work F15。
   - F14.7. 验证：`cmake --build` 0 error、无新增警告（余下皆为 SDK 自身的 deprecated 警告）；`ctest` 43/43 全通过。`offset_reference_roundtrip` 曾因 F14.4 那条变红，回退后恢复——先在未改动的 HEAD 上单独构建跑通该测试确认基线为绿，才断定是本次改动引入。
+
+- **F15.1. 离线 dyld cache 解析：现代 image 表**
+  - F15.1.1. 先搬回上游 `dyld_cache_test.cpp` 确认复现：51 checks / 3 failures。修完 55 checks / 0 failures。
+  - F15.1.2. `list_modules(cache_path)` 重写：按 `mappingOffset`（header 0x10）决定 header 实际长度，再按「现代表(0x1c0/0x1c4) → legacy(0x18/0x1c) → image_text(0x88/0x90)」的顺序选表。原实现没有现代表，且 legacy 优先，于是在现代缓存上要么读不到、要么读到 legacy 的陈旧子集。offset 与 count 只有一个为零视为不一致（报错），两个都为零视为空缓存（返回空列表）。
+  - F15.1.3. 补齐边界校验：mapping 表与 image 表都不得越出文件；image 条目的 path offset 不得落进 header；路径必须绝对、NUL 终止、不超过 65536 字节。原来的 `parse_image_info` / `parse_image_text_info` 不做任何校验且以 `break` 静默截断，已删除，改为出错即返回。
+  - F15.1.4. 顺带加严 `has_dyld_magic()`：原来只比对前 6 字节 `"dyld_v"`，magic 字段其余 10 字节是垃圾也照样当缓存解析。现在完整校验 16 字节字段（版本位、分隔空格、架构名字符集、NUL 填充后不得再有内容）。这是测试 position 7 与 15 两个用例暴露的。
+  - F15.1.5. 横向排查了三类同源模式：「承诺 BadAddress 却返回错误」全库只有 fixup 三个入口与 `line_to_address()`，均已在 F14 修掉；「只校验前缀」与「多候选取第一个」在本文件外无同类。另有三处「空集合即 not_found」（`src/dyld_cache.cpp` 的在线 `list_modules()`、`src/comment.cpp` 的 `all()`、`src/directory.cpp` 的 `absolute_path()`）属设计选择而非同类缺陷，需逐个对照头文件契约判断，未在本批次处理。
+  - F15.1.6. 验证：44/44 全通过。

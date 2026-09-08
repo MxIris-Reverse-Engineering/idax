@@ -82,14 +82,44 @@ std::uint64_t read_le64(const unsigned char* bytes) {
          | (static_cast<std::uint64_t>(read_le32(bytes + 4)) << 32);
 }
 
-/// Whether `header` starts with the dyld shared cache magic ("dyld_v...").
+/// Whether `header` carries a well-formed dyld shared cache magic.
+///
+/// The magic is a 16-byte NUL-padded field: "dyld_v" then a version digit,
+/// a space, and an architecture name such as "arm64e". Matching only the
+/// "dyld_v" prefix accepts files whose remaining magic bytes are garbage,
+/// which then get parsed as a cache.
 bool has_dyld_magic(const unsigned char* header) {
-    static const char magic[] = "dyld_v";
-    for (std::size_t i = 0; i < 6; ++i) {
-        if (header[i] != static_cast<unsigned char>(magic[i]))
+    static const char prefix[] = "dyld_v";
+    for (std::size_t index = 0; index < 6; ++index) {
+        if (header[index] != static_cast<unsigned char>(prefix[index]))
             return false;
     }
-    return true;
+    if (header[6] != '0' && header[6] != '1')
+        return false;
+    if (header[7] != ' ')
+        return false;
+
+    bool has_architecture = false;
+    bool terminated = false;
+    for (std::size_t index = 8; index < 16; ++index) {
+        const unsigned char value = header[index];
+        if (value == '\0') {
+            terminated = true;
+            continue;
+        }
+        // Padding follows the name; nothing may follow the padding.
+        if (terminated)
+            return false;
+        if (value == ' ' && !has_architecture)
+            continue;
+        const bool is_name_character =
+            (value >= 'a' && value <= 'z') || (value >= 'A' && value <= 'Z')
+            || (value >= '0' && value <= '9') || value == '_';
+        if (!is_name_character)
+            return false;
+        has_architecture = true;
+    }
+    return has_architecture;
 }
 
 // ── dscu plugin / netnode access ────────────────────────────────────────
@@ -249,41 +279,39 @@ bool read_record(std::ifstream& file, std::uint64_t offset,
     return file.gcount() == static_cast<std::streamsize>(size);
 }
 
-/// Parse the old-format dyld_cache_image_info array. Each 32-byte entry is
-/// address[8] modTime[8] inode[8] pathFileOffset[4] pad[4].
-std::vector<ModuleInfo> parse_image_info(std::ifstream& file,
-                                         std::uint32_t offset,
-                                         std::uint32_t count) {
-    std::vector<ModuleInfo> modules;
-    for (std::uint32_t index = 0; index < count; ++index) {
-        unsigned char entry[32];
-        if (!read_record(file, std::uint64_t{offset} + std::uint64_t{index} * 32,
-                          entry, sizeof(entry)))
-            break;
-        ModuleInfo info;
-        info.load_address = static_cast<Address>(read_le64(entry));
-        info.path = read_file_cstring(file, read_le32(entry + 0x18));
-        modules.push_back(std::move(info));
-    }
-    return modules;
-}
+/// Read a NUL-terminated absolute image path from the cache file.
+///
+/// A cache path is absolute, NUL-terminated and bounded. Anything else means
+/// the image table is pointing at something that is not a path, which is a
+/// malformed cache rather than an image to skip.
+Result<std::string> read_image_path(std::ifstream& file, std::uint64_t offset,
+                                    std::uint64_t file_size) {
+    constexpr std::size_t kMaximumImagePathLength = 65536;
 
-/// Parse the newer dyld_cache_image_text_info array. Each 32-byte entry is
-/// uuid[16] loadAddress[8] textSegmentSize[4] pathOffset[4].
-std::vector<ModuleInfo> parse_image_text_info(std::ifstream& file,
-                                              std::uint64_t offset,
-                                              std::uint64_t count) {
-    std::vector<ModuleInfo> modules;
-    for (std::uint64_t index = 0; index < count; ++index) {
-        unsigned char entry[32];
-        if (!read_record(file, offset + index * 32, entry, sizeof(entry)))
-            break;
-        ModuleInfo info;
-        info.load_address = static_cast<Address>(read_le64(entry + 0x10));
-        info.path = read_file_cstring(file, read_le32(entry + 0x1C));
-        modules.push_back(std::move(info));
+    if (offset >= file_size) {
+        return std::unexpected(Error::validation(
+            "Dyld cache image path lies outside the file"));
     }
-    return modules;
+
+    file.clear();
+    file.seekg(static_cast<std::streamoff>(offset));
+    std::string path;
+    char character = 0;
+    while (path.size() < kMaximumImagePathLength && file.get(character)) {
+        if (character != '\0') {
+            path.push_back(character);
+            continue;
+        }
+        if (path.empty())
+            return std::unexpected(Error::validation("Dyld cache image path is empty"));
+        if (path.front() != '/') {
+            return std::unexpected(Error::validation(
+                "Dyld cache image path is not absolute", path));
+        }
+        return path;
+    }
+    return std::unexpected(Error::validation(
+        "Dyld cache image path is not NUL-terminated"));
 }
 
 #if IDA_SDK_VERSION < 940
@@ -435,6 +463,10 @@ Result<std::vector<ModuleInfo>> list_modules() {
 Result<std::vector<ModuleInfo>> list_modules(std::string_view cache_path) {
     if (cache_path.empty())
         return std::unexpected(Error::validation("Dyld shared cache path cannot be empty"));
+    if (cache_path.find('\0') != std::string_view::npos) {
+        return std::unexpected(Error::validation(
+            "Dyld shared cache path contains an embedded NUL"));
+    }
 
     std::string cache_path_string(cache_path);
 
@@ -443,33 +475,98 @@ Result<std::vector<ModuleInfo>> list_modules(std::string_view cache_path) {
         return std::unexpected(Error::not_found(
             "Cannot open the dyld shared cache", cache_path_string));
 
-    unsigned char header[0x98] = {};
-    file.read(reinterpret_cast<char*>(header), sizeof(header));
-    std::streamsize header_size = file.gcount();
-    if (header_size < 0x20)
-        return std::unexpected(Error::validation(
-            "Input file is too small to be a dyld shared cache", cache_path_string));
-    if (!has_dyld_magic(header))
+    file.seekg(0, std::ios::end);
+    const auto file_size = static_cast<std::uint64_t>(file.tellg());
+
+    unsigned char header[0x1c8] = {};
+    if (!read_record(file, 0, header, 0x20) || !has_dyld_magic(header)) {
         return std::unexpected(Error::validation(
             "Input file is not a dyld shared cache", cache_path_string));
-
-    // Strategy 1: old dyld_cache_image_info array (uint32 offset/count @ 0x18).
-    std::vector<ModuleInfo> modules;
-    std::uint32_t images_offset = read_le32(header + 0x18);
-    std::uint32_t images_count  = read_le32(header + 0x1C);
-    if (images_offset > 0 && images_count > 0) {
-        modules = parse_image_info(file, images_offset, images_count);
-    } else if (header_size >= 0x98) {
-        // Strategy 2: dyld_cache_image_text_info array (uint64 offset/count @ 0x88).
-        std::uint64_t text_offset = read_le64(header + 0x88);
-        std::uint64_t text_count  = read_le64(header + 0x90);
-        if (text_offset > 0 && text_count > 0 && text_count < 0x100000)
-            modules = parse_image_text_info(file, text_offset, text_count);
     }
 
-    if (modules.empty())
-        return std::unexpected(Error::not_found(
-            "No images found in the dyld shared cache header", cache_path_string));
+    // The header grows with the cache format, and mappingOffset records how far
+    // it actually extends. Fields beyond it are absent, not zero, so the header
+    // length decides which image tables may be read at all.
+    const std::uint64_t header_size = read_le32(header + 0x10);
+    if (header_size < 0x20 || header_size > file_size) {
+        return std::unexpected(Error::validation(
+            "Invalid dyld cache mapping offset", cache_path_string));
+    }
+    const std::uint64_t mapping_count = read_le32(header + 0x14);
+    if (mapping_count > (file_size - header_size) / 32) {
+        return std::unexpected(Error::validation(
+            "Dyld cache mapping table exceeds the file", cache_path_string));
+    }
+
+    const auto readable_header =
+        static_cast<std::size_t>(std::min<std::uint64_t>(sizeof(header), header_size));
+    if (!read_record(file, 0, header, readable_header)) {
+        return std::unexpected(Error::validation(
+            "Cannot read the dyld cache header", cache_path_string));
+    }
+
+    // Three image tables can coexist, and the modern one wins. A legacy table
+    // often survives as a stale backward-compatibility subset of the real
+    // contents, so "whichever is found first" silently truncates the inventory.
+    std::uint64_t table_offset = 0;
+    std::uint64_t table_count = 0;
+    bool text_table = false;
+    if (header_size >= 0x1c8) {
+        table_offset = read_le32(header + 0x1c0);
+        table_count  = read_le32(header + 0x1c4);
+    }
+    if (table_offset == 0 && table_count == 0) {
+        table_offset = read_le32(header + 0x18);
+        table_count  = read_le32(header + 0x1c);
+    }
+    if (table_offset == 0 && table_count == 0 && header_size >= 0x98) {
+        table_offset = read_le64(header + 0x88);
+        table_count  = read_le64(header + 0x90);
+        text_table   = true;
+    }
+
+    if ((table_offset == 0) != (table_count == 0)) {
+        return std::unexpected(Error::validation(
+            "Dyld cache image offset/count pair is inconsistent", cache_path_string));
+    }
+    // A cache that declares no images is empty, not broken.
+    if (table_count == 0)
+        return std::vector<ModuleInfo>{};
+    if (table_offset < header_size || table_offset > file_size
+        || table_count > (file_size - table_offset) / 32) {
+        return std::unexpected(Error::validation(
+            "Dyld cache image table exceeds the file", cache_path_string));
+    }
+
+    // Entry layout is 32 bytes either way:
+    //   dyld_cache_image_info:      address[8] modTime[8] inode[8] pathOffset[4] pad[4]
+    //   dyld_cache_image_text_info: uuid[16] loadAddress[8] textSize[4] pathOffset[4]
+    const std::size_t load_address_field = text_table ? 16 : 0;
+    const std::size_t path_offset_field  = text_table ? 28 : 24;
+
+    std::vector<ModuleInfo> modules;
+    modules.reserve(static_cast<std::size_t>(table_count));
+    for (std::uint64_t index = 0; index < table_count; ++index) {
+        unsigned char entry[32];
+        if (!read_record(file, table_offset + index * 32, entry, sizeof(entry))) {
+            return std::unexpected(Error::validation(
+                "Cannot read the dyld cache image table", cache_path_string));
+        }
+
+        const std::uint64_t path_offset = read_le32(entry + path_offset_field);
+        if (path_offset < header_size) {
+            return std::unexpected(Error::validation(
+                "Dyld cache image path overlaps its header", cache_path_string));
+        }
+        auto path = read_image_path(file, path_offset, file_size);
+        if (!path)
+            return std::unexpected(path.error());
+
+        ModuleInfo info;
+        info.path = std::move(*path);
+        info.load_address = static_cast<Address>(read_le64(entry + load_address_field));
+        modules.push_back(std::move(info));
+    }
     return modules;
 }
 
