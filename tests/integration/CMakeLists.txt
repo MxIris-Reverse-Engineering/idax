@@ -146,3 +146,11 @@ idax_add_integration_test(string_source_metadata           string_source_metadat
 idax_add_integration_test(cross_domain_torture             cross_domain_torture_test.cpp)
 idax_add_integration_test(type_data_comment_torture        type_data_comment_torture_test.cpp)
 idax_add_integration_test(operand_function_torture         operand_function_torture_test.cpp)
+
+
+# Place the descriptor's initializer before the user registration translation
+# unit to exercise loader construction without relying on normal archive order.
+idax_add_integration_test(loader_initialization_order
+    "${PROJECT_SOURCE_DIR}/src/loader.cpp")
+target_sources(idax_loader_initialization_order_test PRIVATE
+    loader_initialization_order_test.cpp)

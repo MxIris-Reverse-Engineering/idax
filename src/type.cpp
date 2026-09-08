@@ -1,8 +1,7 @@
 /// \file type.cpp
 /// \brief Implementation of ida::type — type system pimpl wrapping tinfo_t.
 
-#include "detail/type_impl.hpp"
-
+// Load standard headers before the SDK's forbidden-I/O macro definitions.
 #include <algorithm>
 #include <functional>
 #include <limits>
@@ -10,6 +9,8 @@
 #include <queue>
 #include <set>
 #include <sstream>
+
+#include "detail/type_impl.hpp"
 
 namespace ida::type {
 
@@ -189,8 +190,11 @@ Result<TypeInfo> TypeInfo::enum_type(const std::vector<EnumMember>& members,
         return std::unexpected(Error::validation("Enum byte width must be one of 1,2,4,8",
                                                  std::to_string(byte_width)));
 
-    enum_type_data_t enum_data(bitmask ? (BTE_ALWAYS | BTE_HEX | BTE_BITMASK)
-                                       : (BTE_ALWAYS | BTE_HEX));
+    // enum_type_data_t::add_constant builds a regular enum, and the SDK
+    // documents BTE_BITMASK as something it sets itself. Constants have to be
+    // added under regular flags first; set_enum_is_bitmask() converts the
+    // finished type.
+    enum_type_data_t enum_data(BTE_ALWAYS | BTE_HEX);
     if (!enum_data.set_nbytes(static_cast<int>(byte_width)))
         return std::unexpected(Error::validation("Failed to set enum byte width",
                                                  std::to_string(byte_width)));
@@ -205,6 +209,13 @@ Result<TypeInfo> TypeInfo::enum_type(const std::vector<EnumMember>& members,
     TypeInfo result;
     if (!TypeInfoAccess::get(result)->ti.create_enum(enum_data))
         return std::unexpected(Error::sdk("Failed to create enum type"));
+    if (bitmask) {
+        const auto code = TypeInfoAccess::get(result)->ti.set_enum_is_bitmask();
+        if (code != TERR_OK) {
+            return std::unexpected(Error::sdk("Failed to convert enum type to bitmask",
+                                              std::to_string(code)));
+        }
+    }
     return result;
 }
 
