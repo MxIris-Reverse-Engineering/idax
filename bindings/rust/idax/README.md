@@ -131,7 +131,6 @@ The crate is organized into modules that mirror the C++ `ida::` namespace hierar
 
 | Module | Domain | Key capabilities |
 |--------|--------|-----------------|
-| [`function`] | Functions | CRUD, chunks (`chunks`, `add_tail`, `remove_tail`), stack frames (`frame`, `frame_variable_by_name`, `define_stack_variable`), prototype application (`set_prototype`, `apply_decl`), register variables, callers/callees, `item_addresses`, `code_addresses` |
 | [`segment`] | Segments | CRUD/properties/traversal/comments plus named segment-register discovery, optional values/defaults, copied provenance ranges, and verified split/delete/next-code/copy mutation |
 | [`function`] | Functions | CRUD, chunks (`chunks`, `add_tail`, `remove_tail`), stack frames (`frame`, `frame_variable_by_name`, `define_stack_variable`), prototype application (`set_prototype`, `apply_decl`), register variables, callers/callees, `item_addresses`, `code_addresses` |
 | [`instruction`] | Instructions | `decode`, `create`, `text`, operand snapshots including `is_read`/`is_written`, introspection (`operand_text`, `operand_byte_width`, `operand_register_name`), formatting (`set_operand_hex`, `set_operand_offset`, named `set_operand_enum`/`operand_enum`, `set_operand_struct_offset_*`), xref conveniences (`code_refs_from`, `call_targets`, `is_call`, `is_jump`), navigation (`next`, `prev`) |
@@ -174,9 +173,6 @@ The crate is organized into modules that mirror the C++ `ida::` namespace hierar
 
 | Module | Domain | Key capabilities |
 |--------|--------|-----------------|
-| [`loader`] | Loader modules | `InputFileHandle` (seek, read, filename), `LoadFlags` decode/encode, `file_to_database`, `memory_to_database`, `set_processor`, `abort_load` |
-| [`processor`] | Processor modules | `Processor` trait (5 required + 15 optional methods), `InstructionFeature` / `RegisterInfo` / `AssemblerInfo` types |
-| [`graph`] | Custom graphs | `Graph` (RAII handle), `GraphCallback` trait for interactive event handling, `flow_chart` for function CFG extraction |
 | [`plugin`] | Plugin lifecycle | Wrapper-owned action registration/activation, drop-based `ScopedHotkey`, menu/toolbar/popup attachment, panic-contained callbacks, and `ActionContext` with optional Local Types `TypeRef` payloads |
 | [`loader`] | Loader modules | `InputFileHandle` (seek, read, filename), `LoadFlags` decode/encode, `file_to_database`, `memory_to_database`, `set_processor`, `abort_load` |
 | [`processor`] | Processor modules | `Processor` trait (5 required + 15 optional methods), `InstructionFeature` / `RegisterInfo` / `AssemblerInfo` types |
@@ -195,9 +191,6 @@ represent without raw SDK escape hatches:
   `ask_form_three_svals_path_two_bitsets` cover the audited fixed typed-form
   packs. They validate empty or NUL-containing markup before opening modal UI.
 - `ui::WaitBox`, `ui::ask_text`, `ui::{copy_to_clipboard, read_clipboard,
-  clipboard_backend}` cover progress UI, multiline fallback text, and optional
-  Qt clipboard behavior. Default non-Qt builds report the clipboard backend as
-  `unsupported`.
   clipboard_backend}` cover progress UI, multiline fallback text, and host
   clipboard behavior through Qt or common external clipboard commands.
 - `decompiler::initialize() -> ScopedSession`,
@@ -206,10 +199,6 @@ represent without raw SDK escape hatches:
   `types::parse_declarations`, `database::idb_path`, and `path::{basename,
   dirname, is_directory}` mirror the C++ parity APIs.
 
-Runtime execution of modal forms, wait boxes, and Qt clipboard still requires
-an interactive IDA UI host. Qt clipboard support also requires idax to be built
-with `IDAX_ENABLE_QT_CLIPBOARD=ON` against an IDA-compatible Qt package built
-with `QT_NAMESPACE=QT`.
 Runtime execution of modal forms and wait boxes still requires an interactive
 IDA UI host. Qt clipboard support requires idax to be built with
 `IDAX_ENABLE_QT_CLIPBOARD=ON` against an IDA-compatible Qt package built with

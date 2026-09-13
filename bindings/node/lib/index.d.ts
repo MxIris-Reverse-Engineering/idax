@@ -296,9 +296,6 @@ export namespace database {
     function save(): void;
     function saveTo(outputDatabasePath: string): void;
 
-    /** Save the current database to a new file path. */
-    function saveTo(outputDatabasePath: string): void;
-
     /** Close the database. Optionally save before closing. */
     function close(save?: boolean): void;
 
