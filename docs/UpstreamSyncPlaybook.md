@@ -30,12 +30,18 @@ Monthly is cheap. Quarterly is a project.
 
 ### Append-only ledgers — solved structurally
 
-`.agents/*.md` and `agents.md` track upstream byte for byte. Fork records live
-in `.agents/fork/` with `F`-prefixed numbering. Do not append to the upstream
-ledgers; that is what made all seven conflict every time, and what let two
+`.agents/*.md` and `agents.md` track upstream byte for byte. Do not append to
+them; that is what made all seven conflict every time, and what let two
 unrelated tasks share the number `P23.1`.
 
-See `.agents/fork/README.md`.
+`.agents/fork/` held this fork's mirrors until it was frozen on 2026-09-13.
+**New fork records go in `docs/fork/`** — proposals under `evolutions/`, and
+code-review findings ruled not worth fixing in `adjudicated-findings.md`.
+
+After the shrink (see
+[the proposal](fork/evolutions/draft-shrink-fork-to-cli.md)) this section matters
+much less: the fork holds no patch over any upstream file, so most of what made
+syncs painful no longer exists.
 
 ### Generated artifacts — never merge
 

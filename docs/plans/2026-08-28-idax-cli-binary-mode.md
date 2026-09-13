@@ -1,5 +1,9 @@
 # idax Command-Line Tool: Single-Binary Mode Implementation Plan
 
+> **部分过时（2026-09-13）。** 本计划的产物 `idax binary` 仍然有效，但它当时
+> 依赖的 `RuntimeOptions::input_format` 字段已被移除 —— 输入格式改为通过 `-T`
+> 初始化参数传递。见 [收缩提案](../fork/evolutions/draft-shrink-fork-to-cli.md)。
+
 **Goal:** Teach the Swift command-line tool to create a database from a single Mach-O binary, selecting the fat slice that matches the host architecture by default, and rename the tool from `idax-dyld-cache-database-creator` to `idax`.
 
 **Architecture:** Four layers. `ida::database` gains the ability to enumerate the loaders IDA would offer for an input file and to name one when opening. The shared C shim (`bindings/rust/idax-sys/shim/idax_shim.cpp`, declared in `bindings/c/include/idax_shim.h`, consumed by both Rust and Swift) exposes those two operations. The Swift wrapper reflects them. The tool splits into two subcommands and adds architecture resolution on top.

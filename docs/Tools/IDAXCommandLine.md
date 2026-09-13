@@ -22,11 +22,15 @@ explicit output-path saving.
 export IDADIR="/Applications/IDA Professional 9.4.app/Contents/MacOS"
 ```
 
-The C++ source remains build-compatible with IDA SDK 9.3. A distributed
-`CIDAX.xcframework` should be built with the SDK matching the destination IDA
-runtime; it does not bundle IDA or an IDA license. IDA 9.4 builds use the public
-`dscu_svc_t` service, while IDA 9.3 builds retain the legacy dscu compatibility
-backend. Cache-wide data regions are available only in IDA 9.4.
+The tool requires IDA 9.4: the shared-cache work goes through the public
+`dscu_svc_t` service introduced there. A distributed build should link a native
+archive compiled against the SDK matching the destination IDA runtime; nothing
+here bundles IDA or an IDA license.
+
+Caches newer than the IDA release understands may fail to open. Measured with
+IDA 9.4: macOS caches through 26.3 open normally, while 26.6 fails inside IDA's
+own `open_database` even though `idax formats` identifies its loader
+correctly.
 
 ## Build and run
 

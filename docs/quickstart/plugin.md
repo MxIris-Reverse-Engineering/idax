@@ -76,7 +76,6 @@ auto r3 = ida::plugin::detach_from_menu("Edit/Plugins/", action.id);
 auto r4 = ida::plugin::unregister_action(action.id);
 ```
 
-## 4) Owning Hex-Rays in Plugin Lifetimes
 Menu and toolbar detach helpers track attachments created through idax. A
 missing or already-detached `(target, action ID)` pair returns `NotFound`, and
 unregistering an action clears any remaining tracked attachment state.

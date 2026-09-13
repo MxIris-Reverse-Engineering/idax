@@ -1,5 +1,11 @@
 # IDA 9.4 Dyld Cache Adaptation
 
+> **历史记录（截至 2026-09-13）。** 本文档描述的是收缩前的 fork ——
+> 那时它维护着一整套与上游平行的 Swift bindings。收缩后 fork 只保留 `idax`
+> 命令行工具，对上游文件零侵入；文中涉及 `ida::microcode`、XCFramework 打包、
+> fork 自有 bindings 的部分均已不再适用。见
+> [收缩提案](fork/evolutions/draft-shrink-fork-to-cli.md)。
+
 ## Motivation
 
 IDA 9.4 replaces the private numeric dscu command surface used by earlier
