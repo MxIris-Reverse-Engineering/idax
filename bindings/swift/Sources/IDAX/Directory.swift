@@ -1,328 +1,244 @@
 internal import CIDAX
-import Darwin
 
-/// Which of IDA's item collections a directory tree organises.
-public enum DirectoryKind: Int32, Sendable {
-    case localTypes = 0
-    case functions = 1
-    case names = 2
-    case imports = 3
-    case idaPlaceBookmarks = 4
-    case breakpoints = 5
-    case localTypeBookmarks = 6
-    case snippets = 7
-}
-
-/// Whether an entry is a folder or one of the collection's items.
-public enum DirectoryEntryKind: Int32, Sendable {
-    case directory = 0
-    case item = 1
-}
-
-/// One node in a directory tree.
-public struct DirectoryEntry: Sendable {
+/// IDA's standard database organization trees.
+public enum Directory {
+  public enum Kind: Int32, CaseIterable, Sendable {
+    case localTypes = 0, functions, names, imports, idaPlaceBookmarks, breakpoints,
+      localTypeBookmarks, snippets
+  }
+  public enum EntryKind: Int32, Sendable { case directory = 0, item = 1 }
+  public enum OperationError: Int32, Sendable {
+    case alreadyExists = 1, notFound, notDirectory, notEmpty, badPath, cannotRename, ownChild,
+      directoryLimit, notOrderable, sdkFailure
+  }
+  public struct Entry: Equatable, Sendable {
     public let path: String
     public let name: String
     public let displayName: String
     public let attributes: String
-    public let kind: DirectoryEntryKind
+    public let kind: EntryKind
+    public var isDirectory: Bool { kind == .directory }
 
-    init(raw: IdaxDirectoryEntry) {
-        // The entry owns its strings; the caller frees the whole struct.
-        self.path = borrowCString(raw.path)
-        self.name = borrowCString(raw.name)
-        self.displayName = borrowCString(raw.display_name)
-        self.attributes = borrowCString(raw.attributes)
-        self.kind = DirectoryEntryKind(rawValue: raw.entry_kind) ?? .item
+    public init(path: String = "", name: String = "", displayName: String = "",
+                attributes: String = "", kind: EntryKind = .item) {
+      self.path = path; self.name = name; self.displayName = displayName
+      self.attributes = attributes; self.kind = kind
     }
-}
 
-/// One path that a bulk operation could not process.
-public struct DirectoryBulkFailure: Sendable {
-    /// Index of the offending path in the request, so a caller can correlate
-    /// the failure with what it asked for.
+    internal init(_ value: IdaxDirectoryEntry, _ operation: String) throws(IDAError) {
+      guard let kind = EntryKind(rawValue: value.entry_kind) else {
+        throw IDAError(
+          category: .internalError, message: "Unknown directory entry kind", context: operation)
+      }
+      self.kind = kind
+      path = try borrowCString(value.path.map { UnsafePointer($0) }, operation)
+      name = try borrowCString(value.name.map { UnsafePointer($0) }, operation)
+      displayName = try borrowCString(value.display_name.map { UnsafePointer($0) }, operation)
+      attributes = try borrowCString(value.attributes.map { UnsafePointer($0) }, operation)
+    }
+  }
+  public struct BulkFailure: Equatable, Sendable {
     public let inputIndex: Int
     public let path: String
-    public let operationError: Int32
+    public let error: OperationError
     public let message: String
-
-    init(raw: IdaxDirectoryBulkFailure) {
-        self.inputIndex = raw.input_index
-        self.path = borrowCString(raw.path)
-        self.operationError = raw.operation_error
-        self.message = borrowCString(raw.message)
+    public init(inputIndex: Int = 0, path: String = "", error: OperationError = .sdkFailure,
+                message: String = "") {
+      self.inputIndex = inputIndex; self.path = path; self.error = error; self.message = message
     }
-}
-
-/// Outcome of a bulk move or remove.
-///
-/// Bulk operations are partial by design: some paths can succeed while others
-/// fail, so the result is a report rather than a thrown error. Check
-/// ``failures`` before assuming everything landed.
-public struct DirectoryBulkReport: Sendable {
+  }
+  public struct BulkReport: Equatable, Sendable {
     public let affectedPaths: [String]
-    public let failures: [DirectoryBulkFailure]
+    public let failures: [BulkFailure]
+    public var isOK: Bool { failures.isEmpty }
 
-    public var succeededEntirely: Bool { failures.isEmpty }
+    public init(affectedPaths: [String] = [], failures: [BulkFailure] = []) {
+      self.affectedPaths = affectedPaths; self.failures = failures
+    }
 
-    init(raw: IdaxDirectoryBulkReport) {
-        if let paths = raw.affected_paths, raw.affected_paths_count > 0 {
-            self.affectedPaths = UnsafeBufferPointer(
-                start: paths, count: raw.affected_paths_count
-            ).map { borrowCString($0) }
-        } else {
-            self.affectedPaths = []
+    internal init(_ value: IdaxDirectoryBulkReport, _ operation: String) throws(IDAError) {
+      affectedPaths = try copyNativeStrings(
+        value.affected_paths, count: value.affected_paths_count, operation)
+      let source = try checkedBuffer(
+        value.failures.map { UnsafePointer($0) }, count: value.failures_count, operation)
+      var result: [BulkFailure] = []
+      result.reserveCapacity(source.count)
+      for failure in source {
+        guard let error = OperationError(rawValue: failure.operation_error) else {
+          throw IDAError(
+            category: .internalError, message: "Unknown directory operation error",
+            context: operation)
         }
-        if let failures = raw.failures, raw.failures_count > 0 {
-            self.failures = UnsafeBufferPointer(
-                start: failures, count: raw.failures_count
-            ).map(DirectoryBulkFailure.init(raw:))
-        } else {
-            self.failures = []
-        }
+        result.append(
+          try BulkFailure(
+            inputIndex: failure.input_index,
+            path: borrowCString(failure.path.map { UnsafePointer($0) }, operation), error: error,
+            message: borrowCString(failure.message.map { UnsafePointer($0) }, operation)))
+      }
+      failures = result
     }
-}
+  }
 
-/// The folder tree IDA keeps over one of its item collections.
-///
-/// A tree is identified by its ``kind`` alone and holds no native state, so it
-/// is an ordinary value. Not every collection supports ordering — check
-/// ``isOrderable()`` before using ``rank(of:)`` or ``changeRank(of:by:)``.
-public struct DirectoryTree: Sendable {
-    public let kind: DirectoryKind
+  /// Stores a semantic tree kind. Each operation resolves the current host tree.
+  public struct Tree: Equatable, Sendable {
+    public let kind: Kind
+    private init(kind: Kind) { self.kind = kind }
 
-    private init(validatedKind: DirectoryKind) {
-        self.kind = validatedKind
-    }
-
-    /// Opens the tree over `kind`.
-    public static func open(_ kind: DirectoryKind) throws(IDAError) -> DirectoryTree {
-        try checkStatus(idax_directory_open(kind.rawValue), "directory.open")
-        return DirectoryTree(validatedKind: kind)
+    public static func open(_ kind: Kind) throws(IDAError) -> Tree {
+      try requireRuntimeThread("Directory.Tree.open")
+      try checkStatus(idax_directory_open(kind.rawValue), "Directory.Tree.open")
+      return Tree(kind: kind)
     }
 
-    /// Whether this collection supports explicit ordering.
+    private func call(
+      _ operation: String, _ arguments: [String],
+      _ body: (UnsafePointer<UnsafePointer<CChar>?>) -> Int32
+    ) throws(IDAError) {
+      try requireRuntimeThread(operation)
+      try checkStatus(
+        checkedCStringArray(arguments, operation) { strings, _ in body(strings!) }, operation)
+    }
+
+    private func entries(
+      _ path: String, _ operation: String,
+      _ body: (
+        Int32, UnsafePointer<CChar>?,
+        UnsafeMutablePointer<UnsafeMutablePointer<IdaxDirectoryEntry>?>, UnsafeMutablePointer<Int>
+      ) -> Int32
+    ) throws(IDAError) -> [Entry] {
+      var output: UnsafeMutablePointer<IdaxDirectoryEntry>?
+      var count = 0
+      defer { idax_directory_entries_free(output, count) }
+      try call(operation, [path]) { body(kind.rawValue, $0[0], &output, &count) }
+      let buffer = try checkedBuffer(output.map { UnsafePointer($0) }, count: count, operation)
+      var result: [Entry] = []
+      result.reserveCapacity(count)
+      for entry in buffer { result.append(try Entry(entry, operation)) }
+      return result
+    }
+
     public func isOrderable() throws(IDAError) -> Bool {
-        try withOutput("directory.isOrderable", Int32(0)) {
-            idax_directory_is_orderable(kind.rawValue, $0)
-        } != 0
+      try withOutput("Directory.Tree.isOrderable", initial: Int32(0)) {
+        idax_directory_is_orderable(kind.rawValue, $0)
+      } != 0
     }
-
-    // MARK: - Navigation
-
-    /// The tree's current working directory.
     public func currentDirectory() throws(IDAError) -> String {
-        var out: UnsafeMutablePointer<CChar>? = nil
-        try checkStatus(
-            idax_directory_current_directory(kind.rawValue, &out),
-            "directory.currentDirectory"
-        )
-        return takeCString(out)
+      try withStringOutput("Directory.Tree.currentDirectory") {
+        idax_directory_current_directory(kind.rawValue, $0)
+      }
     }
-
-    /// Changes the tree's current working directory.
-    public func changeDirectory(to path: String) throws(IDAError) {
-        try checkStatus(
-            idax_directory_change_directory(kind.rawValue, path),
-            "directory.changeDirectory"
-        )
+    public func changeDirectory(_ path: String) throws(IDAError) {
+      try call("Directory.Tree.changeDirectory", [path]) {
+        idax_directory_change_directory(kind.rawValue, $0[0])
+      }
     }
-
-    /// Resolves `path` against the current working directory.
-    public func absolutePath(of path: String) throws(IDAError) -> String {
-        var out: UnsafeMutablePointer<CChar>? = nil
-        try checkStatus(
-            idax_directory_absolute_path(kind.rawValue, path, &out),
-            "directory.absolutePath"
-        )
-        return takeCString(out)
+    public func absolutePath(_ relativePath: String) throws(IDAError) -> String {
+      let operation = "Directory.Tree.absolutePath"
+      var output: UnsafeMutablePointer<CChar>?
+      defer { idax_free_string(output) }
+      try call(operation, [relativePath]) {
+        idax_directory_absolute_path(kind.rawValue, $0[0], &output)
+      }
+      return try borrowCString(output.map { UnsafePointer($0) }, operation)
     }
-
-    /// Whether `path` exists in this tree.
     public func contains(_ path: String) throws(IDAError) -> Bool {
-        try withOutput("directory.contains", Int32(0)) {
-            idax_directory_contains(kind.rawValue, path, $0)
-        } != 0
+      var output: Int32 = 0
+      try call("Directory.Tree.contains", [path]) {
+        idax_directory_contains(kind.rawValue, $0[0], &output)
+      }
+      return output != 0
     }
-
-    // MARK: - Reading
-
-    /// The entry at `path`.
-    public func entry(at path: String) throws(IDAError) -> DirectoryEntry {
-        var raw = IdaxDirectoryEntry()
-        try checkStatus(
-            idax_directory_entry(kind.rawValue, path, &raw),
-            "directory.entry"
-        )
-        defer { idax_directory_entry_free(&raw) }
-        return DirectoryEntry(raw: raw)
+    public func entry(_ path: String) throws(IDAError) -> Entry {
+      let operation = "Directory.Tree.entry"
+      var output = IdaxDirectoryEntry()
+      defer { idax_directory_entry_free(&output) }
+      try call(operation, [path]) { idax_directory_entry(kind.rawValue, $0[0], &output) }
+      return try Entry(output, operation)
     }
-
-    /// Direct children of `path`.
-    public func children(of path: String) throws(IDAError) -> [DirectoryEntry] {
-        try readEntries("directory.children") {
-            idax_directory_children(kind.rawValue, path, $0, $1)
-        }
+    public func children(_ path: String = "/") throws(IDAError) -> [Entry] {
+      try entries(path, "Directory.Tree.children", idax_directory_children)
     }
-
-    /// Everything at or beneath `path`.
-    public func snapshot(of path: String) throws(IDAError) -> [DirectoryEntry] {
-        try readEntries("directory.snapshot") {
-            idax_directory_snapshot(kind.rawValue, path, $0, $1)
-        }
+    public func snapshot(_ path: String = "/") throws(IDAError) -> [Entry] {
+      try entries(path, "Directory.Tree.snapshot", idax_directory_snapshot)
     }
-
-    /// Items whose name matches `pattern`.
-    public func findItems(matching pattern: String) throws(IDAError) -> [DirectoryEntry] {
-        try readEntries("directory.findItems") {
-            idax_directory_find_items(kind.rawValue, pattern, $0, $1)
-        }
+    public func findItems(_ pattern: String) throws(IDAError) -> [Entry] {
+      try entries(pattern, "Directory.Tree.findItems", idax_directory_find_items)
     }
-
-    // MARK: - Structure
-
-    /// Creates a directory at `path`.
-    public func createDirectory(at path: String) throws(IDAError) {
-        try checkStatus(
-            idax_directory_create_directory(kind.rawValue, path),
-            "directory.createDirectory"
-        )
+    public func createDirectory(_ path: String) throws(IDAError) {
+      try call("Directory.Tree.createDirectory", [path]) {
+        idax_directory_create_directory(kind.rawValue, $0[0])
+      }
     }
-
-    /// Removes the directory at `path`.
-    public func removeDirectory(at path: String) throws(IDAError) {
-        try checkStatus(
-            idax_directory_remove_directory(kind.rawValue, path),
-            "directory.removeDirectory"
-        )
+    public func removeDirectory(_ path: String) throws(IDAError) {
+      try call("Directory.Tree.removeDirectory", [path]) {
+        idax_directory_remove_directory(kind.rawValue, $0[0])
+      }
     }
-
-    /// Attaches an existing collection item to the tree.
     public func link(_ path: String) throws(IDAError) {
-        try checkStatus(idax_directory_link(kind.rawValue, path), "directory.link")
+      try call("Directory.Tree.link", [path]) { idax_directory_link(kind.rawValue, $0[0]) }
     }
-
-    /// Detaches an item from the tree without deleting the item itself.
     public func unlink(_ path: String) throws(IDAError) {
-        try checkStatus(idax_directory_unlink(kind.rawValue, path), "directory.unlink")
+      try call("Directory.Tree.unlink", [path]) { idax_directory_unlink(kind.rawValue, $0[0]) }
     }
-
-    /// Renames an entry.
-    public func rename(from source: String, to destination: String) throws(IDAError) {
-        try checkStatus(
-            idax_directory_rename(kind.rawValue, source, destination),
-            "directory.rename"
-        )
+    public func rename(_ from: String, to: String) throws(IDAError) {
+      try call("Directory.Tree.rename", [from, to]) {
+        idax_directory_rename(kind.rawValue, $0[0], $0[1])
+      }
     }
-
-    /// Collapses a shared name prefix beneath `path` into a directory level.
-    public func foldCommonPrefix(at path: String) throws(IDAError) {
-        try checkStatus(
-            idax_directory_fold_common_prefix(kind.rawValue, path),
-            "directory.foldCommonPrefix"
-        )
+    public func foldCommonPrefix(_ path: String = "/") throws(IDAError) {
+      try call("Directory.Tree.foldCommonPrefix", [path]) {
+        idax_directory_fold_common_prefix(kind.rawValue, $0[0])
+      }
     }
-
-    // MARK: - Ordering
-
-    /// Whether `path` uses natural (as opposed to explicit) ordering.
-    public func hasNaturalOrder(at path: String) throws(IDAError) -> Bool {
-        try withOutput("directory.hasNaturalOrder", Int32(0)) {
-            idax_directory_has_natural_order(kind.rawValue, path, $0)
-        } != 0
+    public func hasNaturalOrder(_ path: String) throws(IDAError) -> Bool {
+      var output: Int32 = 0
+      try call("Directory.Tree.hasNaturalOrder", [path]) {
+        idax_directory_has_natural_order(kind.rawValue, $0[0], &output)
+      }
+      return output != 0
     }
-
-    /// Switches `path` between natural and explicit ordering.
-    public func setNaturalOrder(at path: String, enabled: Bool) throws(IDAError) {
-        try checkStatus(
-            idax_directory_set_natural_order(kind.rawValue, path, enabled ? 1 : 0),
-            "directory.setNaturalOrder"
-        )
+    public func setNaturalOrder(_ path: String, enabled: Bool) throws(IDAError) {
+      try call("Directory.Tree.setNaturalOrder", [path]) {
+        idax_directory_set_natural_order(kind.rawValue, $0[0], enabled ? 1 : 0)
+      }
     }
-
-    /// Position of `path` among its siblings.
-    public func rank(of path: String) throws(IDAError) -> Int {
-        try withOutput("directory.rank", Int(0)) {
-            idax_directory_rank(kind.rawValue, path, $0)
-        }
+    public func rank(_ path: String) throws(IDAError) -> Int {
+      var output = 0
+      try call("Directory.Tree.rank", [path]) { idax_directory_rank(kind.rawValue, $0[0], &output) }
+      return output
     }
-
-    /// Moves `path` `delta` positions among its siblings.
-    public func changeRank(of path: String, by delta: Int) throws(IDAError) {
-        try checkStatus(
-            idax_directory_change_rank(kind.rawValue, path, delta),
-            "directory.changeRank"
-        )
+    public func changeRank(_ path: String, by delta: Int) throws(IDAError) {
+      try call("Directory.Tree.changeRank", [path]) {
+        idax_directory_change_rank(kind.rawValue, $0[0], delta)
+      }
     }
-
-    // MARK: - Bulk operations
-
-    /// Moves several paths under `destination`.
-    ///
-    /// - Parameter destinationRank: insert at this position rather than
-    ///   appending.
-    /// - Returns: a report; individual paths can fail without the call throwing.
-    @discardableResult
-    public func move(
-        _ paths: [String],
-        to destination: String,
-        destinationRank: Int? = nil
-    ) throws(IDAError) -> DirectoryBulkReport {
-        try bulk("directory.move") { pathPointers, count, report in
-            idax_directory_move(
-                kind.rawValue, pathPointers, count, destination,
-                destinationRank == nil ? 0 : 1, destinationRank ?? 0, report
-            )
-        } paths: { paths }
+    public func move(_ paths: [String], to destinationDirectory: String, rank: Int? = nil)
+      throws(IDAError) -> BulkReport
+    {
+      let operation = "Directory.Tree.move"
+      guard rank == nil || rank! >= 0 else {
+        throw IDAError(
+          category: .validation, message: "Destination rank cannot be negative", context: operation)
+      }
+      var output = IdaxDirectoryBulkReport()
+      defer { idax_directory_bulk_report_free(&output) }
+      try call(operation, [destinationDirectory] + paths) {
+        idax_directory_move(
+          kind.rawValue, $0.advanced(by: 1), paths.count, $0[0], rank == nil ? 0 : 1, rank ?? 0,
+          &output)
+      }
+      return try BulkReport(output, operation)
     }
-
-    /// Removes several paths.
-    ///
-    /// - Returns: a report; individual paths can fail without the call throwing.
-    @discardableResult
-    public func remove(_ paths: [String]) throws(IDAError) -> DirectoryBulkReport {
-        try bulk("directory.remove") { pathPointers, count, report in
-            idax_directory_remove(kind.rawValue, pathPointers, count, report)
-        } paths: { paths }
+    public func remove(_ paths: [String]) throws(IDAError) -> BulkReport {
+      let operation = "Directory.Tree.remove"
+      try requireRuntimeThread(operation)
+      var output = IdaxDirectoryBulkReport()
+      defer { idax_directory_bulk_report_free(&output) }
+      try checkStatus(
+        checkedCStringArray(paths, operation) {
+          idax_directory_remove(kind.rawValue, $0, $1, &output)
+        }, operation)
+      return try BulkReport(output, operation)
     }
-
-    // MARK: - Shared plumbing
-
-    private func readEntries(
-        _ fallback: String,
-        _ body: (
-            UnsafeMutablePointer<UnsafeMutablePointer<IdaxDirectoryEntry>?>,
-            UnsafeMutablePointer<Int>
-        ) -> Int32
-    ) throws(IDAError) -> [DirectoryEntry] {
-        var pointer: UnsafeMutablePointer<IdaxDirectoryEntry>? = nil
-        var count: Int = 0
-        try checkStatus(body(&pointer, &count), fallback)
-        defer { idax_directory_entries_free(pointer, count) }
-        guard let pointer, count > 0 else { return [] }
-        return UnsafeBufferPointer(start: pointer, count: count).map(DirectoryEntry.init(raw:))
-    }
-
-    private func bulk(
-        _ fallback: String,
-        _ body: (
-            UnsafePointer<UnsafePointer<CChar>?>?, Int,
-            UnsafeMutablePointer<IdaxDirectoryBulkReport>
-        ) -> Int32,
-        paths: () -> [String]
-    ) throws(IDAError) -> DirectoryBulkReport {
-        let pathList = paths()
-        let cStrings = pathList.map { strdup($0) }
-        defer { cStrings.forEach { free($0) } }
-
-        var report = IdaxDirectoryBulkReport()
-        let status = cStrings.withUnsafeBufferPointer { buffer in
-            buffer.withMemoryRebound(to: UnsafePointer<CChar>?.self) { rebound in
-                body(rebound.baseAddress, rebound.count, &report)
-            }
-        }
-        try checkStatus(status, fallback)
-        defer { idax_directory_bulk_report_free(&report) }
-        return DirectoryBulkReport(raw: report)
-    }
+  }
 }

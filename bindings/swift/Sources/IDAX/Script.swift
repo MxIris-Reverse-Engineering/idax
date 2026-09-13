@@ -1,730 +1,527 @@
 internal import CIDAX
-import Darwin
+internal import Foundation
 
-/// What an IDC value holds.
-public enum ScriptValueKind: Int32, Sendable {
-    case integer = 0
-    case floatingPoint = 1
-    case object = 2
-    case function = 3
-    case string = 4
-    case opaquePointer = 5
-    case reference = 6
-}
+/// Owned IDC values, compilation, and synchronous script execution.
+public enum Script {
+  public enum ValueKind: Int32, Sendable {
+    case integer = 0, floatingPoint, object, function, string, opaquePointer, reference
+  }
+  public enum DereferenceMode: Int32, Sendable { case once = 0, recursive = 1 }
 
-/// How far ``ScriptValue/dereference(mode:)`` follows a chain of references.
-public enum ScriptDereferenceMode: Int32, Sendable {
-    case once = 0
-    case recursive = 1
-}
-
-/// One IDC value.
-///
-/// Move-only: the handle owns an IDA-side value and frees it on `deinit`.
-/// Passing a value to a setter such as ``setAttribute(_:to:useHandler:)``
-/// *borrows* it — C++ copies out of it, so the caller keeps ownership and can
-/// go on using it. The one place ownership transfers is
-/// ``ScriptArguments/append(_:)``.
-public struct ScriptValue: ~Copyable {
-    private let handle: IdaxScriptValueHandle
-
-    private init(owning handle: IdaxScriptValueHandle) {
-        self.handle = handle
-    }
-
-    deinit {
-        idax_script_value_free(handle)
-    }
-
-    /// The raw handle, for the duration of `body`. Ownership does not transfer.
-    func withHandle<CallResult>(_ body: (IdaxScriptValueHandle) -> CallResult) -> CallResult {
-        body(handle)
-    }
-
-    /// Gives up the handle without running `deinit`; the caller must free it.
-    consuming func takeHandle() -> IdaxScriptValueHandle {
-        let taken = handle
-        discard self
-        return taken
-    }
-
-    private static func make(
-        _ fallback: String,
-        _ body: (UnsafeMutablePointer<IdaxScriptValueHandle?>) -> Int32
-    ) throws(IDAError) -> ScriptValue {
-        var out: IdaxScriptValueHandle? = nil
-        try checkStatus(body(&out), fallback)
-        guard let out else {
-            throw IDAError(
-                category: .internal,
-                code: 0,
-                message: "\(fallback) reported success but returned no value"
-            )
-        }
-        return ScriptValue(owning: out)
-    }
-
-    // MARK: - Construction
-
-    public init(integer: Int64) throws(IDAError) {
-        self = try ScriptValue.make("script.value.integer") {
-            idax_script_value_integer(integer, $0)
-        }
-    }
-
-    public init(floatingPoint: Double) throws(IDAError) {
-        self = try ScriptValue.make("script.value.floating") {
-            idax_script_value_floating(floatingPoint, $0)
-        }
-    }
-
-    /// Builds a string value from UTF-8 bytes. IDC strings may contain NUL, so
-    /// the length is explicit rather than NUL-terminated.
-    public init(string: String) throws(IDAError) {
-        let bytes = Array(string.utf8)
-        self = try ScriptValue.make("script.value.string") { out in
-            bytes.withUnsafeBufferPointer { buffer in
-                idax_script_value_string(buffer.baseAddress, buffer.count, out)
-            }
-        }
-    }
-
-    /// Builds an empty IDC object.
-    public static func object() throws(IDAError) -> ScriptValue {
-        try make("script.value.object") { idax_script_value_object($0) }
-    }
-
-    /// A shallow copy.
-    public func clone() throws(IDAError) -> ScriptValue {
-        try ScriptValue.make("script.value.clone") { idax_script_value_clone(handle, $0) }
-    }
-
-    /// A copy that also duplicates nested objects.
-    public func deepCopy() throws(IDAError) -> ScriptValue {
-        try ScriptValue.make("script.value.deepCopy") {
-            idax_script_value_deep_copy(handle, $0)
-        }
-    }
-
-    // MARK: - Reading
-
-    public func kind() throws(IDAError) -> ScriptValueKind {
-        let raw = try withOutput("script.value.kind", Int32(0)) {
-            idax_script_value_kind(handle, $0)
-        }
-        guard let kind = ScriptValueKind(rawValue: raw) else {
-            throw IDAError(
-                category: .internal,
-                code: raw,
-                message: "Unknown script value kind \(raw)"
-            )
-        }
-        return kind
-    }
-
-    /// Reads an integer, failing when the value is not one.
-    public func asInteger() throws(IDAError) -> Int64 {
-        try withOutput("script.value.asInteger", Int64(0)) {
-            idax_script_value_as_integer(handle, $0)
-        }
-    }
-
-    /// Reads a floating-point number, failing when the value is not one.
-    public func asFloatingPoint() throws(IDAError) -> Double {
-        try withOutput("script.value.asFloating", Double(0)) {
-            idax_script_value_as_floating(handle, $0)
-        }
-    }
-
-    /// Reads a string, failing when the value is not one.
-    ///
-    /// Bytes are decoded as UTF-8 with replacement, since IDC imposes no
-    /// encoding of its own.
-    public func asString() throws(IDAError) -> String {
-        try readString("script.value.asString") {
-            idax_script_value_as_string(handle, $0, $1)
-        }
-    }
-
-    /// Converts to an integer, following IDC's own coercion rules.
-    public func coerceToInteger() throws(IDAError) -> Int64 {
-        try withOutput("script.value.coerceInteger", Int64(0)) {
-            idax_script_value_coerce_integer(handle, $0)
-        }
-    }
-
-    /// Converts to a floating-point number, following IDC's coercion rules.
-    public func coerceToFloatingPoint() throws(IDAError) -> Double {
-        try withOutput("script.value.coerceFloating", Double(0)) {
-            idax_script_value_coerce_floating(handle, $0)
-        }
-    }
-
-    /// Converts to a string, following IDC's coercion rules.
-    public func coerceToString() throws(IDAError) -> String {
-        try readString("script.value.coerceString") {
-            idax_script_value_coerce_string(handle, $0, $1)
-        }
-    }
-
-    /// Renders the value the way IDA prints it.
-    public func render(name: String = "", indent: Int = 0) throws(IDAError) -> String {
-        var out: UnsafeMutablePointer<CChar>? = nil
-        try checkStatus(
-            idax_script_value_render(handle, name, indent, &out),
-            "script.value.render"
-        )
-        return takeCString(out)
-    }
-
-    /// The class name of an object value.
-    public func className() throws(IDAError) -> String {
-        var out: UnsafeMutablePointer<CChar>? = nil
-        try checkStatus(idax_script_value_class_name(handle, &out), "script.value.className")
-        return takeCString(out)
-    }
-
-    // MARK: - Object attributes
-
-    /// Reads an attribute.
-    ///
-    /// - Parameter useHandler: let the object's attribute handler run, rather
-    ///   than reading storage directly.
-    public func attribute(
-        _ name: String,
-        useHandler: Bool = true
-    ) throws(IDAError) -> ScriptValue {
-        try ScriptValue.make("script.value.attribute") {
-            idax_script_value_attribute(handle, name, useHandler ? 1 : 0, $0)
-        }
-    }
-
-    /// Writes an attribute. `value` is borrowed — C++ copies out of it.
-    public func setAttribute(
-        _ name: String,
-        to value: borrowing ScriptValue,
-        useHandler: Bool = true
-    ) throws(IDAError) {
-        try checkStatus(
-            value.withHandle {
-                idax_script_value_set_attribute(handle, name, $0, useHandler ? 1 : 0)
-            },
-            "script.value.setAttribute"
-        )
-    }
-
-    /// Names of every attribute this object carries.
-    public func attributeNames() throws(IDAError) -> [String] {
-        var pointer: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>? = nil
-        var count: Int = 0
-        try checkStatus(
-            idax_script_value_attribute_names(handle, &pointer, &count),
-            "script.value.attributeNames"
-        )
-        defer { idax_script_string_array_free(pointer, count) }
-        guard let pointer, count > 0 else { return [] }
-        return UnsafeBufferPointer(start: pointer, count: count).map { borrowCString($0) }
-    }
-
-    /// Removes an attribute.
-    ///
-    /// - Returns: whether there was one to remove.
-    @discardableResult
-    public func removeAttribute(_ name: String) throws(IDAError) -> Bool {
-        try withOutput("script.value.removeAttribute", Int32(0)) {
-            idax_script_value_remove_attribute(handle, name, $0)
-        } != 0
-    }
-
-    // MARK: - Slices and references
-
-    /// A half-open slice of a string or array value.
-    public func slice(from begin: Int, to end: Int) throws(IDAError) -> ScriptValue {
-        try ScriptValue.make("script.value.slice") {
-            idax_script_value_slice(handle, begin, end, $0)
-        }
-    }
-
-    /// Replaces a half-open slice. `replacement` is borrowed.
-    public func replaceSlice(
-        from begin: Int,
-        to end: Int,
-        with replacement: borrowing ScriptValue
-    ) throws(IDAError) {
-        try checkStatus(
-            replacement.withHandle {
-                idax_script_value_replace_slice(handle, begin, end, $0)
-            },
-            "script.value.replaceSlice"
-        )
-    }
-
-    /// Follows a reference.
-    public func dereference(
-        mode: ScriptDereferenceMode = .once
-    ) throws(IDAError) -> ScriptValue {
-        try ScriptValue.make("script.value.dereference") {
-            idax_script_value_dereference(handle, mode.rawValue, $0)
-        }
-    }
-
-    // MARK: - Shared plumbing
-
-    private func readString(
-        _ fallback: String,
-        _ body: (
-            UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>,
-            UnsafeMutablePointer<Int>
-        ) -> Int32
-    ) throws(IDAError) -> String {
-        var pointer: UnsafeMutablePointer<UInt8>? = nil
-        var length: Int = 0
-        try checkStatus(body(&pointer, &length), fallback)
-        defer { idax_free_bytes(pointer) }
-        guard let pointer, length > 0 else { return "" }
-        return String(decoding: UnsafeBufferPointer(start: pointer, count: length), as: UTF8.self)
-    }
-}
-
-/// An argument list for ``Script/call(_:arguments:resolvedNames:)``.
-///
-/// Exists because a `~Copyable` value cannot go into an `Array`. Appending
-/// *consumes* the value: the list takes ownership and frees everything on
-/// `deinit`, so the caller does not have to keep the individual values alive
-/// across the call.
-public struct ScriptArguments: ~Copyable {
-    private var handles: [IdaxScriptValueHandle] = []
-
-    public init() {}
-
-    /// Takes ownership of `value` and appends it.
-    public mutating func append(_ value: consuming ScriptValue) {
-        // Ownership moves into this list, which frees it on deinit.
-        handles.append(value.takeHandle())
-    }
-
-    public var count: Int { handles.count }
-
-    deinit {
-        for handle in handles {
-            idax_script_value_free(handle)
-        }
-    }
-
-    func withHandles<CallResult>(
-        _ body: (UnsafePointer<IdaxScriptValueHandle?>?, Int) -> CallResult
-    ) -> CallResult {
-        let optionalHandles: [IdaxScriptValueHandle?] = handles
-        return optionalHandles.withUnsafeBufferPointer { body($0.baseAddress, $0.count) }
-    }
-}
-
-/// One name pre-resolved for the compiler, so a script can refer to it without
-/// the resolver running.
-public struct ScriptResolvedName: Sendable {
+  public struct ResolvedName: Equatable, Sendable {
     public var name: String
     public var value: UInt64
-
     public init(name: String, value: UInt64) {
-        self.name = name
-        self.value = value
+      self.name = name
+      self.value = value
     }
-}
-
-/// Options for compiling script text or a snippet.
-public struct ScriptCompileOptions: Sendable {
-    /// Restrict the script to functions IDA considers safe.
+  }
+  public struct CompileOptions: Equatable, Sendable {
     public var onlySafeFunctions: Bool
-    public var resolvedNames: [ScriptResolvedName]
-
-    public init(onlySafeFunctions: Bool = false, resolvedNames: [ScriptResolvedName] = []) {
-        self.onlySafeFunctions = onlySafeFunctions
-        self.resolvedNames = resolvedNames
+    public var resolvedNames: [ResolvedName]
+    public init(onlySafeFunctions: Bool = false, resolvedNames: [ResolvedName] = []) {
+      self.onlySafeFunctions = onlySafeFunctions
+      self.resolvedNames = resolvedNames
     }
-}
-
-/// Options for compiling a script file.
-public struct ScriptFileCompileOptions: Sendable {
+  }
+  public struct FileCompileOptions: Equatable, Sendable {
     public var deleteMacrosAfterCompilation: Bool
     public var allowProgramLabels: Bool
     public var onlySafeFunctions: Bool
-
     public init(
-        deleteMacrosAfterCompilation: Bool = false,
-        allowProgramLabels: Bool = false,
-        onlySafeFunctions: Bool = false
+      deleteMacrosAfterCompilation: Bool = true, allowProgramLabels: Bool = true,
+      onlySafeFunctions: Bool = false
     ) {
-        self.deleteMacrosAfterCompilation = deleteMacrosAfterCompilation
-        self.allowProgramLabels = allowProgramLabels
-        self.onlySafeFunctions = onlySafeFunctions
+      self.deleteMacrosAfterCompilation = deleteMacrosAfterCompilation
+      self.allowProgramLabels = allowProgramLabels
+      self.onlySafeFunctions = onlySafeFunctions
     }
-
-    func withRaw<CallResult>(
-        _ body: (UnsafePointer<IdaxScriptFileCompileOptions>) -> CallResult
-    ) -> CallResult {
-        var raw = IdaxScriptFileCompileOptions()
-        raw.delete_macros_after_compilation = deleteMacrosAfterCompilation ? 1 : 0
-        raw.allow_program_labels = allowProgramLabels ? 1 : 0
-        raw.only_safe_functions = onlySafeFunctions ? 1 : 0
-        return withUnsafePointer(to: &raw) { body($0) }
+    internal var native: IdaxScriptFileCompileOptions {
+      .init(
+        delete_macros_after_compilation: deleteMacrosAfterCompilation ? 1 : 0,
+        allow_program_labels: allowProgramLabels ? 1 : 0,
+        only_safe_functions: onlySafeFunctions ? 1 : 0)
     }
-}
-
-/// Whether a compilation succeeded, and why not when it did not.
-///
-/// A failed compilation is not a thrown error — the diagnostics are the result.
-public struct ScriptCompilationResult: Sendable {
+  }
+  public struct CompilationResult: Equatable, Sendable {
     public let succeeded: Bool
     public let error: String
-}
-
-/// Whether an execution succeeded, its value, and why not when it did not.
-///
-/// Move-only because it owns the returned value.
-public struct ScriptExecutionResult: ~Copyable {
+    public init(succeeded: Bool = false, error: String = "") {
+      self.succeeded = succeeded; self.error = error
+    }
+  }
+  /// An unsuccessful execution retains the native exception value.
+  public struct ExecutionResult {
     public let succeeded: Bool
+    public let value: Value
     public let error: String
-    private var valueHandle: IdaxScriptValueHandle?
-
-    init(raw: IdaxScriptExecutionResult) {
-        self.succeeded = raw.succeeded != 0
-        self.error = borrowCString(raw.error)
-        self.valueHandle = raw.value
+    public init(succeeded: Bool = false, value: Value, error: String = "") {
+      self.succeeded = succeeded; self.value = value; self.error = error
     }
-
-    /// Takes the returned value, leaving the result without one.
-    ///
-    /// Mutating rather than consuming, so ``succeeded`` and ``error`` remain
-    /// readable afterwards. A second call returns `nil`.
-    public mutating func takeValue() -> ScriptValue? {
-        guard let handle = valueHandle else { return nil }
-        // Clearing the handle is what stops `deinit` from double-freeing it.
-        valueHandle = nil
-        return ScriptValue.adopting(handle)
+    public init() throws(IDAError) {
+      self.init(value: try Value())
     }
-
-    deinit {
-        if let valueHandle {
-            idax_script_value_free(valueHandle)
-        }
-    }
-}
-
-/// Whether an integer-returning execution succeeded.
-public struct ScriptIntegerExecutionResult: Sendable {
+  }
+  public struct IntegerExecutionResult: Equatable, Sendable {
     public let succeeded: Bool
     public let value: Int64
     public let error: String
-}
-
-extension ScriptValue {
-    /// Wraps a handle whose ownership has already transferred to us.
-    static func adopting(_ handle: IdaxScriptValueHandle) -> ScriptValue {
-        ScriptValue(owning: handle)
+    public init(succeeded: Bool = false, value: Int64 = 0, error: String = "") {
+      self.succeeded = succeeded; self.value = value; self.error = error
     }
-}
+  }
 
-/// IDC scripting: evaluation, compilation, execution, and globals.
-public enum Script {
+  public final class Value {
+    fileprivate let resource: NativeResource
 
-    // MARK: - Evaluation
-
-    /// Evaluates an expression in the currently selected scripting language.
-    public static func evaluate(
-        _ expression: String,
-        at address: Address = badAddress
-    ) throws(IDAError) -> ScriptExecutionResult {
-        try execution("script.evaluate") { idax_script_evaluate(expression, address, $0) }
+    fileprivate init(taking pointer: UnsafeMutableRawPointer?, _ operation: String) throws(IDAError)
+    {
+      guard let pointer else {
+        throw IDAError(
+          category: .internalError, message: "Native script value is null", context: operation)
+      }
+      resource = try NativeResource(
+        taking: pointer, release: idax_script_value_free, operation: operation)
     }
 
-    /// Evaluates an expression as IDC specifically.
-    public static func evaluateIDC(
-        _ expression: String,
-        at address: Address = badAddress
-    ) throws(IDAError) -> ScriptExecutionResult {
-        try execution("script.evaluateIDC") { idax_script_evaluate_idc(expression, address, $0) }
+    public convenience init(integer: Int64 = 0) throws(IDAError) {
+      let operation = "Script.Value.init(integer:)"
+      let pointer = try withOutput(operation, initial: Optional<UnsafeMutableRawPointer>.none) {
+        idax_script_value_integer(integer, $0)
+      }
+      try self.init(taking: pointer, operation)
     }
 
-    /// Evaluates an expression expected to produce an integer.
-    public static func evaluateInteger(
-        _ expression: String,
-        at address: Address = badAddress
-    ) throws(IDAError) -> ScriptIntegerExecutionResult {
-        var raw = IdaxScriptIntegerExecutionResult()
-        try checkStatus(
-            idax_script_evaluate_integer(expression, address, &raw),
-            "script.evaluateInteger"
-        )
-        defer { idax_script_integer_execution_result_free(&raw) }
-        return ScriptIntegerExecutionResult(
-            succeeded: raw.succeeded != 0,
-            value: raw.value,
-            error: borrowCString(raw.error)
-        )
+    /// Preserves embedded NUL bytes through the native length-bearing API.
+    public convenience init(string: String) throws(IDAError) {
+      let operation = "Script.Value.init(string:)"
+      let bytes = Array(string.utf8)
+      let pointer = try withOutput(operation, initial: Optional<UnsafeMutableRawPointer>.none) {
+        output in
+        bytes.withUnsafeBufferPointer { idax_script_value_string($0.baseAddress, $0.count, output) }
+      }
+      try self.init(taking: pointer, operation)
     }
 
-    /// Evaluates a snippet with names pre-resolved.
-    public static func evaluateSnippet(
-        _ source: String,
-        resolvedNames: [ScriptResolvedName] = []
-    ) throws(IDAError) -> ScriptExecutionResult {
-        try execution("script.evaluateSnippet") { out in
-            withResolvedNames(resolvedNames) { names, count in
-                idax_script_evaluate_snippet(source, names, count, out)
-            }
+    public static func floating(_ value: Double) throws(IDAError) -> Value {
+      let operation = "Script.Value.floating"
+      return try Value(
+        taking: withOutput(operation, initial: Optional<UnsafeMutableRawPointer>.none) {
+          idax_script_value_floating(value, $0)
+        }, operation)
+    }
+    public static func object() throws(IDAError) -> Value {
+      let operation = "Script.Value.object"
+      return try Value(
+        taking: withOutput(
+          operation, initial: Optional<UnsafeMutableRawPointer>.none, idax_script_value_object),
+        operation)
+    }
+    public func close() throws(IDAError) { try resource.close("Script.Value.close") }
+    public func copy() throws(IDAError) -> Value {
+      let operation = "Script.Value.copy"
+      let pointer = try resource.pointer(operation)
+      return try Value(
+        taking: withOutput(operation, initial: Optional<UnsafeMutableRawPointer>.none) {
+          idax_script_value_clone(pointer, $0)
+        }, operation)
+    }
+    public func deepCopy() throws(IDAError) -> Value {
+      let operation = "Script.Value.deepCopy"
+      let pointer = try resource.pointer(operation)
+      return try Value(
+        taking: withOutput(operation, initial: Optional<UnsafeMutableRawPointer>.none) {
+          idax_script_value_deep_copy(pointer, $0)
+        }, operation)
+    }
+    public func kind() throws(IDAError) -> ValueKind {
+      let operation = "Script.Value.kind"
+      let pointer = try resource.pointer(operation)
+      let output = try withOutput(operation, initial: Int32(0)) {
+        idax_script_value_kind(pointer, $0)
+      }
+      guard let result = ValueKind(rawValue: output) else {
+        throw IDAError(
+          category: .internalError, message: "Unknown IDC value kind", context: operation)
+      }
+      return result
+    }
+    public func asInteger() throws(IDAError) -> Int64 {
+      let pointer = try resource.pointer("Script.Value.asInteger")
+      return try withOutput("Script.Value.asInteger", initial: Int64(0)) {
+        idax_script_value_as_integer(pointer, $0)
+      }
+    }
+    public func asFloating() throws(IDAError) -> Double {
+      let pointer = try resource.pointer("Script.Value.asFloating")
+      return try withOutput("Script.Value.asFloating", initial: 0.0) {
+        idax_script_value_as_floating(pointer, $0)
+      }
+    }
+    private func string(
+      _ operation: String,
+      _ body: (
+        UnsafeMutableRawPointer?, UnsafeMutablePointer<UnsafeMutablePointer<UInt8>?>,
+        UnsafeMutablePointer<Int>
+      ) -> Int32
+    ) throws(IDAError) -> String {
+      let pointer = try resource.pointer(operation)
+      let bytes = try withByteOutput(operation) { body(pointer, $0, $1) }
+      guard let result = String(bytes: bytes, encoding: .utf8) else {
+        throw IDAError(
+          category: .internalError, message: "IDC string is not valid UTF-8", context: operation)
+      }
+      return result
+    }
+    public func asString() throws(IDAError) -> String {
+      try string("Script.Value.asString", idax_script_value_as_string)
+    }
+    public func coerceInteger() throws(IDAError) -> Int64 {
+      let pointer = try resource.pointer("Script.Value.coerceInteger")
+      return try withOutput("Script.Value.coerceInteger", initial: Int64(0)) {
+        idax_script_value_coerce_integer(pointer, $0)
+      }
+    }
+    public func coerceFloating() throws(IDAError) -> Double {
+      let pointer = try resource.pointer("Script.Value.coerceFloating")
+      return try withOutput("Script.Value.coerceFloating", initial: 0.0) {
+        idax_script_value_coerce_floating(pointer, $0)
+      }
+    }
+    public func coerceString() throws(IDAError) -> String {
+      try string("Script.Value.coerceString", idax_script_value_coerce_string)
+    }
+    public func render(name: String? = nil, indent: Int = 0) throws(IDAError) -> String {
+      let operation = "Script.Value.render"
+      guard indent >= 0 else {
+        throw IDAError(
+          category: .validation, message: "Indent cannot be negative", context: operation)
+      }
+      let pointer = try resource.pointer(operation)
+      var output: UnsafeMutablePointer<CChar>?
+      defer { idax_free_string(output) }
+      try checkStatus(
+        checkedCString(name ?? "", operation) {
+          idax_script_value_render(pointer, name == nil ? nil : $0, indent, &output)
+        }, operation)
+      return try borrowCString(output.map { UnsafePointer($0) }, operation)
+    }
+    public func className() throws(IDAError) -> String {
+      let pointer = try resource.pointer("Script.Value.className")
+      return try withStringOutput("Script.Value.className") {
+        idax_script_value_class_name(pointer, $0)
+      }
+    }
+    public func attribute(_ name: String, useHandler: Bool = false) throws(IDAError) -> Value {
+      let operation = "Script.Value.attribute"
+      let pointer = try resource.pointer(operation)
+      var output: UnsafeMutableRawPointer?
+      try checkStatus(
+        checkedCString(name, operation) {
+          idax_script_value_attribute(pointer, $0, useHandler ? 1 : 0, &output)
+        }, operation)
+      return try Value(taking: output, operation)
+    }
+    public func setAttribute(_ name: String, value: Value, useHandler: Bool = false)
+      throws(IDAError)
+    {
+      let operation = "Script.Value.setAttribute"
+      let pointer = try resource.pointer(operation)
+      let replacement = try value.resource.pointer(operation)
+      try checkStatus(
+        checkedCString(name, operation) {
+          idax_script_value_set_attribute(pointer, $0, replacement, useHandler ? 1 : 0)
+        }, operation)
+    }
+    public func attributeNames() throws(IDAError) -> [String] {
+      let operation = "Script.Value.attributeNames"
+      let pointer = try resource.pointer(operation)
+      var output: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+      var count = 0
+      defer { idax_script_string_array_free(output, count) }
+      try checkStatus(idax_script_value_attribute_names(pointer, &output, &count), operation)
+      return try copyNativeStrings(output, count: count, operation)
+    }
+    @discardableResult public func removeAttribute(_ name: String) throws(IDAError) -> Bool {
+      let operation = "Script.Value.removeAttribute"
+      let pointer = try resource.pointer(operation)
+      var output: Int32 = 0
+      try checkStatus(
+        checkedCString(name, operation) {
+          idax_script_value_remove_attribute(pointer, $0, &output)
+        }, operation)
+      return output != 0
+    }
+    public func slice(_ range: Range<Int>) throws(IDAError) -> Value {
+      let operation = "Script.Value.slice"
+      guard range.lowerBound >= 0 else {
+        throw IDAError(
+          category: .validation, message: "Slice bounds cannot be negative", context: operation)
+      }
+      let pointer = try resource.pointer(operation)
+      return try Value(
+        taking: withOutput(operation, initial: Optional<UnsafeMutableRawPointer>.none) {
+          idax_script_value_slice(pointer, range.lowerBound, range.upperBound, $0)
+        }, operation)
+    }
+    public func replaceSlice(_ range: Range<Int>, with value: Value) throws(IDAError) {
+      let operation = "Script.Value.replaceSlice"
+      guard range.lowerBound >= 0 else {
+        throw IDAError(
+          category: .validation, message: "Slice bounds cannot be negative", context: operation)
+      }
+      let pointer = try resource.pointer(operation)
+      let replacement = try value.resource.pointer(operation)
+      try checkStatus(
+        idax_script_value_replace_slice(pointer, range.lowerBound, range.upperBound, replacement),
+        operation)
+    }
+    public func dereference(_ mode: DereferenceMode = .recursive) throws(IDAError) -> Value {
+      let operation = "Script.Value.dereference"
+      let pointer = try resource.pointer(operation)
+      return try Value(
+        taking: withOutput(operation, initial: Optional<UnsafeMutableRawPointer>.none) {
+          idax_script_value_dereference(pointer, mode.rawValue, $0)
+        }, operation)
+    }
+  }
+
+  private static func withNames<Result>(
+    _ names: [ResolvedName], strings: [String], _ operation: String,
+    _ body: (UnsafePointer<UnsafePointer<CChar>?>?, UnsafePointer<IdaxScriptResolvedName>?, Int) ->
+      Result
+  ) throws(IDAError) -> Result {
+    try checkedCStringArray(strings + names.map(\.name), operation) { pointers, _ in
+      let native = names.enumerated().map { index, name in
+        IdaxScriptResolvedName(name: pointers![strings.count + index], value: name.value)
+      }
+      return native.withUnsafeBufferPointer { body(pointers, $0.baseAddress, $0.count) }
+    }
+  }
+  private static func execution(_ output: inout IdaxScriptExecutionResult, _ operation: String)
+    throws(IDAError) -> ExecutionResult
+  {
+    let diagnostic = try borrowCString(output.error.map { UnsafePointer($0) }, operation)
+    let pointer = output.value
+    output.value = nil
+    let value = try Value(taking: pointer, operation)
+    return ExecutionResult(succeeded: output.succeeded != 0, value: value, error: diagnostic)
+  }
+  private static func evaluate(
+    _ expression: String, at address: Address, _ operation: String,
+    _ body: (UnsafePointer<CChar>?, UInt64, UnsafeMutablePointer<IdaxScriptExecutionResult>) ->
+      Int32
+  ) throws(IDAError) -> ExecutionResult {
+    try requireRuntimeThread(operation)
+    var output = IdaxScriptExecutionResult()
+    defer { idax_script_execution_result_free(&output) }
+    try checkStatus(checkedCString(expression, operation) { body($0, address, &output) }, operation)
+    return try execution(&output, operation)
+  }
+  public static func evaluate(_ expression: String, at address: Address = badAddress)
+    throws(IDAError) -> ExecutionResult
+  {
+    try evaluate(expression, at: address, "Script.evaluate", idax_script_evaluate)
+  }
+  public static func evaluateIDC(_ expression: String, at address: Address = badAddress)
+    throws(IDAError) -> ExecutionResult
+  {
+    try evaluate(expression, at: address, "Script.evaluateIDC", idax_script_evaluate_idc)
+  }
+  public static func evaluateInteger(_ expression: String, at address: Address = badAddress)
+    throws(IDAError) -> IntegerExecutionResult
+  {
+    let operation = "Script.evaluateInteger"
+    try requireRuntimeThread(operation)
+    var output = IdaxScriptIntegerExecutionResult()
+    defer { idax_script_integer_execution_result_free(&output) }
+    try checkStatus(
+      checkedCString(expression, operation) { idax_script_evaluate_integer($0, address, &output) },
+      operation)
+    return try IntegerExecutionResult(
+      succeeded: output.succeeded != 0, value: output.value,
+      error: borrowCString(output.error.map { UnsafePointer($0) }, operation))
+  }
+  public static func compileFile(_ path: String, options: FileCompileOptions = .init())
+    throws(IDAError) -> CompilationResult
+  {
+    let operation = "Script.compileFile"
+    try requireRuntimeThread(operation)
+    var output = IdaxScriptCompilationResult()
+    var native = options.native
+    defer { idax_script_compilation_result_free(&output) }
+    try checkStatus(
+      checkedCString(path, operation) { idax_script_compile_file($0, &native, &output) }, operation)
+    return try CompilationResult(
+      succeeded: output.succeeded != 0,
+      error: borrowCString(output.error.map { UnsafePointer($0) }, operation))
+  }
+  public static func compileText(_ source: String, options: CompileOptions = .init())
+    throws(IDAError) -> CompilationResult
+  {
+    let operation = "Script.compileText"
+    try requireRuntimeThread(operation)
+    var output = IdaxScriptCompilationResult()
+    defer { idax_script_compilation_result_free(&output) }
+    try checkStatus(
+      withNames(options.resolvedNames, strings: [source], operation) { strings, names, count in
+        var native = IdaxScriptCompileOptions(
+          only_safe_functions: options.onlySafeFunctions ? 1 : 0, resolved_names: names,
+          resolved_name_count: count)
+        return idax_script_compile_text(strings![0], &native, &output)
+      }, operation)
+    return try CompilationResult(
+      succeeded: output.succeeded != 0,
+      error: borrowCString(output.error.map { UnsafePointer($0) }, operation))
+  }
+  public static func compileSnippet(
+    functionName: String, body: String, options: CompileOptions = .init()
+  ) throws(IDAError) -> CompilationResult {
+    let operation = "Script.compileSnippet"
+    try requireRuntimeThread(operation)
+    var output = IdaxScriptCompilationResult()
+    defer { idax_script_compilation_result_free(&output) }
+    try checkStatus(
+      withNames(options.resolvedNames, strings: [functionName, body], operation) {
+        strings, names, count in
+        var native = IdaxScriptCompileOptions(
+          only_safe_functions: options.onlySafeFunctions ? 1 : 0, resolved_names: names,
+          resolved_name_count: count)
+        return idax_script_compile_snippet(strings![0], strings![1], &native, &output)
+      }, operation)
+    return try CompilationResult(
+      succeeded: output.succeeded != 0,
+      error: borrowCString(output.error.map { UnsafePointer($0) }, operation))
+  }
+  public static func call(
+    _ functionName: String, arguments: [Value] = [], resolvedNames: [ResolvedName] = []
+  ) throws(IDAError) -> ExecutionResult {
+    let operation = "Script.call"
+    try requireRuntimeThread(operation)
+    var handles: [UnsafeMutableRawPointer?] = []
+    for argument in arguments { handles.append(try argument.resource.pointer(operation)) }
+    var output = IdaxScriptExecutionResult()
+    defer { idax_script_execution_result_free(&output) }
+    try checkStatus(
+      withNames(resolvedNames, strings: [functionName], operation) { strings, names, count in
+        handles.withUnsafeBufferPointer {
+          idax_script_call(strings![0], $0.baseAddress, $0.count, names, count, &output)
         }
-    }
-
-    // MARK: - Compilation
-
-    /// Compiles a script file.
-    public static func compileFile(
-        _ path: String,
-        options: ScriptFileCompileOptions = ScriptFileCompileOptions()
-    ) throws(IDAError) -> ScriptCompilationResult {
-        try compilation("script.compileFile") { out in
-            options.withRaw { idax_script_compile_file(path, $0, out) }
+      }, operation)
+    return try execution(&output, operation)
+  }
+  public static func executeScript(
+    _ path: String, functionName: String, arguments: [Value] = [],
+    options: FileCompileOptions = .init()
+  ) throws(IDAError) -> ExecutionResult {
+    let operation = "Script.executeScript"
+    try requireRuntimeThread(operation)
+    var handles: [UnsafeMutableRawPointer?] = []
+    for argument in arguments { handles.append(try argument.resource.pointer(operation)) }
+    var native = options.native
+    var output = IdaxScriptExecutionResult()
+    defer { idax_script_execution_result_free(&output) }
+    try checkStatus(
+      checkedCStringArray([path, functionName], operation) { strings, _ in
+        handles.withUnsafeBufferPointer {
+          idax_script_execute_script(
+            strings![0], strings![1], $0.baseAddress, $0.count, &native, &output)
         }
+      }, operation)
+    return try execution(&output, operation)
+  }
+  public static func evaluateSnippet(_ source: String, resolvedNames: [ResolvedName] = [])
+    throws(IDAError) -> ExecutionResult
+  {
+    let operation = "Script.evaluateSnippet"
+    try requireRuntimeThread(operation)
+    var output = IdaxScriptExecutionResult()
+    defer { idax_script_execution_result_free(&output) }
+    try checkStatus(
+      withNames(resolvedNames, strings: [source], operation) { strings, names, count in
+        idax_script_evaluate_snippet(strings![0], names, count, &output)
+      }, operation)
+    return try execution(&output, operation)
+  }
+  public static func setIncludePaths(_ paths: [String]) throws(IDAError) {
+    try requireRuntimeThread("Script.setIncludePaths")
+    try checkStatus(
+      checkedCStringArray(paths, "Script.setIncludePaths", idax_script_set_include_paths),
+      "Script.setIncludePaths")
+  }
+  public static func appendIncludePaths(_ paths: [String]) throws(IDAError) {
+    try requireRuntimeThread("Script.appendIncludePaths")
+    try checkStatus(
+      checkedCStringArray(paths, "Script.appendIncludePaths", idax_script_append_include_paths),
+      "Script.appendIncludePaths")
+  }
+  public static func resolveFile(_ file: String) throws(IDAError) -> String? {
+    let operation = "Script.resolveFile"
+    try requireRuntimeThread(operation)
+    var output: UnsafeMutablePointer<CChar>?
+    var present: Int32 = 0
+    defer { idax_free_string(output) }
+    try checkStatus(
+      checkedCString(file, operation) { idax_script_resolve_file($0, &output, &present) }, operation
+    )
+    return present == 0 ? nil : try borrowCString(output.map { UnsafePointer($0) }, operation)
+  }
+  public static func executeSystemScript(_ file: String, complainIfMissing: Bool = false)
+    throws(IDAError)
+  {
+    try requireRuntimeThread("Script.executeSystemScript")
+    try checkStatus(
+      checkedCString(file, "Script.executeSystemScript") {
+        idax_script_execute_system_script($0, complainIfMissing ? 1 : 0)
+      }, "Script.executeSystemScript")
+  }
+  public static func functionNames(prefix: String = "", maximum: Int = 1024) throws(IDAError)
+    -> [String]
+  {
+    let operation = "Script.functionNames"
+    guard maximum >= 0 else {
+      throw IDAError(
+        category: .validation, message: "Maximum cannot be negative", context: operation)
     }
-
-    /// Compiles script source text.
-    public static func compileText(
-        _ source: String,
-        options: ScriptCompileOptions = ScriptCompileOptions()
-    ) throws(IDAError) -> ScriptCompilationResult {
-        try compilation("script.compileText") { out in
-            withCompileOptions(options) { idax_script_compile_text(source, $0, out) }
-        }
+    try requireRuntimeThread(operation)
+    var output: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
+    var count = 0
+    defer { idax_script_string_array_free(output, count) }
+    try checkStatus(
+      checkedCString(prefix, operation) {
+        idax_script_function_names($0, maximum, &output, &count)
+      }, operation)
+    return try copyNativeStrings(output, count: count, operation)
+  }
+  public static func global(_ name: String) throws(IDAError) -> Value? {
+    let operation = "Script.global"
+    try requireRuntimeThread(operation)
+    var output: UnsafeMutableRawPointer?
+    var present: Int32 = 0
+    try checkStatus(
+      checkedCString(name, operation) { idax_script_global($0, &output, &present) }, operation)
+    if present == 0 {
+      idax_script_value_free(output)
+      return nil
     }
-
-    /// Compiles a function body into a named function.
-    public static func compileSnippet(
-        functionName: String,
-        body: String,
-        options: ScriptCompileOptions = ScriptCompileOptions()
-    ) throws(IDAError) -> ScriptCompilationResult {
-        try compilation("script.compileSnippet") { out in
-            withCompileOptions(options) {
-                idax_script_compile_snippet(functionName, body, $0, out)
-            }
-        }
-    }
-
-    // MARK: - Invocation
-
-    /// Calls a compiled function.
-    public static func call(
-        _ functionName: String,
-        arguments: borrowing ScriptArguments,
-        resolvedNames: [ScriptResolvedName] = []
-    ) throws(IDAError) -> ScriptExecutionResult {
-        try execution("script.call") { out in
-            arguments.withHandles { handlePointer, handleCount in
-                withResolvedNames(resolvedNames) { names, nameCount in
-                    idax_script_call(
-                        functionName, handlePointer, handleCount, names, nameCount, out
-                    )
-                }
-            }
-        }
-    }
-
-    /// Compiles a file and calls one of its functions.
-    public static func executeScript(
-        path: String,
-        functionName: String,
-        arguments: borrowing ScriptArguments,
-        options: ScriptFileCompileOptions = ScriptFileCompileOptions()
-    ) throws(IDAError) -> ScriptExecutionResult {
-        try execution("script.executeScript") { out in
-            arguments.withHandles { handlePointer, handleCount in
-                options.withRaw {
-                    idax_script_execute_script(
-                        path, functionName, handlePointer, handleCount, $0, out
-                    )
-                }
-            }
-        }
-    }
-
-    /// Runs one of IDA's own bundled scripts.
-    public static func executeSystemScript(
-        _ file: String,
-        complainIfMissing: Bool = true
-    ) throws(IDAError) {
-        try checkStatus(
-            idax_script_execute_system_script(file, complainIfMissing ? 1 : 0),
-            "script.executeSystemScript"
-        )
-    }
-
-    // MARK: - Environment
-
-    /// Replaces the include search paths.
-    public static func setIncludePaths(_ paths: [String]) throws(IDAError) {
-        try checkStatus(
-            withStringArray(paths) { idax_script_set_include_paths($0, $1) },
-            "script.setIncludePaths"
-        )
-    }
-
-    /// Adds to the include search paths.
-    public static func appendIncludePaths(_ paths: [String]) throws(IDAError) {
-        try checkStatus(
-            withStringArray(paths) { idax_script_append_include_paths($0, $1) },
-            "script.appendIncludePaths"
-        )
-    }
-
-    /// Resolves a file against the include paths.
-    ///
-    /// - Returns: `nil` when it is not found, which is not an error.
-    public static func resolveFile(_ file: String) throws(IDAError) -> String? {
-        var out: UnsafeMutablePointer<CChar>? = nil
-        var hasValue: Int32 = 0
-        try checkStatus(
-            idax_script_resolve_file(file, &out, &hasValue),
-            "script.resolveFile"
-        )
-        guard hasValue != 0 else {
-            if out != nil { _ = takeCString(out) }
-            return nil
-        }
-        return takeCString(out)
-    }
-
-    /// Names of compiled functions starting with `prefix`.
-    public static func functionNames(
-        prefix: String = "",
-        maximum: Int = 1000
-    ) throws(IDAError) -> [String] {
-        var pointer: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>? = nil
-        var count: Int = 0
-        try checkStatus(
-            idax_script_function_names(prefix, maximum, &pointer, &count),
-            "script.functionNames"
-        )
-        defer { idax_script_string_array_free(pointer, count) }
-        guard let pointer, count > 0 else { return [] }
-        return UnsafeBufferPointer(start: pointer, count: count).map { borrowCString($0) }
-    }
-
-    // MARK: - Globals
-
-    /// Reads a global, or `nil` when it does not exist.
-    public static func global(_ name: String) throws(IDAError) -> ScriptValue? {
-        var out: IdaxScriptValueHandle? = nil
-        var hasValue: Int32 = 0
-        try checkStatus(idax_script_global(name, &out, &hasValue), "script.global")
-        guard hasValue != 0, let out else { return nil }
-        return ScriptValue.adopting(out)
-    }
-
-    /// Writes a global. `value` is borrowed.
-    ///
-    /// - Returns: whether the global was created rather than overwritten.
-    @discardableResult
-    public static func setGlobal(
-        _ name: String,
-        to value: borrowing ScriptValue
-    ) throws(IDAError) -> Bool {
-        var created: Int32 = 0
-        try checkStatus(
-            value.withHandle { idax_script_set_global(name, $0, &created) },
-            "script.setGlobal"
-        )
-        return created != 0
-    }
-
-    /// Obtains a reference to an *existing* global.
-    ///
-    /// Fails with `NotFound` when the global does not exist — it does not
-    /// create one. Use ``setGlobal(_:to:)`` first.
-    public static func referenceGlobal(_ name: String) throws(IDAError) -> ScriptValue {
-        var out: IdaxScriptValueHandle? = nil
-        try checkStatus(idax_script_reference_global(name, &out), "script.referenceGlobal")
-        guard let out else {
-            throw IDAError(
-                category: .internal,
-                code: 0,
-                message: "script.referenceGlobal reported success but returned no value"
-            )
-        }
-        return ScriptValue.adopting(out)
-    }
-
-    // MARK: - Shared plumbing
-
-    private static func execution(
-        _ fallback: String,
-        _ body: (UnsafeMutablePointer<IdaxScriptExecutionResult>) -> Int32
-    ) throws(IDAError) -> ScriptExecutionResult {
-        var raw = IdaxScriptExecutionResult()
-        try checkStatus(body(&raw), fallback)
-        // The result adopts the value handle; only the error string is freed here.
-        let result = ScriptExecutionResult(raw: raw)
-        raw.value = nil
-        idax_script_execution_result_free(&raw)
-        return result
-    }
-
-    private static func compilation(
-        _ fallback: String,
-        _ body: (UnsafeMutablePointer<IdaxScriptCompilationResult>) -> Int32
-    ) throws(IDAError) -> ScriptCompilationResult {
-        var raw = IdaxScriptCompilationResult()
-        try checkStatus(body(&raw), fallback)
-        defer { idax_script_compilation_result_free(&raw) }
-        return ScriptCompilationResult(
-            succeeded: raw.succeeded != 0,
-            error: borrowCString(raw.error)
-        )
-    }
-}
-
-// MARK: - C array plumbing
-
-private func withStringArray<CallResult>(
-    _ values: [String],
-    _ body: (UnsafePointer<UnsafePointer<CChar>?>?, Int) -> CallResult
-) -> CallResult {
-    let cStrings = values.map { strdup($0) }
-    defer { cStrings.forEach { free($0) } }
-    return cStrings.withUnsafeBufferPointer { buffer in
-        buffer.withMemoryRebound(to: UnsafePointer<CChar>?.self) { rebound in
-            body(rebound.baseAddress, rebound.count)
-        }
-    }
-}
-
-private func withResolvedNames<CallResult>(
-    _ names: [ScriptResolvedName],
-    _ body: (UnsafePointer<IdaxScriptResolvedName>?, Int) -> CallResult
-) -> CallResult {
-    guard !names.isEmpty else { return body(nil, 0) }
-    let cStrings = names.map { strdup($0.name) }
-    defer { cStrings.forEach { free($0) } }
-
-    var raw = [IdaxScriptResolvedName]()
-    raw.reserveCapacity(names.count)
-    for (index, entry) in names.enumerated() {
-        var item = IdaxScriptResolvedName()
-        item.name = UnsafePointer(cStrings[index])
-        item.value = entry.value
-        raw.append(item)
-    }
-    return raw.withUnsafeBufferPointer { body($0.baseAddress, $0.count) }
-}
-
-private func withCompileOptions<CallResult>(
-    _ options: ScriptCompileOptions,
-    _ body: (UnsafePointer<IdaxScriptCompileOptions>) -> CallResult
-) -> CallResult {
-    withResolvedNames(options.resolvedNames) { names, count in
-        var raw = IdaxScriptCompileOptions()
-        raw.only_safe_functions = options.onlySafeFunctions ? 1 : 0
-        raw.resolved_names = names
-        raw.resolved_name_count = count
-        return withUnsafePointer(to: &raw) { body($0) }
-    }
+    return try Value(taking: output, operation)
+  }
+  @discardableResult public static func setGlobal(_ name: String, value: Value) throws(IDAError)
+    -> Bool
+  {
+    let operation = "Script.setGlobal"
+    let pointer = try value.resource.pointer(operation)
+    var output: Int32 = 0
+    try checkStatus(
+      checkedCString(name, operation) { idax_script_set_global($0, pointer, &output) }, operation)
+    return output != 0
+  }
+  public static func referenceGlobal(_ name: String) throws(IDAError) -> Value {
+    let operation = "Script.referenceGlobal"
+    try requireRuntimeThread(operation)
+    var output: UnsafeMutableRawPointer?
+    try checkStatus(
+      checkedCString(name, operation) { idax_script_reference_global($0, &output) }, operation)
+    return try Value(taking: output, operation)
+  }
 }

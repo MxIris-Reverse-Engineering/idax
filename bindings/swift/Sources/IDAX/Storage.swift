@@ -1,136 +1,137 @@
 internal import CIDAX
 
-/// Persistent key-value storage node (netnode abstraction).
-///
-/// Move-only value — `deinit` frees the underlying handle.
-public struct StorageNode: ~Copyable, @unchecked Sendable {
-    let handle: IdaxNodeHandle
+/// Persistent database storage for plugin-owned data.
+public enum Storage {
+  public final class Node {
+    private let resource: NativeResource
 
-    init(_ handle: IdaxNodeHandle) {
-        self.handle = handle
+    private init(taking pointer: UnsafeMutableRawPointer?, _ operation: String) throws(IDAError) {
+      guard let pointer else {
+        throw IDAError(
+          category: .internalError, message: "Native storage node is null", context: operation)
+      }
+      resource = try NativeResource(
+        taking: pointer, release: idax_storage_node_free, operation: operation)
     }
 
-    deinit {
-        idax_storage_node_free(handle)
+    public static func open(_ name: String, create: Bool = false) throws(IDAError) -> Node {
+      let operation = "Storage.Node.open"
+      try requireRuntimeThread(operation)
+      var output: UnsafeMutableRawPointer?
+      try checkStatus(
+        checkedCString(name, operation) { idax_storage_node_open($0, create ? 1 : 0, &output) },
+        operation)
+      return try Node(taking: output, operation)
     }
 
-    public static func open(name: String, create: Bool = false) throws(IDAError) -> StorageNode {
-        var handle: IdaxNodeHandle?
-        try checkStatus(
-            name.withCString { idax_storage_node_open($0, create ? 1 : 0, &handle) },
-            "storage.open"
-        )
-        guard let handle else {
-            throw IDAError(category: .internal, code: 0, message: "nil handle after successful call")
-        }
-        return StorageNode(handle)
+    public static func open(id: UInt64) throws(IDAError) -> Node {
+      let operation = "Storage.Node.open(id:)"
+      let output = try withOutput(operation, initial: Optional<UnsafeMutableRawPointer>.none) {
+        idax_storage_node_open_by_id(id, $0)
+      }
+      return try Node(taking: output, operation)
     }
 
-    public static func open(id: UInt64) throws(IDAError) -> StorageNode {
-        var handle: IdaxNodeHandle?
-        try checkStatus(idax_storage_node_open_by_id(id, &handle), "storage.openByID")
-        guard let handle else {
-            throw IDAError(category: .internal, code: 0, message: "nil handle after successful call")
-        }
-        return StorageNode(handle)
+    public func close() throws(IDAError) { try resource.close("Storage.Node.close") }
+
+    public func copy() throws(IDAError) -> Node { try Node.open(id: id()) }
+
+    public func id() throws(IDAError) -> UInt64 {
+      let pointer = try resource.pointer("Storage.Node.id")
+      return try withOutput("Storage.Node.id", initial: UInt64(0)) {
+        idax_storage_node_id(pointer, $0)
+      }
     }
 
-    public var id: UInt64 {
-        get throws(IDAError) {
-            try withOutput("storage.id", UInt64(0)) { idax_storage_node_id(handle, $0) }
-        }
+    public func name() throws(IDAError) -> String {
+      let pointer = try resource.pointer("Storage.Node.name")
+      return try withStringOutput("Storage.Node.name") { idax_storage_node_name(pointer, $0) }
     }
 
-    public var name: String {
-        get throws(IDAError) {
-            try withStringOutput("storage.name") { idax_storage_node_name(handle, $0) }
-        }
+    public func alt(at index: Address, tag: UInt8 = 65) throws(IDAError) -> UInt64 {
+      let pointer = try resource.pointer("Storage.Node.alt")
+      return try withOutput("Storage.Node.alt", initial: UInt64(0)) {
+        idax_storage_node_alt_get(pointer, index, tag, $0)
+      }
     }
 
-    // MARK: - Alt (integer values)
-
-    public func altGet(index: UInt64, tag: UInt8 = UInt8(ascii: "A")) throws(IDAError) -> UInt64 {
-        try withOutput("storage.altGet", UInt64(0)) { idax_storage_node_alt_get(handle, index, tag, $0) }
+    public func setAlt(at index: Address, value: UInt64, tag: UInt8 = 65) throws(IDAError) {
+      let pointer = try resource.pointer("Storage.Node.setAlt")
+      try checkStatus(idax_storage_node_alt_set(pointer, index, value, tag), "Storage.Node.setAlt")
     }
 
-    public func altSet(index: UInt64, value: UInt64, tag: UInt8 = UInt8(ascii: "A")) throws(IDAError) {
-        try checkStatus(idax_storage_node_alt_set(handle, index, value, tag), "storage.altSet")
+    public func removeAlt(at index: Address, tag: UInt8 = 65) throws(IDAError) {
+      let pointer = try resource.pointer("Storage.Node.removeAlt")
+      try checkStatus(idax_storage_node_alt_remove(pointer, index, tag), "Storage.Node.removeAlt")
     }
 
-    // MARK: - Hash (string values)
-
-    public func hashGet(key: String, tag: UInt8 = UInt8(ascii: "H")) throws(IDAError) -> String {
-        try withStringOutput("storage.hashGet") { out in
-            key.withCString { idax_storage_node_hash_get(handle, $0, tag, out) }
-        }
+    public func sup(at index: Address, tag: UInt8 = 83) throws(IDAError) -> [UInt8] {
+      let pointer = try resource.pointer("Storage.Node.sup")
+      return try withByteOutput("Storage.Node.sup") {
+        idax_storage_node_sup_get(pointer, index, tag, $0, $1)
+      }
     }
 
-    public func hashSet(key: String, value: String, tag: UInt8 = UInt8(ascii: "H")) throws(IDAError) {
-        try checkStatus(
-            key.withCString { k in
-                value.withCString { v in
-                    idax_storage_node_hash_set(handle, k, v, tag)
-                }
-            },
-            "storage.hashSet"
-        )
+    public func setSup(at index: Address, data: [UInt8], tag: UInt8 = 83) throws(IDAError) {
+      let pointer = try resource.pointer("Storage.Node.setSup")
+      let status = data.withUnsafeBufferPointer {
+        idax_storage_node_sup_set(pointer, index, $0.baseAddress, $0.count, tag)
+      }
+      try checkStatus(status, "Storage.Node.setSup")
     }
 
-    // MARK: - Blob (binary data)
-
-    public func blobGet(index: UInt64, tag: UInt8 = UInt8(ascii: "B")) throws(IDAError) -> [UInt8] {
-        var ptr: UnsafeMutablePointer<UInt8>? = nil
-        var len: Int = 0
-        try checkStatus(idax_storage_node_blob_get(handle, index, tag, &ptr, &len), "storage.blobGet")
-        defer { idax_free_bytes(ptr) }
-        guard let ptr, len > 0 else { return [] }
-        return Array(UnsafeBufferPointer(start: ptr, count: len))
+    public func hash(_ key: String, tag: UInt8 = 72) throws(IDAError) -> String {
+      let operation = "Storage.Node.hash"
+      let pointer = try resource.pointer(operation)
+      var output: UnsafeMutablePointer<CChar>?
+      defer { idax_free_string(output) }
+      try checkStatus(
+        checkedCString(key, operation) { idax_storage_node_hash_get(pointer, $0, tag, &output) },
+        operation)
+      return try borrowCString(output.map { UnsafePointer($0) }, operation)
     }
 
-    public func blobSet(index: UInt64, data: Span<UInt8>, tag: UInt8 = UInt8(ascii: "B")) throws(IDAError) {
-        try checkStatus(
-            idax_storage_node_blob_set(handle, index, data, tag),
-            "storage.blobSet"
-        )
+    public func setHash(_ key: String, value: String, tag: UInt8 = 72) throws(IDAError) {
+      let operation = "Storage.Node.setHash"
+      let pointer = try resource.pointer(operation)
+      try checkStatus(
+        checkedCStringArray([key, value], operation) { strings, _ in
+          idax_storage_node_hash_set(pointer, strings![0], strings![1], tag)
+        }, operation)
     }
 
-    // MARK: - Sup (byte array values)
-
-    public func supGet(index: UInt64, tag: UInt8 = UInt8(ascii: "S")) throws(IDAError) -> [UInt8] {
-        var ptr: UnsafeMutablePointer<UInt8>? = nil
-        var len: Int = 0
-        try checkStatus(idax_storage_node_sup_get(handle, index, tag, &ptr, &len), "storage.supGet")
-        defer { idax_free_bytes(ptr) }
-        guard let ptr, len > 0 else { return [] }
-        return Array(UnsafeBufferPointer(start: ptr, count: len))
+    public func blob(at index: Address, tag: UInt8 = 66) throws(IDAError) -> [UInt8] {
+      let pointer = try resource.pointer("Storage.Node.blob")
+      return try withByteOutput("Storage.Node.blob") {
+        idax_storage_node_blob_get(pointer, index, tag, $0, $1)
+      }
     }
 
-    public func supSet(index: UInt64, data: Span<UInt8>, tag: UInt8 = UInt8(ascii: "S")) throws(IDAError) {
-        try checkStatus(
-            idax_storage_node_sup_set(handle, index, data, tag),
-            "storage.supSet"
-        )
+    public func setBlob(at index: Address, data: [UInt8], tag: UInt8 = 66) throws(IDAError) {
+      let pointer = try resource.pointer("Storage.Node.setBlob")
+      let status = data.withUnsafeBufferPointer {
+        idax_storage_node_blob_set(pointer, index, $0.baseAddress, $0.count, tag)
+      }
+      try checkStatus(status, "Storage.Node.setBlob")
     }
 
-    // MARK: - Alt remove
-
-    public func altRemove(index: UInt64, tag: UInt8 = UInt8(ascii: "A")) throws(IDAError) {
-        try checkStatus(idax_storage_node_alt_remove(handle, index, tag), "storage.altRemove")
+    public func removeBlob(at index: Address, tag: UInt8 = 66) throws(IDAError) {
+      let pointer = try resource.pointer("Storage.Node.removeBlob")
+      try checkStatus(idax_storage_node_blob_remove(pointer, index, tag), "Storage.Node.removeBlob")
     }
 
-    // MARK: - Blob extended
-
-    public func blobSize(index: UInt64, tag: UInt8 = UInt8(ascii: "B")) throws(IDAError) -> Int {
-        var out: Int = 0
-        try checkStatus(idax_storage_node_blob_size(handle, index, tag, &out), "storage.blobSize")
-        return out
+    public func blobSize(at index: Address, tag: UInt8 = 66) throws(IDAError) -> Int {
+      let pointer = try resource.pointer("Storage.Node.blobSize")
+      return try withOutput("Storage.Node.blobSize", initial: 0) {
+        idax_storage_node_blob_size(pointer, index, tag, $0)
+      }
     }
 
-    public func blobString(index: UInt64, tag: UInt8 = UInt8(ascii: "B")) throws(IDAError) -> String {
-        try withStringOutput("storage.blobString") { idax_storage_node_blob_string(handle, index, tag, $0) }
+    public func blobString(at index: Address, tag: UInt8 = 66) throws(IDAError) -> String {
+      let pointer = try resource.pointer("Storage.Node.blobString")
+      return try withStringOutput("Storage.Node.blobString") {
+        idax_storage_node_blob_string(pointer, index, tag, $0)
+      }
     }
-
-    public func blobRemove(index: UInt64, tag: UInt8 = UInt8(ascii: "B")) throws(IDAError) {
-        try checkStatus(idax_storage_node_blob_remove(handle, index, tag), "storage.blobRemove")
-    }
+  }
 }

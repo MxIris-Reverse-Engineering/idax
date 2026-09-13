@@ -107,9 +107,7 @@ Result<std::string> ask_text(std::string_view prompt,
 }
 
 Result<bool> ask_form(std::string_view markup) {
-    // Share the validation the binding-pack overload already applies, so both
-    // entry points reject empty and NUL-containing markup identically.
-    Status valid_markup = detail::validate_form_markup(markup);
+    auto valid_markup = detail::validate_form_markup(markup);
     if (!valid_markup)
         return std::unexpected(valid_markup.error());
 

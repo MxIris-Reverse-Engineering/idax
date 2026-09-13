@@ -1,512 +1,299 @@
 internal import CIDAX
-import Darwin
 
-// MARK: - Value types
-
-/// Graph edge descriptor.
-public struct Edge: Sendable {
-    public let source: Int32
-    public let target: Int32
-}
-
-/// Graph edge visual properties.
-public struct EdgeInfo: Sendable {
-    public let color: UInt32
-    public let width: Int32
-    public let sourcePort: Int32
-    public let targetPort: Int32
-
-    public init(color: UInt32 = 0, width: Int32 = 1, sourcePort: Int32 = 0, targetPort: Int32 = 0) {
-        self.color = color
-        self.width = width
-        self.sourcePort = sourcePort
-        self.targetPort = targetPort
+/// Mutable directed graph. Viewer callbacks retain its native graph even if
+/// the originating Swift owner is released.
+public final class Graph {
+    public struct Node: Hashable, Sendable {
+        internal let value: Int32
+        public var index: Int32 { value }
+        public init(index: Int32) { self.value = index }
     }
-}
-
-/// Basic block descriptor from a flow chart.
-public struct BasicBlock: Sendable {
-    public let start: Address
-    public let end: Address
-    public let type: Int32
-    public let successors: [Int32]
-    public let predecessors: [Int32]
-}
-
-/// Graph layout algorithm.
-///
-/// Mirrors C++ `ida::graph::Layout`.
-public enum GraphLayout: Int32, Sendable {
-    case none = 0
-    case digraph = 1
-    case tree = 2
-    case circle = 3
-    case polarTree = 4
-    case orthogonal = 5
-    case radialTree = 6
-}
-
-// MARK: - Graph (mutable, ~Copyable handle)
-
-/// Mutable directed graph with node/edge manipulation, grouping, and layout.
-///
-/// Move-only value — `deinit` frees the underlying handle.
-/// Mirrors C++ `ida::graph`.
-public struct Graph: ~Copyable, @unchecked Sendable {
-    let handle: IdaxGraphHandle
-
-    init(_ handle: IdaxGraphHandle) {
-        self.handle = handle
+    public struct Edge: Sendable, Equatable {
+        public var source: Node
+        public var target: Node
+        public init(source: Node, target: Node) {
+            self.source = source
+            self.target = target
+        }
     }
-
-    deinit {
-        idax_graph_free(handle)
+    public struct EdgeStyle: Sendable {
+        public var color: UInt32
+        public var width: Int32
+        public var sourcePort: Int32
+        public var targetPort: Int32
+        public init(color: UInt32 = .max, width: Int32 = 1, sourcePort: Int32 = -1, targetPort: Int32 = -1) {
+            self.color = color
+            self.width = width
+            self.sourcePort = sourcePort
+            self.targetPort = targetPort
+        }
     }
-
-    /// Create a new empty graph.
+    public struct NodeInfo: Sendable {
+        public var text: String
+        public var backgroundColor: UInt32
+        public var frameColor: UInt32
+        public var address: Address
+        public init(text: String = "", backgroundColor: UInt32 = .max,
+                    frameColor: UInt32 = .max, address: Address = .max) {
+            self.text = text
+            self.backgroundColor = backgroundColor
+            self.frameColor = frameColor
+            self.address = address
+        }
+    }
+    public enum Layout: CaseIterable, Sendable {
+        case none, digraph, tree, circle, polarTree, orthogonal, radialTree
+        internal var native: Int32 { Int32(Self.allCases.firstIndex(of: self)!) }
+    }
+    private var handle: UnsafeMutableRawPointer?
+    internal init(owning handle: UnsafeMutableRawPointer) { self.handle = handle }
     public init() throws(IDAError) {
-        let h = idax_graph_create()
-        guard let h else {
-            throw IDAError(category: .internal, code: 0, message: "failed to create graph")
+        var result: UnsafeMutableRawPointer?
+        try bridgeCall("graph.create") { idax_swift_graph_create(&result, $0) }
+        handle = try requireLifecycleHandle(result, "graph.create")
+    }
+    deinit { if let handle { idax_swift_graph_release(handle) } }
+    public func close() {
+        if let handle {
+            idax_swift_graph_release(handle)
+            self.handle = nil
         }
-        self.handle = h
     }
-
-    // MARK: - Nodes
-
-    /// Add a new node. Returns the node ID (0-based).
-    public func addNode() throws(IDAError) -> Int32 {
-        let ret = idax_graph_add_node(handle)
-        if ret < 0 {
-            throw consumeLastError(fallback: "graph.addNode")
-        }
-        return ret
+    private func checkedHandle() throws(IDAError) -> UnsafeMutableRawPointer {
+        guard let handle else { throw IDAError(category: .conflict, message: "Graph is closed") }
+        return handle
     }
-
-    /// Remove a node by ID.
-    public func removeNode(_ node: Int32) throws(IDAError) {
-        try checkStatus(idax_graph_remove_node(handle, node), "graph.removeNode")
+    @discardableResult private func operation(
+        _ op: Int32, _ a: Int32 = 0, _ b: Int32 = 0, _ c: Int32 = 0, _ d: Int32 = 0
+    ) throws(IDAError) -> Int32 {
+        let handle = try checkedHandle()
+        var result: Int32 = 0
+        try bridgeCall("graph.operation") { idax_swift_graph_operation(handle, op, a, b, c, d, &result, $0) }
+        return result
     }
-
-    /// Total number of nodes (including hidden/collapsed).
-    public func totalNodeCount() throws(IDAError) -> Int32 {
-        let ret = idax_graph_total_node_count(handle)
-        if ret < 0 {
-            throw consumeLastError(fallback: "graph.totalNodeCount")
-        }
-        return ret
-    }
-
-    /// Number of currently visible nodes.
-    public func visibleNodeCount() throws(IDAError) -> Int32 {
-        let ret = idax_graph_visible_node_count(handle)
-        if ret < 0 {
-            throw consumeLastError(fallback: "graph.visibleNodeCount")
-        }
-        return ret
-    }
-
-    /// Whether a node ID exists in the graph.
-    public func nodeExists(_ node: Int32) -> Bool {
-        idax_graph_node_exists(handle, node) != 0
-    }
-
-    // MARK: - Edges
-
-    /// Add a directed edge from `source` to `target`.
-    public func addEdge(source: Int32, target: Int32) throws(IDAError) {
-        try checkStatus(idax_graph_add_edge(handle, source, target), "graph.addEdge")
-    }
-
-    /// Add a directed edge with visual properties.
-    public func addEdge(source: Int32, target: Int32, info: EdgeInfo) throws(IDAError) {
-        var raw = IdaxGraphEdgeInfo(
-            color: info.color,
-            width: info.width,
-            source_port: info.sourcePort,
-            target_port: info.targetPort
-        )
-        try checkStatus(
-            idax_graph_add_edge_with_info(handle, source, target, &raw),
-            "graph.addEdgeWithInfo"
-        )
-    }
-
-    /// Remove the edge from `source` to `target`.
-    public func removeEdge(source: Int32, target: Int32) throws(IDAError) {
-        try checkStatus(idax_graph_remove_edge(handle, source, target), "graph.removeEdge")
-    }
-
-    /// Replace an edge (from, to) with (newFrom, newTo).
-    public func replaceEdge(from: Int32, to: Int32, newFrom: Int32, newTo: Int32) throws(IDAError) {
-        try checkStatus(
-            idax_graph_replace_edge(handle, from, to, newFrom, newTo),
-            "graph.replaceEdge"
-        )
-    }
-
-    /// Remove all nodes and edges.
-    public func clear() throws(IDAError) {
-        try checkStatus(idax_graph_clear(handle), "graph.clear")
-    }
-
-    // MARK: - Traversal
-
-    /// Successor node IDs of the given node.
-    public func successors(of node: Int32) throws(IDAError) -> [Int32] {
-        try nodeIdArray("graph.successors") { idax_graph_successors(handle, node, $0, $1) }
-    }
-
-    /// Predecessor node IDs of the given node.
-    public func predecessors(of node: Int32) throws(IDAError) -> [Int32] {
-        try nodeIdArray("graph.predecessors") { idax_graph_predecessors(handle, node, $0, $1) }
-    }
-
-    /// IDs of all currently visible nodes.
-    public func visibleNodes() throws(IDAError) -> [Int32] {
-        try nodeIdArray("graph.visibleNodes") { idax_graph_visible_nodes(handle, $0, $1) }
-    }
-
-    /// All edges in the graph.
-    public func edges() throws(IDAError) -> [Edge] {
-        var ptr: UnsafeMutablePointer<IdaxGraphEdge>? = nil
-        var count: Int = 0
-        try checkStatus(idax_graph_edges(handle, &ptr, &count), "graph.edges")
-        defer { idax_graph_free_edges(ptr) }
-        guard let ptr, count > 0 else { return [] }
-        let buf = UnsafeBufferPointer(start: ptr, count: count)
-        return buf.map { Edge(source: $0.source, target: $0.target) }
-    }
-
-    /// Whether a directed path exists from `source` to `target`.
-    public func pathExists(source: Int32, target: Int32) -> Bool {
-        idax_graph_path_exists(handle, source, target) != 0
-    }
-
-    // MARK: - Groups
-
-    /// Create a group containing the specified nodes. Returns the group node ID.
-    public func createGroup(nodes: [Int32]) throws(IDAError) -> Int32 {
-        var groupId: Int32 = 0
-        let ret = nodes.withUnsafeBufferPointer { buf in
-            idax_graph_create_group(handle, buf.baseAddress, buf.count, &groupId)
-        }
-        try checkStatus(ret, "graph.createGroup")
-        return groupId
-    }
-
-    /// Delete a group node.
-    public func deleteGroup(_ group: Int32) throws(IDAError) {
-        try checkStatus(idax_graph_delete_group(handle, group), "graph.deleteGroup")
-    }
-
-    /// Set whether a group is expanded or collapsed.
-    public func setGroupExpanded(_ group: Int32, expanded: Bool) throws(IDAError) {
-        try checkStatus(
-            idax_graph_set_group_expanded(handle, group, expanded ? 1 : 0),
-            "graph.setGroupExpanded"
-        )
-    }
-
-    /// Whether the given node is a group.
-    public func isGroup(_ node: Int32) -> Bool {
-        idax_graph_is_group(handle, node) != 0
-    }
-
-    /// Whether the given group is collapsed.
-    public func isCollapsed(_ group: Int32) -> Bool {
-        idax_graph_is_collapsed(handle, group) != 0
-    }
-
-    /// Member node IDs of the given group.
-    public func groupMembers(_ group: Int32) throws(IDAError) -> [Int32] {
-        try nodeIdArray("graph.groupMembers") { idax_graph_group_members(handle, group, $0, $1) }
-    }
-
-    // MARK: - Layout
-
-    /// Set the layout algorithm.
-    public func setLayout(_ layout: GraphLayout) throws(IDAError) {
-        try checkStatus(idax_graph_set_layout(handle, layout.rawValue), "graph.setLayout")
-    }
-
-    /// The currently active layout algorithm.
-    public func currentLayout() throws(IDAError) -> GraphLayout {
-        let ret = idax_graph_current_layout(handle)
-        if ret < 0 {
-            throw consumeLastError(fallback: "graph.currentLayout")
-        }
-        return GraphLayout(rawValue: ret) ?? .none
-    }
-
-    /// Recalculate the current layout.
-    public func redoLayout() throws(IDAError) {
-        try checkStatus(idax_graph_redo_layout(handle), "graph.redoLayout")
-    }
-
-    // MARK: - Viewer
-
-    /// Show the graph in an IDA graph viewer window.
-    public func show(title: String, callbacks: GraphCallbackHandler? = nil) throws(IDAError) {
-        if let callbacks {
-            let box = GraphCallbackBox(handler: callbacks)
-            let ctx = Unmanaged.passRetained(box).toOpaque()
-            var cbs = IdaxGraphCallbacks(
-                context: ctx,
-                on_refresh: refreshTrampoline,
-                on_node_text: nodeTextTrampoline,
-                on_node_color: nodeColorTrampoline,
-                on_clicked: clickedTrampoline,
-                on_double_clicked: doubleClickedTrampoline,
-                on_hint: hintTrampoline,
-                on_creating_group: creatingGroupTrampoline,
-                on_destroyed: destroyedTrampoline
-            )
-            do {
-                try checkStatus(
-                    title.withCString { idax_graph_show_graph($0, handle, &cbs) },
-                    "graph.show"
-                )
-            } catch {
-                Unmanaged<AnyObject>.fromOpaque(ctx).release()
-                throw error
+    public func addNode() throws(IDAError) -> Node { Node(index: try operation(0)) }
+    public func removeNode(_ node: Node) throws(IDAError) { try operation(1, node.value) }
+    public var totalNodeCount: Int32 { get throws(IDAError) { try operation(2) } }
+    public var visibleNodeCount: Int32 { get throws(IDAError) { try operation(3) } }
+    public func contains(_ node: Node) throws(IDAError) -> Bool { try operation(4, node.value) != 0 }
+    public func addEdge(from source: Node, to target: Node, style: EdgeStyle? = nil) throws(IDAError) {
+        if let style {
+            let handle = try checkedHandle()
+            var raw = IdaxSwiftGraphEdgeStyle(
+                color: style.color, width: style.width, source_port: style.sourcePort,
+                target_port: style.targetPort)
+            try bridgeCall("graph.addEdge") {
+                idax_swift_graph_add_styled_edge(handle, source.value, target.value, &raw, $0)
             }
         } else {
-            try checkStatus(
-                title.withCString { idax_graph_show_graph($0, handle, nil) },
-                "graph.show"
-            )
+            try operation(5, source.value, target.value)
         }
     }
-
-    // MARK: - Static viewer operations
-
-    /// Request that the named graph viewer refresh its display.
-    public static func refreshViewer(title: String) throws(IDAError) {
-        try checkStatus(
-            title.withCString { idax_graph_refresh_graph($0) },
-            "graph.refreshViewer"
-        )
+    public func removeEdge(from source: Node, to target: Node) throws(IDAError) {
+        try operation(6, source.value, target.value)
     }
-
-    /// Whether a graph viewer with the given title exists.
-    public static func hasViewer(title: String) throws(IDAError) -> Bool {
-        try withOutput("graph.hasViewer", Int32(0)) { out in
-            title.withCString { idax_graph_has_graph_viewer($0, out) }
-        } != 0
+    public func replaceEdge(_ old: Edge, with replacement: Edge) throws(IDAError) {
+        try operation(
+            7, old.source.value, old.target.value, replacement.source.value, replacement.target.value)
     }
-
-    /// Whether the named graph viewer is currently visible.
-    public static func isViewerVisible(title: String) throws(IDAError) -> Bool {
-        try withOutput("graph.isViewerVisible", Int32(0)) { out in
-            title.withCString { idax_graph_is_graph_viewer_visible($0, out) }
-        } != 0
+    public func pathExists(from source: Node, to target: Node) throws(IDAError) -> Bool {
+        try operation(8, source.value, target.value) != 0
     }
-
-    /// Bring the named graph viewer to the foreground.
-    public static func activateViewer(title: String) throws(IDAError) {
-        try checkStatus(
-            title.withCString { idax_graph_activate_graph_viewer($0) },
-            "graph.activateViewer"
-        )
+    public func deleteGroup(_ group: Node) throws(IDAError) { try operation(9, group.value) }
+    public func setGroupExpanded(_ group: Node, expanded: Bool) throws(IDAError) {
+        try operation(10, group.value, expanded ? 1 : 0)
     }
-
-    /// Close the named graph viewer window.
-    public static func closeViewer(title: String) throws(IDAError) {
-        try checkStatus(
-            title.withCString { idax_graph_close_graph_viewer($0) },
-            "graph.closeViewer"
-        )
+    public func isGroup(_ node: Node) throws(IDAError) -> Bool { try operation(11, node.value) != 0 }
+    public func isCollapsed(_ group: Node) throws(IDAError) -> Bool { try operation(12, group.value) != 0 }
+    public func setLayout(_ layout: Layout) throws(IDAError) { try operation(13, layout.native) }
+    public var layout: Layout {
+        get throws(IDAError) {
+            let value = try operation(14)
+            guard value >= 0, Int(value) < Layout.allCases.count else {
+                throw IDAError(category: .unsupported, message: "Unknown graph layout")
+            }
+            return Layout.allCases[Int(value)]
+        }
     }
-
-    // MARK: - Flow chart
-
-    /// Compute the flow chart (basic blocks) for the function at the given address.
+    public func redoLayout() throws(IDAError) { try operation(15) }
+    public func clear() throws(IDAError) { try operation(16) }
+    public func successors(of node: Node) throws(IDAError) -> [Node] { try nodes(0, node.value) }
+    public func predecessors(of node: Node) throws(IDAError) -> [Node] { try nodes(1, node.value) }
+    public var visibleNodes: [Node] { get throws(IDAError) { try nodes(2, 0) } }
+    public func members(of group: Node) throws(IDAError) -> [Node] { try nodes(3, group.value) }
+    private func nodes(_ operation: Int32, _ node: Int32) throws(IDAError) -> [Node] {
+        try Self.readNodes(try checkedHandle(), operation, node)
+    }
+    private static func readNodes(_ handle: UnsafeMutableRawPointer, _ operation: Int32, _ node: Int32)
+        throws(IDAError) -> [Node]
+    {
+        var pointer: UnsafeMutablePointer<Int32>?
+        var count = 0
+        try bridgeCall("graph.nodes") {
+            idax_swift_graph_nodes(handle, operation, node, &pointer, &count, $0)
+        }
+        defer { idax_free_bytes(UnsafeMutableRawPointer(pointer)?.assumingMemoryBound(to: UInt8.self)) }
+        return try checkedBuffer(pointer, count: count, "graph.nodes").map { Node(index: $0) }
+    }
+    public var edges: [Edge] {
+        get throws(IDAError) {
+            let handle = try checkedHandle()
+            var pointer: UnsafeMutablePointer<IdaxSwiftGraphEdge>?
+            var count = 0
+            try bridgeCall("graph.edges") { idax_swift_graph_edges(handle, &pointer, &count, $0) }
+            defer { idax_free_bytes(UnsafeMutableRawPointer(pointer)?.assumingMemoryBound(to: UInt8.self)) }
+            return try checkedBuffer(pointer, count: count, "graph.edges").map {
+                Edge(source: Node(index: $0.source), target: Node(index: $0.target))
+            }
+        }
+    }
+    public func createGroup(_ nodes: [Node]) throws(IDAError) -> Node {
+        let handle = try checkedHandle()
+        let indices = nodes.map(\.value)
+        var result: Int32 = 0
+        try bridgeCall("graph.createGroup") { error in
+            indices.withUnsafeBufferPointer {
+                idax_swift_graph_group(handle, $0.baseAddress, $0.count, &result, error)
+            }
+        }
+        return Node(index: result)
+    }
+    public func show(title: String, callbacks: any GraphCallbacks) throws(IDAError) {
+        let handle = try checkedHandle()
+        let strings = try LifecycleStrings([title])
+        let descriptor = callbackDescriptor { event, reply in
+            let node = Node(index: event.number)
+            switch event.kind {
+            case 0:
+                var graph: UnsafeMutableRawPointer?
+                try bridgeCall("graph.refreshContext") {
+                    idax_swift_graph_callback_copy(event.lease, &graph, $0)
+                }
+                let context = Graph(owning: try requireLifecycleHandle(graph, "graph.refreshContext"))
+                reply.pointee.decision = try callbacks.refresh(context) ? 1 : 0
+            case 1:
+                let text = try callbacks.text(for: node)
+                try checkedCString(text, "graph.callback.text") { idax_swift_reply_text(reply, $0) }
+            case 2: reply.pointee.unsigned_integer = UInt64(try callbacks.color(for: node))
+            case 3: reply.pointee.decision = try callbacks.clicked(node) ? 1 : 0
+            case 4: reply.pointee.decision = try callbacks.doubleClicked(node) ? 1 : 0
+            case 5:
+                let text = try callbacks.hint(for: node)
+                try checkedCString(text, "graph.callback.hint") { idax_swift_reply_text(reply, $0) }
+            case 6:
+                reply.pointee.decision =
+                    try callbacks.creatingGroup(
+                        Self.readNodes(try requireLifecycleHandle(event.lease, "graph.groupLease"), 4, 0))
+                    ? 1 : 0
+            case 7: callbacks.destroyed()
+            default: throw IDAError(category: .unsupported, message: "Unknown graph callback")
+            }
+        }
+        try bridgeCall("graph.show") { idax_swift_graph_show(handle, strings[0], descriptor, $0) }
+    }
+    private static func viewer(_ operation: Int32, _ title: String) throws(IDAError) -> Bool {
+        let strings = try LifecycleStrings([title])
+        var result: Int32 = 0
+        try bridgeCall("graph.viewer") { idax_swift_graph_viewer(operation, strings[0], &result, $0) }
+        return result != 0
+    }
+    public static func refreshViewer(title: String) throws(IDAError) { _ = try viewer(0, title) }
+    public static func hasViewer(title: String) throws(IDAError) -> Bool { try viewer(1, title) }
+    public static func isViewerVisible(title: String) throws(IDAError) -> Bool { try viewer(2, title) }
+    public static func activateViewer(title: String) throws(IDAError) { _ = try viewer(3, title) }
+    public static func closeViewer(title: String) throws(IDAError) { _ = try viewer(4, title) }
+    public enum BlockType: Int32, Sendable {
+        case normal, indirectJump, `return`, conditionalReturn, noReturn, externalNoReturn, external, error
+    }
+    public struct BasicBlock: Sendable {
+        public var start, end: Address
+        public var type: BlockType
+        public var successors, predecessors: [Int32]
+        public init(start: Address, end: Address, type: BlockType = .normal,
+                    successors: [Int32] = [], predecessors: [Int32] = []) {
+            self.start = start
+            self.end = end
+            self.type = type
+            self.successors = successors
+            self.predecessors = predecessors
+        }
+        internal init(_ value: IdaxBasicBlock) throws(IDAError) {
+            guard let type = BlockType(rawValue: value.type) else {
+                throw IDAError(category: .unsupported, message: "Unknown basic block type")
+            }
+            self.start = value.start
+            self.end = value.end
+            self.type = type
+            self.successors = Array(
+                try checkedBuffer(value.successors, count: value.successor_count, "graph.successors"))
+            self.predecessors = Array(
+                try checkedBuffer(value.predecessors, count: value.predecessor_count, "graph.predecessors"))
+        }
+    }
+    public struct SwitchTable: Sendable {
+        public var address: Address
+        public var entryCount, entrySize: Int
+        public init(address: Address = .max, entryCount: Int = 0, entrySize: Int = 0) {
+            self.address = address
+            self.entryCount = entryCount
+            self.entrySize = entrySize
+        }
+    }
+    public static func switchTable(at address: Address) throws(IDAError) -> SwitchTable {
+        var table: UInt64 = 0
+        var count = 0
+        var size = 0
+        try bridgeCall("graph.switchTable") { idax_swift_graph_switch(address, &table, &count, &size, $0) }
+        return SwitchTable(address: table, entryCount: count, entrySize: size)
+    }
     public static func flowchart(at functionAddress: Address) throws(IDAError) -> [BasicBlock] {
-        var ptr: UnsafeMutablePointer<IdaxBasicBlock>? = nil
-        var count: Int = 0
-        try checkStatus(idax_graph_flowchart(functionAddress, &ptr, &count), "graph.flowchart")
-        defer { idax_graph_flowchart_free(ptr, count) }
-        guard let ptr, count > 0 else { return [] }
-        return convertBasicBlocks(ptr, count: count)
-    }
-
-    /// Compute the flow chart for a set of address ranges.
-    public static func flowchart(
-        forRanges ranges: [(start: Address, end: Address)]
-    ) throws(IDAError) -> [BasicBlock] {
-        let cRanges = ranges.map { IdaxAddressRange(start: $0.start, end: $0.end) }
-        var ptr: UnsafeMutablePointer<IdaxBasicBlock>? = nil
-        var count: Int = 0
-        let ret = cRanges.withUnsafeBufferPointer { buf in
-            idax_graph_flowchart_for_ranges(buf.baseAddress, buf.count, &ptr, &count)
+        try requireRuntimeThread("graph.flowchart")
+        var pointer: UnsafeMutablePointer<IdaxBasicBlock>?
+        var count = 0
+        try checkStatus(idax_graph_flowchart(functionAddress, &pointer, &count), "graph.flowchart")
+        defer { idax_graph_flowchart_free(pointer, count) }
+        var result: [BasicBlock] = []
+        for value in try checkedBuffer(pointer, count: count, "graph.flowchart") {
+            result.append(try BasicBlock(value))
         }
-        try checkStatus(ret, "graph.flowchartForRanges")
-        defer { idax_graph_flowchart_free(ptr, count) }
-        guard let ptr, count > 0 else { return [] }
-        return convertBasicBlocks(ptr, count: count)
+        return result
+    }
+    public static func flowchart(for ranges: [Range<Address>]) throws(IDAError) -> [BasicBlock] {
+        try requireRuntimeThread("graph.flowchartForRanges")
+        let native = ranges.map { IdaxAddressRange(start: $0.lowerBound, end: $0.upperBound) }
+        var pointer: UnsafeMutablePointer<IdaxBasicBlock>?
+        var count = 0
+        try checkStatus(
+            native.withUnsafeBufferPointer {
+                idax_graph_flowchart_for_ranges($0.baseAddress, $0.count, &pointer, &count)
+            }, "graph.flowchartForRanges")
+        defer { idax_graph_flowchart_free(pointer, count) }
+        var result: [BasicBlock] = []
+        for value in try checkedBuffer(pointer, count: count, "graph.flowchartForRanges") {
+            result.append(try BasicBlock(value))
+        }
+        return result
     }
 }
 
-// MARK: - GraphCallbackHandler protocol
-
-/// Protocol for handling graph viewer callbacks.
-///
-/// All methods have default (no-op) implementations so conforming types
-/// need only override the callbacks they care about.
-public protocol GraphCallbackHandler: AnyObject {
-    /// Called when the graph needs to refresh. Return `true` to proceed.
-    func onRefresh() -> Bool
-    /// Return the display text for a node.
-    func onNodeText(node: Int32) -> String?
-    /// Return the background colour for a node.
-    func onNodeColor(node: Int32) -> UInt32
-    /// Called when a node is clicked. Return `true` if handled.
-    func onClicked(node: Int32) -> Bool
-    /// Called when a node is double-clicked. Return `true` if handled.
-    func onDoubleClicked(node: Int32) -> Bool
-    /// Return tooltip text for a node.
-    func onHint(node: Int32) -> String?
-    /// Called before a group is created. Return `true` to allow.
-    func onCreatingGroup(nodes: [Int32]) -> Bool
-    /// Called when the graph viewer is destroyed.
-    func onDestroyed()
+public protocol GraphCallbacks: AnyObject {
+    /// The graph is an independently retained alias of the viewer's model.
+    func refresh(_ graph: Graph) throws(IDAError) -> Bool
+    func text(for node: Graph.Node) throws(IDAError) -> String
+    func color(for node: Graph.Node) throws(IDAError) -> UInt32
+    func clicked(_ node: Graph.Node) throws(IDAError) -> Bool
+    func doubleClicked(_ node: Graph.Node) throws(IDAError) -> Bool
+    func hint(for node: Graph.Node) throws(IDAError) -> String
+    func creatingGroup(_ nodes: [Graph.Node]) throws(IDAError) -> Bool
+    func destroyed()
 }
-
-// Default implementations
-public extension GraphCallbackHandler {
-    func onRefresh() -> Bool { true }
-    func onNodeText(node: Int32) -> String? { nil }
-    func onNodeColor(node: Int32) -> UInt32 { 0xFFFFFF }
-    func onClicked(node: Int32) -> Bool { false }
-    func onDoubleClicked(node: Int32) -> Bool { false }
-    func onHint(node: Int32) -> String? { nil }
-    func onCreatingGroup(nodes: [Int32]) -> Bool { true }
-    func onDestroyed() {}
-}
-
-// MARK: - Callback box and trampolines
-
-private final class GraphCallbackBox {
-    let handler: GraphCallbackHandler
-    init(handler: GraphCallbackHandler) { self.handler = handler }
-}
-
-private func refreshTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    graph: IdaxGraphHandle?
-) -> Int32 {
-    guard let ctx else { return 0 }
-    let box = Unmanaged<GraphCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
-    return box.handler.onRefresh() ? 1 : 0
-}
-
-private func nodeTextTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    node: Int32,
-    outText: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
-) -> Int32 {
-    guard let ctx, let outText else { return 0 }
-    let box = Unmanaged<GraphCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
-    guard let text = box.handler.onNodeText(node: node) else { return 0 }
-    outText.pointee = strdup(text)
-    return 1
-}
-
-private func nodeColorTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    node: Int32
-) -> UInt32 {
-    guard let ctx else { return 0xFFFFFF }
-    let box = Unmanaged<GraphCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
-    return box.handler.onNodeColor(node: node)
-}
-
-private func clickedTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    node: Int32
-) -> Int32 {
-    guard let ctx else { return 0 }
-    let box = Unmanaged<GraphCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
-    return box.handler.onClicked(node: node) ? 1 : 0
-}
-
-private func doubleClickedTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    node: Int32
-) -> Int32 {
-    guard let ctx else { return 0 }
-    let box = Unmanaged<GraphCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
-    return box.handler.onDoubleClicked(node: node) ? 1 : 0
-}
-
-private func hintTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    node: Int32,
-    outHint: UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>?
-) -> Int32 {
-    guard let ctx, let outHint else { return 0 }
-    let box = Unmanaged<GraphCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
-    guard let hint = box.handler.onHint(node: node) else { return 0 }
-    outHint.pointee = strdup(hint)
-    return 1
-}
-
-private func creatingGroupTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    nodes: UnsafePointer<Int32>?,
-    count: Int
-) -> Int32 {
-    guard let ctx, let nodes, count > 0 else { return 1 }
-    let box = Unmanaged<GraphCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
-    let arr = Array(UnsafeBufferPointer(start: nodes, count: count))
-    return box.handler.onCreatingGroup(nodes: arr) ? 1 : 0
-}
-
-private func destroyedTrampoline(ctx: UnsafeMutableRawPointer?) {
-    guard let ctx else { return }
-    let box = Unmanaged<GraphCallbackBox>.fromOpaque(ctx).takeUnretainedValue()
-    box.handler.onDestroyed()
-    // Release the retained reference since the viewer is gone
-    Unmanaged<AnyObject>.fromOpaque(ctx).release()
-}
-
-// MARK: - Private helpers
-
-/// Read a node-ID array from a C shim call and free it.
-private func nodeIdArray(
-    _ fallback: String,
-    _ body: (UnsafeMutablePointer<UnsafeMutablePointer<Int32>?>, UnsafeMutablePointer<Int>) -> Int32
-) throws(IDAError) -> [Int32] {
-    var ptr: UnsafeMutablePointer<Int32>? = nil
-    var count: Int = 0
-    try checkStatus(body(&ptr, &count), fallback)
-    defer { idax_graph_free_node_ids(ptr) }
-    guard let ptr, count > 0 else { return [] }
-    return Array(UnsafeBufferPointer(start: ptr, count: count))
-}
-
-/// Convert a C basic-block array to Swift value types.
-private func convertBasicBlocks(
-    _ ptr: UnsafeMutablePointer<IdaxBasicBlock>,
-    count: Int
-) -> [BasicBlock] {
-    let buf = UnsafeBufferPointer(start: ptr, count: count)
-    return buf.map { raw in
-        var succs: [Int32] = []
-        if let s = raw.successors, raw.successor_count > 0 {
-            succs = Array(UnsafeBufferPointer(start: s, count: raw.successor_count))
-        }
-        var preds: [Int32] = []
-        if let p = raw.predecessors, raw.predecessor_count > 0 {
-            preds = Array(UnsafeBufferPointer(start: p, count: raw.predecessor_count))
-        }
-        return BasicBlock(
-            start: raw.start,
-            end: raw.end,
-            type: raw.type,
-            successors: succs,
-            predecessors: preds
-        )
-    }
+extension GraphCallbacks {
+    public func refresh(_ graph: Graph) throws(IDAError) -> Bool { false }
+    public func text(for node: Graph.Node) throws(IDAError) -> String { "" }
+    public func color(for node: Graph.Node) throws(IDAError) -> UInt32 { .max }
+    public func clicked(_ node: Graph.Node) throws(IDAError) -> Bool { false }
+    public func doubleClicked(_ node: Graph.Node) throws(IDAError) -> Bool { false }
+    public func hint(for node: Graph.Node) throws(IDAError) -> String { "" }
+    public func creatingGroup(_ nodes: [Graph.Node]) throws(IDAError) -> Bool { true }
+    public func destroyed() {}
 }

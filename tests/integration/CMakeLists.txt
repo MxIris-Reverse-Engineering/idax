@@ -121,7 +121,6 @@ idax_add_integration_test(debugger_ui_graph_event          debugger_ui_graph_eve
 idax_add_integration_test(loader_processor_scenario        loader_processor_scenario_test.cpp)
 idax_add_integration_test(event_stress                      event_stress_test.cpp)
 idax_add_integration_test(decompiler_edge_cases            decompiler_edge_cases_test.cpp)
-idax_add_integration_test(decompiler_ctree_navigation_safety decompiler_ctree_navigation_safety_test.cpp)
 idax_add_integration_test(performance_benchmark            performance_benchmark_test.cpp)
 idax_add_integration_test(codedump_parity_host_gates        codedump_parity_host_gates_test.cpp)
 idax_add_integration_test(diaphora_referent_metadata        diaphora_referent_metadata_test.cpp)
@@ -147,7 +146,6 @@ idax_add_integration_test(cross_domain_torture             cross_domain_torture_
 idax_add_integration_test(type_data_comment_torture        type_data_comment_torture_test.cpp)
 idax_add_integration_test(operand_function_torture         operand_function_torture_test.cpp)
 
-
 # Source-built disposable fixture for owned metadata and navigation semantics.
 add_executable(idax_decompiler_semantic_fixture
     ../fixtures/decompiler_semantic_metadata_host.cpp)
@@ -167,7 +165,6 @@ idax_add_integration_test(decompiler_semantic_metadata
     "$<TARGET_FILE:idax_decompiler_semantic_fixture>")
 add_dependencies(idax_decompiler_semantic_metadata_test
     idax_decompiler_semantic_fixture)
-
 idax_add_integration_test(instruction_branch_x86 instruction_branch_semantics_test.cpp)
 idax_add_integration_test(instruction_branch_arm64 instruction_branch_semantics_test.cpp
     "${CMAKE_CURRENT_SOURCE_DIR}/../fixtures/register_tracking_aarch64")

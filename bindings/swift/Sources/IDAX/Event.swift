@@ -1,398 +1,198 @@
 internal import CIDAX
 
-/// RAII event subscription token. Unsubscribes on deinit.
-public struct EventSubscription: ~Copyable, @unchecked Sendable {
-    private let token: UInt64
-    private let context: UnsafeMutableRawPointer
-
-    init(token: UInt64, context: UnsafeMutableRawPointer) {
-        self.token = token
-        self.context = context
+/// Owns a native callback registration. Closing is idempotent; a failed close
+/// preserves the registration so it can be retried. Native in-flight callbacks
+/// retain their captures until the final invocation has returned.
+public final class Registration {
+    private var handle: UnsafeMutableRawPointer?
+    internal init(owning handle: UnsafeMutableRawPointer) { self.handle = handle }
+    deinit { if let handle { idax_swift_registration_release(handle) } }
+    public func close() throws(IDAError) {
+        guard let handle else { return }
+        try bridgeCall("registration.close") { idax_swift_registration_close(handle, $0) }
+        idax_swift_registration_release(handle)
+        self.handle = nil
     }
-
-    deinit {
-        idax_event_unsubscribe(token)
-        Unmanaged<AnyObject>.fromOpaque(context).release()
+    internal func activateShortcut() throws(IDAError) {
+        guard let handle else { throw IDAError(category: .conflict, message: "Shortcut is closed") }
+        try bridgeCall("shortcut.activate") { idax_swift_hotkey_activate(handle, $0) }
     }
-
-    public consuming func cancel() {
-        idax_event_unsubscribe(token)
-        Unmanaged<AnyObject>.fromOpaque(context).release()
-        discard self
+    internal func isActive() throws(IDAError) -> Bool {
+        guard let handle else { return false }
+        var output: Int32 = 0
+        try bridgeCall("registration.isActive") { idax_swift_registration_active(handle, &output, $0) }
+        return output != 0
     }
 }
 
-/// IDB event subscriptions.
-///
-/// Mirrors C++ `ida::event`. Callbacks are stored in a box to bridge
-/// Swift closures through the C function-pointer ABI.
+internal final class CallbackLease {
+    let handle: UnsafeMutableRawPointer
+    init(_ handle: UnsafeMutableRawPointer) {
+        self.handle = handle
+        idax_swift_lease_retain(handle)
+    }
+    deinit { idax_swift_lease_release(handle) }
+    func check(_ operation: String) throws(IDAError) {
+        try bridgeCall(operation) { idax_swift_lease_check(handle, $0) }
+    }
+}
+
+internal final class LifecycleStrings {
+    private var storage: [UnsafeMutablePointer<CChar>] = []
+    init(_ values: [String]) throws(IDAError) {
+        for text in values {
+            guard !text.utf8.contains(0) else {
+                throw IDAError(category: .validation, message: "String contains an embedded NUL")
+            }
+            let bytes = text.utf8.map { CChar(bitPattern: $0) } + [0]
+            let pointer = UnsafeMutablePointer<CChar>.allocate(capacity: bytes.count)
+            bytes.withUnsafeBufferPointer { pointer.initialize(from: $0.baseAddress!, count: $0.count) }
+            storage.append(pointer)
+        }
+    }
+    deinit { for pointer in storage { pointer.deallocate() } }
+    subscript(_ index: Int) -> UnsafePointer<CChar> { UnsafePointer(storage[index]) }
+    var pointers: [UnsafePointer<CChar>?] { storage.map { UnsafePointer($0) } }
+}
+
+internal final class LifecycleCallback {
+    let body: (IdaxSwiftNotification, UnsafeMutablePointer<IdaxSwiftReply>) throws -> Void
+    init(_ body: @escaping (IdaxSwiftNotification, UnsafeMutablePointer<IdaxSwiftReply>) throws -> Void) {
+        self.body = body
+    }
+}
+internal func callbackDescriptor(
+    _ body: @escaping (IdaxSwiftNotification, UnsafeMutablePointer<IdaxSwiftReply>) throws -> Void
+) -> IdaxSwiftCallbacks {
+    IdaxSwiftCallbacks(
+        context: Unmanaged.passRetained(LifecycleCallback(body)).toOpaque(), invoke: lifecycleInvoke,
+        destroy: lifecycleDestroy)
+}
+private func lifecycleDestroy(_ context: UnsafeMutableRawPointer?) {
+    if let context { Unmanaged<LifecycleCallback>.fromOpaque(context).release() }
+}
+internal func writeCallbackError(_ error: IDAError, to output: UnsafeMutablePointer<IdaxSwiftError>?) {
+    let category: Int32
+    switch error.category {
+    case .validation: category = 1
+    case .notFound: category = 2
+    case .conflict: category = 3
+    case .unsupported: category = 4
+    case .sdkFailure: category = 5
+    case .internalError: category = 6
+    }
+    error.message.withCString { message in
+        error.context.withCString { context in
+            idax_swift_error_set(output, category, error.code, message, context)
+        }
+    }
+}
+private func lifecycleInvoke(
+    _ context: UnsafeMutableRawPointer?, _ event: UnsafePointer<IdaxSwiftNotification>?,
+    _ reply: UnsafeMutablePointer<IdaxSwiftReply>?, _ errorOutput: UnsafeMutablePointer<IdaxSwiftError>?
+) -> Int32 {
+    guard let context, let event, let reply else { return -1 }
+    let owner = Unmanaged<LifecycleCallback>.fromOpaque(context).takeUnretainedValue()
+    do {
+        try owner.body(event.pointee, reply)
+        return 0
+    } catch {
+        writeCallbackError(
+            (error as? IDAError) ?? IDAError(category: .internalError, message: String(describing: error)),
+            to: errorOutput)
+        return -1
+    }
+}
+
+internal func requireLifecycleHandle(_ handle: UnsafeMutableRawPointer?, _ operation: String) throws(IDAError)
+    -> UnsafeMutableRawPointer
+{
+    guard let handle else {
+        throw IDAError(
+            category: .internalError, message: "Native operation returned no owned handle", context: operation
+        )
+    }
+    return handle
+}
+
+/// Database changes represented as copied, independent values.
 public enum Event {
-
-    public static func onRenamed(
-        _ handler: @escaping @IDAActor (Address, String, String) -> Void
-    ) throws(IDAError) -> EventSubscription {
-        let box = RenamedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_event_on_renamed(renamedTrampoline, ctx, &token),
-                "event.onRenamed"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
+    public enum Kind: CaseIterable, Sendable {
+        case segmentAdded, segmentDeleted, functionAdded, functionDeleted, renamed, bytePatched,
+            commentChanged
+        case segmentMoved, functionUpdated, itemTypeChanged, operandTypeChanged, codeCreated, dataCreated,
+            itemsDestroyed, extraCommentChanged, localTypesChanged
+        internal var native: Int32 { Int32(Self.allCases.firstIndex(of: self)!) }
+        internal init(native: Int32) throws(IDAError) {
+            guard native >= 0, Int(native) < Self.allCases.count else {
+                throw IDAError(category: .unsupported, message: "Unknown database event kind")
+            }
+            self = Self.allCases[Int(native)]
         }
-        return EventSubscription(token: token, context: ctx)
     }
-
-    public static func onFunctionAdded(
-        _ handler: @escaping @IDAActor (Address) -> Void
-    ) throws(IDAError) -> EventSubscription {
-        let box = AddressBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_event_on_function_added(functionAddedTrampoline, ctx, &token),
-                "event.onFunctionAdded"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
+    public enum ExtraCommentPlacement: Sendable { case unknown, anterior, posterior }
+    public enum LocalTypeChange: CaseIterable, Sendable {
+        case none, added, deleted, edited, aliased, compilerChanged, libraryLoaded, libraryUnloaded,
+            ordinalsCompacted
+    }
+    public struct Change: Sendable {
+        public let kind: Kind
+        public let address: Address
+        public let secondaryAddress: Address
+        public let size: UInt64
+        public let newName: String
+        public let oldName: String
+        public let oldValue: UInt32
+        public let repeatable: Bool
+        public let operandIndex: Int32
+        public let lineIndex: Int32
+        public let text: String
+        public let willDisableRange: Bool
+        public let addressMappingChanged: Bool
+        public let extraCommentPlacement: ExtraCommentPlacement
+        public let localTypeChange: LocalTypeChange
+        public let typeOrdinal: UInt32
+        public let typeName: String
+        internal init(_ raw: IdaxSwiftNotification) throws(IDAError) {
+            kind = try Kind(native: raw.kind)
+            address = raw.address
+            secondaryAddress = raw.secondary_address
+            size = raw.size
+            newName = try borrowCString(raw.text, "event.newName")
+            oldName = try borrowCString(raw.secondary_text, "event.oldName")
+            oldValue = raw.value
+            repeatable = raw.flag != 0
+            operandIndex = raw.number
+            lineIndex = raw.secondary_number
+            text = kind == .extraCommentChanged ? newName : ""
+            willDisableRange = raw.secondary_flag & 1 != 0
+            addressMappingChanged = raw.secondary_flag & 2 != 0
+            extraCommentPlacement = raw.number == 1 ? .anterior : raw.number == 2 ? .posterior : .unknown
+            guard raw.previous_identity < UInt64(LocalTypeChange.allCases.count), raw.identity <= UInt32.max
+            else { throw IDAError(category: .unsupported, message: "Unknown local type event metadata") }
+            localTypeChange = LocalTypeChange.allCases[Int(raw.previous_identity)]
+            typeOrdinal = UInt32(raw.identity)
+            typeName = try borrowCString(raw.name, "event.typeName")
         }
-        return EventSubscription(token: token, context: ctx)
     }
-
-    public static func onFunctionDeleted(
-        _ handler: @escaping @IDAActor (Address) -> Void
-    ) throws(IDAError) -> EventSubscription {
-        let box = AddressBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_event_on_function_deleted(functionDeletedTrampoline, ctx, &token),
-                "event.onFunctionDeleted"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return EventSubscription(token: token, context: ctx)
-    }
-
-    public static func onBytePatched(
-        _ handler: @escaping @IDAActor (Address, UInt32) -> Void
-    ) throws(IDAError) -> EventSubscription {
-        let box = BytePatchedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_event_on_byte_patched(bytePatchedTrampoline, ctx, &token),
-                "event.onBytePatched"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return EventSubscription(token: token, context: ctx)
-    }
-
-    public static func unsubscribe(token: UInt64) {
-        idax_event_unsubscribe(token)
-    }
-
+    /// Subscribe to all changes or one semantic kind. Filters and handlers run
+    /// synchronously on IDA's owner thread; returned values may be retained.
     public static func subscribe(
-        kind: Int32,
-        handler: @escaping @IDAActor (Int32, UInt64, UInt64) -> Void
-    ) throws(IDAError) -> EventSubscription {
-        let box = GenericEventBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_event_subscribe(kind, genericEventTrampoline, ctx, &token),
-                "event.subscribe"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
+        to kind: Kind? = nil, filter: ((Change) throws(IDAError) -> Bool)? = nil,
+        handler: @escaping (Change) throws(IDAError) -> Void
+    ) throws(IDAError) -> Registration {
+        let descriptor = callbackDescriptor { raw, reply in
+            let change = try Change(raw)
+            if raw.phase == 1 {
+                reply.pointee.decision = try (filter?(change) ?? true) ? 1 : 0
+            } else {
+                try handler(change)
+            }
         }
-        return EventSubscription(token: token, context: ctx)
-    }
-
-    public static func onSegmentAdded(
-        _ handler: @escaping @IDAActor (Address) -> Void
-    ) throws(IDAError) -> EventSubscription {
-        let box = AddressBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_event_on_segment_added(segmentAddedTrampoline, ctx, &token),
-                "event.onSegmentAdded"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
+        var handle: UnsafeMutableRawPointer?
+        try bridgeCall("event.subscribe") {
+            idax_swift_event_subscribe(kind?.native ?? -1, descriptor, &handle, $0)
         }
-        return EventSubscription(token: token, context: ctx)
-    }
-
-    public static func onSegmentDeleted(
-        _ handler: @escaping @IDAActor (Address, Address) -> Void
-    ) throws(IDAError) -> EventSubscription {
-        let box = SegmentDeletedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_event_on_segment_deleted(segmentDeletedTrampoline, ctx, &token),
-                "event.onSegmentDeleted"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return EventSubscription(token: token, context: ctx)
-    }
-
-    public static func onCommentChanged(
-        _ handler: @escaping @IDAActor (Address, Bool) -> Void
-    ) throws(IDAError) -> EventSubscription {
-        let box = CommentChangedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_event_on_comment_changed(commentChangedTrampoline, ctx, &token),
-                "event.onCommentChanged"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return EventSubscription(token: token, context: ctx)
-    }
-
-    public static func onEvent(
-        _ handler: @escaping @IDAActor (IDAEvent) -> Void
-    ) throws(IDAError) -> EventSubscription {
-        let box = EventExBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_event_on_event(eventExTrampoline, ctx, &token),
-                "event.onEvent"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return EventSubscription(token: token, context: ctx)
-    }
-
-    public static func onEventFiltered(
-        filter: @escaping @IDAActor (IDAEvent) -> Bool,
-        handler: @escaping @IDAActor (IDAEvent) -> Void
-    ) throws(IDAError) -> EventSubscription {
-        let box = EventFilteredBox(filter: filter, handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_event_on_event_filtered(eventFilterTrampoline, eventFilteredHandlerTrampoline, ctx, &token),
-                "event.onEventFiltered"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return EventSubscription(token: token, context: ctx)
-    }
-}
-
-// MARK: - Callback boxes and trampolines
-
-private nonisolated final class RenamedBox {
-    let handler: @IDAActor (Address, String, String) -> Void
-    init(handler: @escaping @IDAActor (Address, String, String) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class AddressBox {
-    let handler: @IDAActor (Address) -> Void
-    init(handler: @escaping @IDAActor (Address) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class BytePatchedBox {
-    let handler: @IDAActor (Address, UInt32) -> Void
-    init(handler: @escaping @IDAActor (Address, UInt32) -> Void) { self.handler = handler }
-}
-
-private nonisolated func renamedTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    address: UInt64,
-    newName: UnsafePointer<CChar>?,
-    oldName: UnsafePointer<CChar>?
-) {
-    nonisolated(unsafe) let ctx = ctx
-    nonisolated(unsafe) let newName = newName
-    nonisolated(unsafe) let oldName = oldName
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<RenamedBox>.fromOpaque(ctx).takeUnretainedValue()
-        let nn = newName.map { String(cString: $0) } ?? ""
-        let on = oldName.map { String(cString: $0) } ?? ""
-        box.handler(address, nn, on)
-    }
-}
-
-private nonisolated func functionAddedTrampoline(ctx: UnsafeMutableRawPointer?, entry: UInt64) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<AddressBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(entry)
-    }
-}
-
-private nonisolated func functionDeletedTrampoline(ctx: UnsafeMutableRawPointer?, entry: UInt64) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<AddressBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(entry)
-    }
-}
-
-private nonisolated func bytePatchedTrampoline(ctx: UnsafeMutableRawPointer?, address: UInt64, oldValue: UInt32) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<BytePatchedBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(address, oldValue)
-    }
-}
-
-// MARK: - New callback boxes and trampolines
-
-private nonisolated final class GenericEventBox {
-    let handler: @IDAActor (Int32, UInt64, UInt64) -> Void
-    init(handler: @escaping @IDAActor (Int32, UInt64, UInt64) -> Void) { self.handler = handler }
-}
-
-private nonisolated func genericEventTrampoline(ctx: UnsafeMutableRawPointer?, kind: Int32, addr: UInt64, secondary: UInt64) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<GenericEventBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(kind, addr, secondary)
-    }
-}
-
-private nonisolated func segmentAddedTrampoline(ctx: UnsafeMutableRawPointer?, start: UInt64) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<AddressBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(start)
-    }
-}
-
-private nonisolated final class SegmentDeletedBox {
-    let handler: @IDAActor (Address, Address) -> Void
-    init(handler: @escaping @IDAActor (Address, Address) -> Void) { self.handler = handler }
-}
-
-private nonisolated func segmentDeletedTrampoline(ctx: UnsafeMutableRawPointer?, start: UInt64, end: UInt64) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<SegmentDeletedBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(start, end)
-    }
-}
-
-private nonisolated final class CommentChangedBox {
-    let handler: @IDAActor (Address, Bool) -> Void
-    init(handler: @escaping @IDAActor (Address, Bool) -> Void) { self.handler = handler }
-}
-
-private nonisolated func commentChangedTrampoline(ctx: UnsafeMutableRawPointer?, address: UInt64, repeatable: Int32) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<CommentChangedBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(address, repeatable != 0)
-    }
-}
-
-/// Swift representation of a raw IDB event.
-public struct IDAEvent: Sendable {
-    public let kind: Int32
-    public let address: Address
-    public let secondaryAddress: Address
-    public let newName: String
-    public let oldName: String
-    public let oldValue: UInt32
-    public let repeatable: Bool
-}
-
-private nonisolated func makeIDAEvent(_ raw: UnsafePointer<IdaxEvent>) -> IDAEvent {
-    IDAEvent(
-        kind: raw.pointee.kind,
-        address: raw.pointee.address,
-        secondaryAddress: raw.pointee.secondary_address,
-        newName: raw.pointee.new_name.map { String(cString: $0) } ?? "",
-        oldName: raw.pointee.old_name.map { String(cString: $0) } ?? "",
-        oldValue: raw.pointee.old_value,
-        repeatable: raw.pointee.repeatable != 0
-    )
-}
-
-private nonisolated final class EventExBox {
-    let handler: @IDAActor (IDAEvent) -> Void
-    init(handler: @escaping @IDAActor (IDAEvent) -> Void) { self.handler = handler }
-}
-
-private nonisolated func eventExTrampoline(ctx: UnsafeMutableRawPointer?, event: UnsafePointer<IdaxEvent>?) {
-    nonisolated(unsafe) let ctx = ctx
-    nonisolated(unsafe) let event = event
-    onIDAThread {
-        guard let ctx, let event else { return }
-        let box = Unmanaged<EventExBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(makeIDAEvent(event))
-    }
-}
-
-private nonisolated final class EventFilteredBox {
-    let filter: @IDAActor (IDAEvent) -> Bool
-    let handler: @IDAActor (IDAEvent) -> Void
-    init(filter: @escaping @IDAActor (IDAEvent) -> Bool, handler: @escaping @IDAActor (IDAEvent) -> Void) {
-        self.filter = filter
-        self.handler = handler
-    }
-}
-
-private nonisolated func eventFilterTrampoline(ctx: UnsafeMutableRawPointer?, event: UnsafePointer<IdaxEvent>?) -> Int32 {
-    nonisolated(unsafe) let ctx = ctx
-    nonisolated(unsafe) let event = event
-    return onIDAThread {
-        guard let ctx, let event else { return 0 }
-        let box = Unmanaged<EventFilteredBox>.fromOpaque(ctx).takeUnretainedValue()
-        return box.filter(makeIDAEvent(event)) ? 1 : 0
-    }
-}
-
-private nonisolated func eventFilteredHandlerTrampoline(ctx: UnsafeMutableRawPointer?, event: UnsafePointer<IdaxEvent>?) {
-    nonisolated(unsafe) let ctx = ctx
-    nonisolated(unsafe) let event = event
-    onIDAThread {
-        guard let ctx, let event else { return }
-        let box = Unmanaged<EventFilteredBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(makeIDAEvent(event))
+        return Registration(owning: try requireLifecycleHandle(handle, "event.subscribe"))
     }
 }

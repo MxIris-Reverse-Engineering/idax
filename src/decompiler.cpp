@@ -508,6 +508,53 @@ Result<mcode_t> to_sdk_opcode(MicrocodeOpcode opcode) {
         case MicrocodeOpcode::Goto:
         case MicrocodeOpcode::IndirectJump:
         case MicrocodeOpcode::Return:
+        case MicrocodeOpcode::Negate:
+        case MicrocodeOpcode::LogicalNot:
+        case MicrocodeOpcode::BitwiseNot:
+        case MicrocodeOpcode::LowPart:
+        case MicrocodeOpcode::HighPart:
+        case MicrocodeOpcode::UnsignedDivide:
+        case MicrocodeOpcode::SignedDivide:
+        case MicrocodeOpcode::UnsignedRemainder:
+        case MicrocodeOpcode::SignedRemainder:
+        case MicrocodeOpcode::CarryFromAdd:
+        case MicrocodeOpcode::OverflowFromAdd:
+        case MicrocodeOpcode::CarryFromShiftLeft:
+        case MicrocodeOpcode::CarryFromShiftRight:
+        case MicrocodeOpcode::SetNegative:
+        case MicrocodeOpcode::SetOverflow:
+        case MicrocodeOpcode::SetParity:
+        case MicrocodeOpcode::SetNotEqual:
+        case MicrocodeOpcode::SetEqual:
+        case MicrocodeOpcode::SetGreaterThanOrEqualUnsigned:
+        case MicrocodeOpcode::SetLessThanUnsigned:
+        case MicrocodeOpcode::SetGreaterThanUnsigned:
+        case MicrocodeOpcode::SetLessThanOrEqualUnsigned:
+        case MicrocodeOpcode::SetGreaterThanSigned:
+        case MicrocodeOpcode::SetGreaterThanOrEqualSigned:
+        case MicrocodeOpcode::SetLessThanSigned:
+        case MicrocodeOpcode::SetLessThanOrEqualSigned:
+        case MicrocodeOpcode::JumpIfNonzero:
+        case MicrocodeOpcode::JumpIfNotEqual:
+        case MicrocodeOpcode::JumpIfEqual:
+        case MicrocodeOpcode::JumpIfGreaterThanOrEqualUnsigned:
+        case MicrocodeOpcode::JumpIfLessThanUnsigned:
+        case MicrocodeOpcode::JumpIfGreaterThanUnsigned:
+        case MicrocodeOpcode::JumpIfLessThanOrEqualUnsigned:
+        case MicrocodeOpcode::JumpIfGreaterThanSigned:
+        case MicrocodeOpcode::JumpIfGreaterThanOrEqualSigned:
+        case MicrocodeOpcode::JumpIfLessThanSigned:
+        case MicrocodeOpcode::JumpIfLessThanOrEqualSigned:
+        case MicrocodeOpcode::JumpTable:
+        case MicrocodeOpcode::Push:
+        case MicrocodeOpcode::Pop:
+        case MicrocodeOpcode::Undefined:
+        case MicrocodeOpcode::External:
+        case MicrocodeOpcode::FloatToSignedInteger:
+        case MicrocodeOpcode::FloatToUnsignedInteger:
+        case MicrocodeOpcode::UnsignedIntegerToFloat:
+        case MicrocodeOpcode::FloatNegate:
+        case MicrocodeOpcode::LoadConstant:
         case MicrocodeOpcode::Other:
             return std::unexpected(Error::unsupported(
                 "Microcode opcode is read-only in the generic emitter"));
@@ -545,6 +592,53 @@ Result<MicrocodeOpcode> parse_sdk_opcode(mcode_t op) {
         case m_goto: return MicrocodeOpcode::Goto;
         case m_ijmp: return MicrocodeOpcode::IndirectJump;
         case m_ret: return MicrocodeOpcode::Return;
+        case m_neg: return MicrocodeOpcode::Negate;
+        case m_lnot: return MicrocodeOpcode::LogicalNot;
+        case m_bnot: return MicrocodeOpcode::BitwiseNot;
+        case m_low: return MicrocodeOpcode::LowPart;
+        case m_high: return MicrocodeOpcode::HighPart;
+        case m_udiv: return MicrocodeOpcode::UnsignedDivide;
+        case m_sdiv: return MicrocodeOpcode::SignedDivide;
+        case m_umod: return MicrocodeOpcode::UnsignedRemainder;
+        case m_smod: return MicrocodeOpcode::SignedRemainder;
+        case m_cfadd: return MicrocodeOpcode::CarryFromAdd;
+        case m_ofadd: return MicrocodeOpcode::OverflowFromAdd;
+        case m_cfshl: return MicrocodeOpcode::CarryFromShiftLeft;
+        case m_cfshr: return MicrocodeOpcode::CarryFromShiftRight;
+        case m_sets: return MicrocodeOpcode::SetNegative;
+        case m_seto: return MicrocodeOpcode::SetOverflow;
+        case m_setp: return MicrocodeOpcode::SetParity;
+        case m_setnz: return MicrocodeOpcode::SetNotEqual;
+        case m_setz: return MicrocodeOpcode::SetEqual;
+        case m_setae: return MicrocodeOpcode::SetGreaterThanOrEqualUnsigned;
+        case m_setb: return MicrocodeOpcode::SetLessThanUnsigned;
+        case m_seta: return MicrocodeOpcode::SetGreaterThanUnsigned;
+        case m_setbe: return MicrocodeOpcode::SetLessThanOrEqualUnsigned;
+        case m_setg: return MicrocodeOpcode::SetGreaterThanSigned;
+        case m_setge: return MicrocodeOpcode::SetGreaterThanOrEqualSigned;
+        case m_setl: return MicrocodeOpcode::SetLessThanSigned;
+        case m_setle: return MicrocodeOpcode::SetLessThanOrEqualSigned;
+        case m_jcnd: return MicrocodeOpcode::JumpIfNonzero;
+        case m_jnz: return MicrocodeOpcode::JumpIfNotEqual;
+        case m_jz: return MicrocodeOpcode::JumpIfEqual;
+        case m_jae: return MicrocodeOpcode::JumpIfGreaterThanOrEqualUnsigned;
+        case m_jb: return MicrocodeOpcode::JumpIfLessThanUnsigned;
+        case m_ja: return MicrocodeOpcode::JumpIfGreaterThanUnsigned;
+        case m_jbe: return MicrocodeOpcode::JumpIfLessThanOrEqualUnsigned;
+        case m_jg: return MicrocodeOpcode::JumpIfGreaterThanSigned;
+        case m_jge: return MicrocodeOpcode::JumpIfGreaterThanOrEqualSigned;
+        case m_jl: return MicrocodeOpcode::JumpIfLessThanSigned;
+        case m_jle: return MicrocodeOpcode::JumpIfLessThanOrEqualSigned;
+        case m_jtbl: return MicrocodeOpcode::JumpTable;
+        case m_push: return MicrocodeOpcode::Push;
+        case m_pop: return MicrocodeOpcode::Pop;
+        case m_und: return MicrocodeOpcode::Undefined;
+        case m_ext: return MicrocodeOpcode::External;
+        case m_f2i: return MicrocodeOpcode::FloatToSignedInteger;
+        case m_f2u: return MicrocodeOpcode::FloatToUnsignedInteger;
+        case m_u2f: return MicrocodeOpcode::UnsignedIntegerToFloat;
+        case m_fneg: return MicrocodeOpcode::FloatNegate;
+        case m_ldc: return MicrocodeOpcode::LoadConstant;
         default: return MicrocodeOpcode::Other;
     }
 }
@@ -1078,6 +1172,7 @@ Result<mop_t> build_typed_instruction_operand(const MicrocodeOperand& operand,
         case MicrocodeOperandKind::CallArguments:
         case MicrocodeOperandKind::StringConstant:
         case MicrocodeOperandKind::FloatingPointConstant:
+        case MicrocodeOperandKind::SwitchCases:
         case MicrocodeOperandKind::Other:
             return std::unexpected(Error::unsupported(
                 "Microcode operand kind is read-only in the generic emitter",
@@ -3908,28 +4003,16 @@ static LocalVariable make_local_variable(const lvar_t& v, std::size_t index) {
     lv.has_nice_name = v.has_nice_name();
     lv.comment       = ida::detail::to_string(v.cmt);
 
-    if (v.is_stk_var()) {
+    if (v.is_stk_var())
         lv.storage = VariableStorage::Stack;
-    } else if (v.is_reg_var()) {
+    else if (v.is_reg_var())
         lv.storage = VariableStorage::Register;
-        // `get_reg1()` returns the microcode register number (mreg_t). On ARM64
-        // the mreg of `x<n>` is `8 + 8*n` (x0=8, x1=16, ...), which lets
-        // consumers map argument lvars back to the ABI registers x0-x7.
-        lv.register_number = v.get_reg1();
-    } else {
+    else
         lv.storage = VariableStorage::Unknown;
-    }
-
-    // `get_stkoff()` returns the stack-frame vd-offset for stack variables and
-    // a negative value (-1) for everything else.
     lv.stack_offset = static_cast<std::int64_t>(v.get_stkoff());
-
-    // Register pairs and scattered storage cannot be expressed as one mreg, so
-    // carry the structured location alongside `register_number`.
     auto location = copy_microcode_location(v.location);
     if (location.kind != MicrocodeValueLocationKind::Unspecified)
         lv.location = std::move(location);
-
     if (v.is_reg1() && v.width > 0) {
         const int processor_register = mreg2reg(v.get_reg1(), v.width);
         qstring register_name;
@@ -3947,17 +4030,7 @@ static LocalVariable make_local_variable(const lvar_t& v, std::size_t index) {
 
 ItemType ExpressionView::type() const noexcept {
     if (!raw_) return ItemType::ExprEmpty;
-    // Defensive last line: `op` is the first field of every citem_t. If `raw_`
-    // is somehow a stale/invalid handle, the value read here will be outside the
-    // valid ctype_t range — surface that as ExprEmpty instead of letting the
-    // garbage opcode propagate downstream. (The structural cause of bad child
-    // handles is fixed in left()/right()/third()/operand_count() below, which
-    // now gate on op_uses_x/y/z; this check only guards against a genuinely
-    // dangling handle handed in from outside.)
-    const int op_value = static_cast<int>(static_cast<cexpr_t*>(raw_)->op);
-    if (op_value < cot_empty || op_value > cot_last)
-        return ItemType::ExprEmpty;
-    return from_ctype(static_cast<ctype_t>(op_value));
+    return from_ctype(static_cast<cexpr_t*>(raw_)->op);
 }
 
 Address ExpressionView::address() const noexcept {
@@ -4128,16 +4201,9 @@ bool ExpressionView::is_assignment_lhs() const noexcept {
 Result<ExpressionView> ExpressionView::left() const {
     if (!raw_) return std::unexpected(Error::internal("null expression"));
     auto* e = static_cast<cexpr_t*>(raw_);
-    // `x` is the first union member of cexpr_t. It is a real `cexpr_t*` ONLY for
-    // operators that actually use it; for leaf ops (cot_num/cot_fnum/cot_str/
-    // cot_obj/cot_var/cot_insn/cot_helper/cot_type/cot_empty) the same storage
-    // aliases a non-pointer member (cnumber_t* n, char* string, var_ref_t v, …),
-    // which is frequently non-null. A bare `e->x == nullptr` check therefore
-    // lets that aliased garbage through and the caller faults reading its `op`.
-    // Gate on the SDK's op_uses_x() so we only ever expose a genuine operand.
-    if (!op_uses_x(e->op))
-        return std::unexpected(Error::validation("Expression has no left operand (leaf expression)"));
-    if (e->x == nullptr)
+    // x is valid for all non-leaf expressions that have sub-operands.
+    // Leaf ops: cot_num, cot_fnum, cot_str, cot_obj, cot_var, cot_insn, cot_helper, cot_empty
+    if (!op_uses_x(e->op) || e->x == nullptr)
         return std::unexpected(Error::validation("Expression has no left operand (leaf expression)"));
     return ExpressionView(ExpressionView::Tag{}, e->x,
                           append_parent(parents_, static_cast<citem_t*>(e)),
@@ -4147,15 +4213,9 @@ Result<ExpressionView> ExpressionView::left() const {
 Result<ExpressionView> ExpressionView::right() const {
     if (!raw_) return std::unexpected(Error::internal("null expression"));
     auto* e = static_cast<cexpr_t*>(raw_);
-    // `y` shares its union slot with `a` (call arglist) and `m` (member offset),
-    // and for unary ops (cot_neg/cot_lnot/cot_ptr/cot_preinc/…) it is undefined
-    // garbage that is often non-null. op_uses_y() is the authoritative predicate
-    // for "y holds a real cexpr_t* second operand"; it excludes calls, member
-    // access and every unary op, so checking it removes the need for the ad-hoc
-    // cot_call / cot_memref / cot_memptr special cases below.
-    if (!op_uses_y(e->op))
-        return std::unexpected(Error::validation("Expression has no right operand"));
-    if (e->x == nullptr || e->y == nullptr)
+    // y is valid for binary expressions. It shares a union with `a` (call args)
+    // and `m` (member offset), so only access it for binary ops.
+    if (!op_uses_y(e->op) || e->x == nullptr || e->y == nullptr)
         return std::unexpected(Error::validation("Expression has no right operand"));
     // Guard: for calls, y is actually `a` (arglist), not a cexpr_t*
     if (e->op == cot_call)
@@ -4170,20 +4230,17 @@ Result<ExpressionView> ExpressionView::right() const {
 
 int ExpressionView::operand_count() const noexcept {
     if (!raw_) return 0;
-    auto* e = static_cast<cexpr_t*>(raw_);
-    // Count only union slots that the SDK says this operator actually uses, so a
-    // unary op's aliased-garbage `y` can never inflate the count to 2 and push a
-    // caller into right() over an invalid handle (the ctree-walk crash).
-    if (!op_uses_x(e->op))
+    const auto* expression = static_cast<const cexpr_t*>(raw_);
+    if (!op_uses_x(expression->op) || expression->x == nullptr)
         return 0;
-    if (op_uses_z(e->op))   // only cot_tern: x, y, z
+    if (op_uses_z(expression->op))
         return 3;
-    // Calls (x=callee, a=arglist) and member access (x=base, m=offset) carry a
-    // structural second child even though op_uses_y() is false for them; the
-    // consumer reaches those via call_argument()/member_offset(), but the
-    // reported count stays 2 to preserve the established contract.
-    if (op_uses_y(e->op)
-        || e->op == cot_call || e->op == cot_memref || e->op == cot_memptr)
+    // Calls and member expressions expose their second structural component
+    // through call_argument()/member_offset(), not through the aliased y slot.
+    if (op_uses_y(expression->op)
+        || expression->op == cot_call
+        || expression->op == cot_memref
+        || expression->op == cot_memptr)
         return 2;
     return 1;
 }
@@ -4191,8 +4248,6 @@ int ExpressionView::operand_count() const noexcept {
 Result<ExpressionView> ExpressionView::third() const {
     if (!raw_) return std::unexpected(Error::internal("null expression"));
     auto* e = static_cast<cexpr_t*>(raw_);
-    // `z` is a real cexpr_t* only for the ternary operator (op_uses_z); for every
-    // other op the slot aliases `ptrsize` (an int) and must not be dereferenced.
     if (!op_uses_z(e->op) || e->z == nullptr)
         return std::unexpected(Error::validation("Expression has no third operand"));
     return ExpressionView(ExpressionView::Tag{}, e->z,
@@ -4265,7 +4320,6 @@ Result<int> StatementView::goto_target_label() const {
     return s->cgoto->label_num;
 }
 
-
 Result<std::optional<CtreeItemView>> StatementView::parent() const {
     if (!raw_) return std::unexpected(Error::internal("null statement"));
     if (parents_ == nullptr || parents_->empty())
@@ -4279,7 +4333,6 @@ Result<std::vector<CtreeItemView>> StatementView::parents() const {
         return std::vector<CtreeItemView>{};
     return *parents_;
 }
-// ── StatementView sub-structure navigation ──────────────────────────────
 
 Result<ExpressionView> StatementView::condition() const {
     if (!raw_) return std::unexpected(Error::internal("null statement"));
@@ -5272,19 +5325,14 @@ Address DecompiledFunction::entry_address() const {
 
 Result<Address> DecompiledFunction::line_to_address(int line_number) const {
     CHECK_IMPL();
-
     const strvec_t& lines = impl_->cfunc->get_pseudocode();
     if (line_number < 0 || static_cast<std::size_t>(line_number) >= lines.size())
         return std::unexpected(Error::validation("Line number out of range"));
 
-    // Resolve against the real coordinate map rather than guessing from
-    // treeitems indices. A line that exists but carries no mapped item is not
-    // an error: the header promises BadAddress for it.
     auto mappings = address_map();
     if (!mappings)
         return std::unexpected(mappings.error());
-    const auto found = std::lower_bound(
-        mappings->begin(), mappings->end(), line_number,
+    const auto found = std::lower_bound(mappings->begin(), mappings->end(), line_number,
         [](const AddressMapping& mapping, int line) { return mapping.line_number < line; });
     if (found != mappings->end() && found->line_number == line_number)
         return found->address;
@@ -5293,13 +5341,10 @@ Result<Address> DecompiledFunction::line_to_address(int line_number) const {
 
 Result<std::vector<AddressMapping>> DecompiledFunction::address_map() const {
     CHECK_IMPL();
-
     const strvec_t& lines = impl_->cfunc->get_pseudocode();
     std::vector<AddressMapping> result;
-
-    // citem_t::index is an index into cfunc_t::treeitems, not a pseudocode line
-    // number. Adding hdrlines to it produced coordinates outside the generated
-    // text; ask the decompiler where each item is actually displayed.
+    // treeitems indexes identify ctree nodes, not pseudocode lines. Ask the
+    // decompiler for each displayed item's actual text coordinates.
     for (const citem_t* item : impl_->cfunc->treeitems) {
         if (item == nullptr || item->ea == BADADDR)
             continue;
@@ -5310,19 +5355,14 @@ Result<std::vector<AddressMapping>> DecompiledFunction::address_map() const {
             result.push_back({item->ea, line});
         }
     }
-
-    std::sort(result.begin(), result.end(),
-              [](const AddressMapping& left, const AddressMapping& right) {
-                  if (left.line_number != right.line_number)
-                      return left.line_number < right.line_number;
-                  return left.address < right.address;
-              });
-    result.erase(std::unique(result.begin(), result.end(),
-                             [](const AddressMapping& left, const AddressMapping& right) {
-                                 return left.line_number == right.line_number
-                                        && left.address == right.address;
-                             }),
-                 result.end());
+    std::sort(result.begin(), result.end(), [](const AddressMapping& left, const AddressMapping& right) {
+        if (left.line_number != right.line_number)
+            return left.line_number < right.line_number;
+        return left.address < right.address;
+    });
+    result.erase(std::unique(result.begin(), result.end(), [](const AddressMapping& left, const AddressMapping& right) {
+        return left.line_number == right.line_number && left.address == right.address;
+    }), result.end());
     return result;
 }
 
@@ -5520,6 +5560,15 @@ generate_microcode(Address function_address,
 
         MicrocodeBlock block;
         block.index = native_block->serial;
+        switch (native_block->type) {
+            case BLT_NONE: block.kind = MicrocodeBlockKind::Unknown; break;
+            case BLT_STOP: block.kind = MicrocodeBlockKind::Exit; break;
+            case BLT_0WAY: block.kind = MicrocodeBlockKind::NonReturning; break;
+            case BLT_1WAY: block.kind = MicrocodeBlockKind::SingleSuccessor; break;
+            case BLT_2WAY: block.kind = MicrocodeBlockKind::Conditional; break;
+            case BLT_NWAY: block.kind = MicrocodeBlockKind::Switch; break;
+            case BLT_XTRN: block.kind = MicrocodeBlockKind::External; break;
+        }
         block.start_address = native_block->start == BADADDR
             ? BadAddress
             : static_cast<Address>(native_block->start);

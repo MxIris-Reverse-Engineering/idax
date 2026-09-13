@@ -258,9 +258,79 @@ enum class MicrocodeOpcode : int {
     IndirectJump,
     Return,
     Other,
+    // Read-only graph operations. Existing discriminants remain unchanged.
+    Negate,
+    LogicalNot,
+    BitwiseNot,
+    LowPart,
+    HighPart,
+    UnsignedDivide,
+    SignedDivide,
+    UnsignedRemainder,
+    SignedRemainder,
+    CarryFromAdd,
+    OverflowFromAdd,
+    CarryFromShiftLeft,
+    CarryFromShiftRight,
+    SetNegative,
+    SetOverflow,
+    SetParity,
+    SetNotEqual,
+    SetEqual,
+    SetGreaterThanOrEqualUnsigned,
+    SetLessThanUnsigned,
+    SetGreaterThanUnsigned,
+    SetLessThanOrEqualUnsigned,
+    SetGreaterThanSigned,
+    SetGreaterThanOrEqualSigned,
+    SetLessThanSigned,
+    SetLessThanOrEqualSigned,
+    JumpIfNonzero,
+    JumpIfNotEqual,
+    JumpIfEqual,
+    JumpIfGreaterThanOrEqualUnsigned,
+    JumpIfLessThanUnsigned,
+    JumpIfGreaterThanUnsigned,
+    JumpIfLessThanOrEqualUnsigned,
+    JumpIfGreaterThanSigned,
+    JumpIfGreaterThanOrEqualSigned,
+    JumpIfLessThanSigned,
+    JumpIfLessThanOrEqualSigned,
+    JumpTable,
+    Push,
+    Pop,
+    Undefined,
+    External,
+    FloatToSignedInteger,
+    FloatToUnsignedInteger,
+    UnsignedIntegerToFloat,
+    FloatNegate,
+    LoadConstant,
 };
 
 struct MicrocodeInstruction;
+
+/// A contiguous range in the decompiler's byte-addressed register space.
+struct MicrocodeRegisterRange {
+    int register_id{0};
+    int byte_width{0};
+};
+
+/// One copied switch value and its destination basic-block index.
+struct MicrocodeSwitchCase {
+    std::int64_t value{0};
+    int target_block{0};
+};
+
+/// Semantic properties of one call argument, aligned with call_arguments.
+struct MicrocodeCallArgumentProperties {
+    bool hidden{false};
+    bool return_value_pointer{false};
+    bool structure_argument{false};
+    bool array_argument{false};
+    bool unused{false};
+    bool swift_self{false};
+};
 
 /// Operand kind for generic typed microcode emission.
 enum class MicrocodeOperandKind : int {
@@ -284,28 +354,6 @@ enum class MicrocodeOperandKind : int {
 };
 
 /// One typed microcode operand.
-/// Per-argument properties the decompiler records for a call argument.
-struct MicrocodeCallArgumentProperties {
-    bool hidden{false};
-    bool return_value_pointer{false};
-    bool structure_argument{false};
-    bool array_argument{false};
-    bool unused{false};
-    bool swift_self{false};
-};
-
-/// A register and the byte width used through it.
-struct MicrocodeRegisterRange {
-    int register_id{0};
-    int byte_width{0};
-};
-
-/// One arm of a decoded switch: the matched value and the block it enters.
-struct MicrocodeSwitchCase {
-    std::int64_t value{0};
-    int target_block{0};
-};
-
 struct MicrocodeOperand {
     MicrocodeOperandKind kind{MicrocodeOperandKind::Empty};
     int register_id{0};
@@ -328,13 +376,13 @@ struct MicrocodeOperand {
     Address call_target{BadAddress};
     std::string text{};
 
-    /// Owned payloads. `floating_point_constant` is absent when the value
-    /// cannot be converted to binary64; the original display stays in `text`.
+    /// Owned payloads; floating_point_constant is absent if conversion to
+    /// binary64 is unavailable (the original display remains in text).
     std::string string_constant{};
     std::optional<double> floating_point_constant{};
     std::string global_name{};
-    /// Equal numbers denote equal values within this generated graph. This is
-    /// a value-numbering identifier, not an SSA variable version.
+    /// Equal numbers denote equal values within this generated graph.
+    /// This is a value-numbering identifier, not an SSA variable version.
     std::optional<std::uint16_t> value_number{};
     std::vector<MicrocodeCallArgumentProperties> call_argument_properties{};
     std::vector<MicrocodeOperand> call_return_operands{};
@@ -448,6 +496,17 @@ struct MicrocodeFunctionArgument {
     int byte_width{0};
 };
 
+/// Semantic control-flow shape of a copied microcode basic block.
+enum class MicrocodeBlockKind {
+    Unknown,
+    Exit,
+    NonReturning,
+    SingleSuccessor,
+    Conditional,
+    Switch,
+    External,
+};
+
 /// One copied microcode basic block.
 struct MicrocodeBlock {
     int index{0};
@@ -456,9 +515,8 @@ struct MicrocodeBlock {
     std::vector<int> predecessors{};
     std::vector<int> successors{};
     std::vector<MicrocodeInstruction> instructions{};
+    MicrocodeBlockKind kind{MicrocodeBlockKind::Unknown};
 };
-
-/// SDK-independent snapshot of a complete function-level microcode graph.
 
 /// Optional per-argument semantic flags for helper-call arguments.
 enum class MicrocodeArgumentFlag : std::uint32_t {
@@ -956,30 +1014,19 @@ struct LocalVariable {
     /// Storage location classification.
     VariableStorage storage{VariableStorage::Unknown};
 
-    /// Stack-frame offset (vd-offset) for stack variables; `-1` for variables
-    /// that do not live on the stack. Mirrors `lvar_t::get_stkoff()`.
-    std::int64_t stack_offset{-1};
-
     /// User comment on this variable (may be empty).
     std::string comment;
 
-    /// Microcode register number (`mreg_t`) for register variables; `-1` for
-    /// variables that do not live in a register. Mirrors `lvar_t::get_reg1()`.
-    /// On ARM64 the mreg of `x<n>` follows the linear law `8 + 8*n`
-    /// (x0=8, x1=16, ..., x20=168), which lets consumers map argument lvars
-    /// back to the physical ABI registers.
-    int register_number{-1};
-
+    /// Offset in bytes from the bottom of the decompiler stack frame;
+    /// -1 when this variable is not stored on the stack.
+    std::int64_t stack_offset{-1};
     /// Owned register, stack, register-pair, or scattered storage metadata.
-    /// Unlike `register_number`, this describes locations a single microcode
-    /// register cannot express.
     std::optional<MicrocodeValueLocation> location{};
-
-    /// Processor register name when a single register resolves for this
-    /// variable's width.
+    /// Processor register name when a single register can be resolved.
     std::optional<std::string> processor_register_name{};
 };
 
+/// SDK-independent snapshot of a complete function-level microcode graph.
 struct MicrocodeFunction {
     Address entry_address{BadAddress};
     MicrocodeMaturity maturity{MicrocodeMaturity::Generated};
@@ -1253,9 +1300,6 @@ public:
         void* raw_parent = nullptr) noexcept
         : raw_(raw), parents_(std::move(parents)), raw_parent_(raw_parent) {}
 
-    /// Return the opaque raw pointer for C interop (valid only during visitor lifetime).
-    [[nodiscard]] const void* raw_handle() const noexcept { return raw_; }
-
 private:
     void* raw_{nullptr};
     std::shared_ptr<const std::vector<CtreeItemView>> parents_{};
@@ -1281,52 +1325,23 @@ public:
 
     /// Parent chain from outermost ancestor to direct parent.
     [[nodiscard]] Result<std::vector<CtreeItemView>> parents() const;
-    // ── Sub-structure navigation ──────────────────────────────────────
 
-    /// For if/for/while/do/switch/return/throw: the condition or value expression.
-    /// - if → condition
-    /// - for → condition (loop test)
-    /// - while → condition
-    /// - do → condition
-    /// - switch → switch expression
-    /// - return → return value expression
-    /// - throw → thrown expression
+    /// Condition or value of an if, loop, switch, return, or throw statement.
     [[nodiscard]] Result<ExpressionView> condition() const;
-
-    /// For StmtIf: the then-branch statement.
     [[nodiscard]] Result<StatementView> then_branch() const;
-
-    /// For StmtIf: the else-branch statement (error if no else).
     [[nodiscard]] Result<StatementView> else_branch() const;
-
-    /// For StmtIf: whether an else-branch exists.
     [[nodiscard]] bool has_else_branch() const noexcept;
-
-    /// For StmtFor/StmtWhile/StmtDo: the loop body statement.
+    /// Body of a for, while, or do loop.
     [[nodiscard]] Result<StatementView> body() const;
-
-    /// For StmtFor: the initialization expression.
     [[nodiscard]] Result<ExpressionView> init_expression() const;
-
-    /// For StmtFor: the step (increment) expression.
     [[nodiscard]] Result<ExpressionView> step_expression() const;
-
-    /// For StmtExpr: the expression in this expression-statement.
+    /// Expression of an expression-statement.
     [[nodiscard]] Result<ExpressionView> expression() const;
-
-    /// For StmtBlock: the number of child statements.
     [[nodiscard]] Result<std::size_t> block_size() const;
-
-    /// For StmtBlock: get the child statement at the given index.
     [[nodiscard]] Result<StatementView> block_statement(std::size_t index) const;
-
-    /// For StmtSwitch: the number of cases (including default).
     [[nodiscard]] Result<std::size_t> switch_case_count() const;
-
-    /// For StmtSwitch: the case values at the given index (empty = default).
+    /// Empty values identify a default case. Values preserve their bit pattern.
     [[nodiscard]] Result<std::vector<std::uint64_t>> switch_case_values(std::size_t index) const;
-
-    /// For StmtSwitch: the case body statement at the given index.
     [[nodiscard]] Result<StatementView> switch_case_body(std::size_t index) const;
 
     // ── Internal ────────────────────────────────────────────────────────
@@ -1336,9 +1351,6 @@ public:
         void* raw,
         std::shared_ptr<const std::vector<CtreeItemView>> parents = {}) noexcept
         : raw_(raw), parents_(std::move(parents)) {}
-
-    /// Return the opaque raw pointer for C interop (valid only during visitor lifetime).
-    [[nodiscard]] const void* raw_handle() const noexcept { return raw_; }
 
 private:
     void* raw_{nullptr};

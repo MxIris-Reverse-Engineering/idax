@@ -255,10 +255,6 @@ std::string decode_operand_register_name(Address address,
     return register_name;
 }
 
-// Classifying a control transfer from disassembly text cannot distinguish
-// predicates that share a mnemonic prefix -- ARM64 `TBZ` (test one bit) reads
-// as a `Zero` test just like `CBZ` (test the whole register). Decode from the
-// processor module's instruction type and condition field instead.
 BranchCondition x86_branch_condition(std::uint16_t instruction_type) {
     switch (instruction_type) {
         case NN_je:
@@ -512,6 +508,7 @@ Result<Instruction> decode(Address ea) {
         return std::unexpected(Error::sdk("decode_insn failed", std::to_string(ea)));
 
     // Get mnemonic text.
+    // Get mnemonic text.
     qstring qmnem;
     print_insn_mnem(&qmnem, ea);
     std::string mnem = ida::detail::to_string(qmnem);
@@ -525,6 +522,7 @@ Result<Instruction> create(Address ea) {
     if (sz <= 0)
         return std::unexpected(Error::sdk("create_insn failed", std::to_string(ea)));
 
+    // Get mnemonic text.
     // Get mnemonic text.
     qstring qmnem;
     print_insn_mnem(&qmnem, ea);
@@ -689,28 +687,6 @@ Status set_operand_struct_offset(Address ea,
         return std::unexpected(raw.error());
 
     const tid_t path[1] = {structure_id};
-    if (!op_stroff(*raw, n, path, 1, static_cast<adiff_t>(delta))) {
-        return std::unexpected(Error::sdk("op_stroff failed",
-                                          std::to_string(ea) + ":" + std::to_string(n)));
-    }
-    return ida::ok();
-}
-
-Status set_operand_struct_offset(Address ea,
-                                 int n,
-                                 std::uint64_t structure_id,
-                                 AddressDelta delta) {
-    const tid_t tid = static_cast<tid_t>(structure_id);
-    if (tid == BADNODE) {
-        return std::unexpected(Error::not_found("Structure id is invalid",
-                                                std::to_string(structure_id)));
-    }
-
-    auto raw = decode_raw_instruction(ea);
-    if (!raw)
-        return std::unexpected(raw.error());
-
-    const tid_t path[1] = {tid};
     if (!op_stroff(*raw, n, path, 1, static_cast<adiff_t>(delta))) {
         return std::unexpected(Error::sdk("op_stroff failed",
                                           std::to_string(ea) + ":" + std::to_string(n)));

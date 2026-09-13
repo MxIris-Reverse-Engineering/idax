@@ -87,9 +87,6 @@ Result<Address> prev_mapped(Address ea) {
 // ── Predicates ──────────────────────────────────────────────────────────
 
 bool is_mapped(Address ea) {
-    // get_flags() excludes byte-value flags, so a mapped byte whose metadata
-    // flags are all zero (freshly allocated or zero-filled) is indistinguishable
-    // from an absent address. Ask the SDK for presence directly.
     return ::is_mapped(ea);
 }
 
@@ -108,8 +105,8 @@ bool is_data(Address ea) {
 }
 
 bool is_unknown(Address ea) {
-    // Presence and classification are separate questions: an unexplored byte is
-    // mapped but carries zero metadata flags.
+    // get_flags() excludes byte-value flags. Mapped unexplored bytes can
+    // therefore have zero metadata flags, just like absent addresses.
     return ::is_mapped(ea) && ::is_unknown(get_flags(ea));
 }
 

@@ -57,23 +57,14 @@ enum class RegisterCategory {
     Other,
 };
 
-/// Semantic branch-condition classifier for conditional control-transfer
-/// instructions.
-///
-/// This is a *cross-architecture* condition vocabulary. The mnemonic on the
-/// instruction is parsed into one of these cases — values are derived without
-/// touching processor-specific SDK internals so the same enum applies on
-/// ARM64 (`B.EQ`, `CBZ`, `TBZ`, …), x86 (`JE`, `JBE`, `JCXZ`, …), and any
-/// other processor whose mnemonic suffix matches a known pattern.
-///
-/// Consumers building a Low-IR / MIR should use this as the source for
-/// per-terminator branch conditions.
+/// Predicate controlling a decoded control transfer. Values are independent
+/// of processor-specific instruction and condition-code encodings.
+/// Register tests (Zero/NotZero) and bit tests (BitZero/BitNotZero) refer to
+/// the explicit operands. Counter tests use the instruction's address-size
+/// rules; CountNotZero variants test the value after one decrement.
 enum class BranchCondition {
-    /// Instruction is not a control transfer at all.
     None,
-    /// Unconditional jump or branch (e.g. ARM64 `B`, x86 `JMP`).
     Always,
-    /// Result of comparison was equal / zero flag set.
     Equal,
     NotEqual,
     LessThanSigned,
@@ -84,40 +75,21 @@ enum class BranchCondition {
     LessThanOrEqualUnsigned,
     GreaterThanUnsigned,
     GreaterThanOrEqualUnsigned,
-    /// Whole-register-is-zero test (ARM64 `CBZ`). Not the same predicate as
-    /// `BitZero`: this one tests every bit of the register.
     Zero,
-    /// Whole-register-is-not-zero test (ARM64 `CBNZ`).
     NotZero,
-    /// Negative / N flag set (ARM64 `B.MI`, x86 `JS`).
     Negative,
-    /// Non-negative / N flag clear (ARM64 `B.PL`, x86 `JNS`).
     NotNegative,
-    /// Overflow flag set (ARM64 `B.VS`, x86 `JO`).
     Overflow,
-    /// Overflow flag clear (ARM64 `B.VC`, x86 `JNO`).
     NoOverflow,
-    /// Parity flag set (x86 `JP` / `JPE`).
     Parity,
-    /// Parity flag clear (x86 `JNP` / `JPO`).
     NoParity,
-    /// Counter register is zero (x86 `JCXZ` / `JECXZ` / `JRCXZ`).
     CountZero,
-    /// Single-bit-is-clear test (ARM64 `TBZ`). The tested bit is an explicit
-    /// operand; this is a different predicate from `Zero`.
     BitZero,
-    /// Single-bit-is-set test (ARM64 `TBNZ`).
     BitNotZero,
-    /// Counter register is non-zero after one decrement (x86 `LOOP`).
     CountNotZero,
-    /// Counter non-zero after one decrement, and equal (x86 `LOOPE`).
     CountNotZeroAndEqual,
-    /// Counter non-zero after one decrement, and not equal (x86 `LOOPNE`).
     CountNotZeroAndNotEqual,
-    /// A control transfer whose predicate this processor module does not
-    /// classify. Distinct from `None`, which means "not a transfer".
     Unknown,
-    /// Never taken (the historical AArch32 `NV` condition).
     Never,
 };
 
@@ -214,13 +186,11 @@ public:
 
     [[nodiscard]] const std::vector<Operand>& operands() const noexcept { return operands_; }
 
-    /// Semantic branch-condition classification derived from the mnemonic.
-    ///
-    /// Returns `BranchCondition::None` when the instruction is not a
-    /// conditional control-transfer. Returns `BranchCondition::Always` for
-    /// unconditional jumps / branches. Otherwise reports the specific
-    /// condition (`Equal`, `LessThanUnsigned`, `Overflow`, …).
-    [[nodiscard]] BranchCondition branch_condition() const noexcept { return branch_condition_; }
+    /// Control-transfer predicate; supported x86 and ARM instructions are
+    /// normalized, and unclassified transfers report Unknown.
+    [[nodiscard]] BranchCondition branch_condition() const noexcept {
+        return branch_condition_;
+    }
 
 private:
     friend struct InstructionAccess;
@@ -230,7 +200,7 @@ private:
     std::uint16_t      itype_{};
     std::string        mnemonic_;
     std::vector<Operand> operands_;
-    BranchCondition    branch_condition_{BranchCondition::None};
+    BranchCondition branch_condition_{BranchCondition::None};
 };
 
 // ── Decode / create ─────────────────────────────────────────────────────
@@ -288,14 +258,6 @@ Result<OperandEnum> operand_enum(Address address, int n);
 Status set_operand_struct_offset(Address address,
                                  int n,
                                  std::string_view structure_name,
-                                 AddressDelta delta = 0);
-
-/// Set operand to display as a structure member offset by structure id.
-///
-/// `structure_id` is a raw SDK structure id (`tid_t`).
-Status set_operand_struct_offset(Address address,
-                                 int n,
-                                 std::uint64_t structure_id,
                                  AddressDelta delta = 0);
 
 /// Idempotently set an operand to one exact saved-local structure member.
@@ -394,16 +356,8 @@ bool is_jump(Address address);
 /// Is the instruction at \p address a conditional jump instruction?
 bool is_conditional_jump(Address address);
 
-/// Classify the branch condition of the instruction at \p address.
-///
-/// Returns `BranchCondition::None` when the address does not contain a
-/// recognisable control-transfer instruction (data, decode failure, etc.),
-/// `BranchCondition::Always` for unconditional jumps / branches, and the
-/// specific condition otherwise.
-///
-/// Implementation is mnemonic-based, so it is portable across ARM64, x86,
-/// and any processor whose conditional-branch mnemonics follow the standard
-/// `B<cc>` / `B.<cc>` / `J<cc>` / `CB[N]Z` / `TB[N]Z` patterns.
+/// Classify a control transfer using the same decoder as Instruction::decode.
+/// Non-transfers and addresses that cannot be decoded report None.
 BranchCondition branch_condition(Address address);
 
 /// Decode the next instruction sequentially after \p address.

@@ -1413,3 +1413,78 @@
   - **19.78.5. Opacity and scope:** Expose no `idc_value_t`, `idc_object_t`, `idc_class_t`, `fpvalue_t`, `qstring`, raw tags, pointers, global-variable addresses, or native iterators. Keep IDC class authoring, external IDC function registration, low-condition callback setup, and third-party external-language installation/selection in separate lifecycle phases because they create or manipulate interpreter-global callback/descriptor state.
   - **19.78.6. Validation:** Require exact signatures/tags, scalar/copy/deep-copy/object/attribute/slice/reference/global/evaluate/compile/call/snippet/script/system-path malformed and success probes, exception-object preservation, database-close lifetime checks, complete C++/Node/generated-C/safe-Rust/Python parity, packages/manifests/privacy, exact staged review, and all 18 release jobs plus complete-log audits.
   - **19.78.7. Move-state invariant:** Moving a public `Value` leaves its source as a valid integer-zero value. Represent a null private implementation as immutable logical zero for observation/copy and materialize independent storage only for later mutation, preserving constant-time `noexcept` ownership transfer and language-boundary exception behavior.
+
+- **19.79. Decision D-SPLIT-ACTION-ADAPTER-AND-CALLBACK-OWNERSHIP**: Pair kernel-owned handlers with wrapper-owned callback state
+  - **19.79.1. Adapter ownership:** Supersede 19.33.2's wrapper-owned adapter. Build a named owner-null descriptor with `ADF_OWN_HANDLER`, allocate `ActionAdapter` through ordinary `new`, retain it in a `unique_ptr` until `register_action` succeeds, and then release it to the SDK. This pairs inherited `action_handler_t` allocation/deallocation and prevents the `make_shared` interior-pointer free.
+  - **19.79.2. State ownership:** Store each successful action's callbacks in wrapper-owned shared keyed state; the adapter keeps only a weak reference and every activation/update locks one local strong reference. Erase state after successful unregister while retaining it after SDK failure. This preserves deterministic capture reclamation across full and headless host destruction timing.
+  - **19.79.3. Reentrant teardown:** Count active callbacks under the state mutex. When the same action is unregistered during activation/update, accept one asynchronous request and execute native unregister on the next UI iteration instead of asking the SDK to destroy the executing handler. Document that synchronous success means the deferred request was accepted.
+  - **19.79.4. Validation:** Require the focused idalib lifecycle, callback-state retention/reclamation, headless fallback teardown, allocator-compatible full-host normal unregister, and full-host callback/self-unregister/next-iteration absence evidence. Treat unrelated cross-minor IDA 9.3 suite failures in executables that do not link the action implementation as bounded host variance rather than action evidence.
+
+- **19.80. Decision D-SWIFT-PR-SEMANTIC-CORE-REWRITE**: Reimplement the incoming capabilities within the current opaque architecture
+  - **19.80.1. Graph model:** Extend `ida::decompiler` owned graphs only for missing copied constants, semantic switch/call results, block classification, and frame/local metadata. Preserve existing public types/discriminants, recursive operands, source addresses/text, register mapping, maturity checks, CFG construction, and complete native release. Use optional semantic absence for new fields and no raw SDK opcode/property masks.
+  - **19.80.2. Navigation and instruction model:** Add statement-child traversal with preserved ancestry and guard expression union members through SDK opcode predicates. Model branch predicates semantically, preserving post-decrement counter/ZF distinctions; architecture-specific decoding must not classify arbitrary processors by mnemonic alone.
+  - **19.80.3. Mutations and identity:** Validate names/paths, retain checked database saves and named plugin invocation, and never restore the removed numeric structure-ID interface. Genuine dyld-cache capabilities require an independently audited current-9.4 service boundary and complete applicable binding parity.
+  - **19.80.4. Validation:** Add signature and initialized-host probes for each new primitive, preserve current Node/Rust/Python behavior and serialization, refresh declaration manifests only after auditing additions, and require exact-release cross-platform evidence.
+
+- **19.81. Decision D-FRESH-SWIFT-BINDING-ARCHITECTURE**: Use a stable typed Swift frontend with private ownership-aware native adapters
+  - **19.81.1. Public model:** Target stable Swift 6.0 and macOS 13 initially. Use concept-named domains, constructible copied values, semantic enums/options, typed `IDAError` with category/code/message/context, opaque non-Sendable resources, idempotent explicit close, and checked session/callback leases. No public SDK pointers, raw identities, blanket unchecked Sendable, or experimental Span imports.
+  - **19.81.2. Private transport:** Reuse the canonical C shim only where its conversion/ownership contract is independently audited; keep its location and existing ABI intact. Add private direct C++ Swift adapters for resource ownership, callbacks, host exports, and exact explicit error transfer. Preserve Python as a direct pybind11 C++ backend.
+  - **19.81.3. Runtime and callbacks:** Record and enforce the initializing OS thread before SDK dispatch. Native callable storage owns shared callback state with exactly one Swift destruction hook, preserving in-flight and deferred-unregister lifetimes. Borrowed callback arguments expire at callback return; close/reopen invalidates database-dependent views. Contain failures at C boundaries and never hold registry locks while invoking or destroying Swift objects.
+  - **19.81.4. Packaging:** Build with the pinned SDK and real installed runtime, use explicit non-colliding archive paths, retain ordinary namespace linkage, and define no shadow `callui`, `dbg`, or other SDK globals. Validate a clean external consumer. Plugin/loader/processor support must produce actual `PLUGIN`, `LDSC`, and `LPH` artifacts through existing compiled IDAX bridges.
+  - **19.81.5. Coverage and evidence:** Track every current declaration/overload/field and new capability in a reviewed Swift mapping; require public-client construction, ownership/failure/reentrancy/thread tests, exact-release runtime and export evidence, distribution inspection, full existing-binding regression, action/declaration audits, and repository/history/log privacy before completion. Header counts and passing structural tests alone do not establish parity.
+
+### D19.82 Swift transitive package linkage and callback transfer refinement
+
+- Use a private SwiftPM system-library target with generated pkg-config metadata and a CMake-built `idax_swift_native` composite archive. This avoids case-insensitive `IDAX`/`idax` library shadowing and permits ordinary transitive SwiftPM dependencies without unsafe manifest flags. Link actual IDA runtime libraries; do not provide shadow SDK globals or flat-namespace linkage. Validate the installed toolchain and clean external consumers before claiming package support.
+- Private lifecycle entry points consume retained Swift callback contexts unconditionally on entry, including validation and allocation failure. Establish the native shared owner before validation; native callable destruction releases the context exactly once. Swift must not separately release a context after transfer. This refines D19.81 without changing the public ownership contract.
+
+### D19.83 Swift Semantic Generation and Session Ownership
+
+- Use the C++ declaration/field/overload inventory as the acceptance scope and an explicit schema for repetitive C transport conversions. Add direct private semantic C++ adapters for operations absent from that transport. Generated code must report unsupported shapes; never substitute stubs or infer completion from namespace presence.
+- Native resource holders are database-bound when native state can depend on the database. Invalidate them before open/close in reverse acquisition order; retained Swift wrappers remain invalid after reopen. ARC destruction on foreign threads defers native release. This provides an executable lifetime contract beyond non-Sendable annotations.
+- Preserve the established C error display message for existing languages and add exact message/context accessors for structured consumers. Empty native context remains empty. No string-suffix parsing is used for Swift error fidelity.
+
+### D19.84 Swift Callback Borrows and Explicit Decompiler Dependencies
+
+- Pin owned native values during every synchronous use that can reenter Swift. Reject database open/close during native borrowed activity; queue ARC finalizers until a safe owner-thread entry after all activity/pins end.
+- Each ctree callback creates an expiring shared lease for the root and navigated children. Borrowed methods require a live lease before native dereference; copied parent/item summaries remain independent values. Visitor throws cross the private boundary with all canonical error fields and stop traversal.
+- Count actual native decompiler values and callback owners as dependencies of explicit Hex-Rays sessions. Explicit Session.close rejects active dependencies and active native execution. ARC session cleanup uses an allocation-free pending list until dependencies are gone. Database LIFO invalidation and explicit close share these release paths.
+
+### D19.85 Opaque Dyld Cache Inventory and Loading
+
+- Add `ida::dyld_cache` for verified offline image inventories and current-database cache service operations. Prefer modern documented inventory tables; support validated legacy/image-text layouts and fail without partial output for malformed extents or paths.
+- Use exact SDK `dscu.h` bootstrap and mapped-header checks. Expose copied module names/addresses and semantic load options with undo-on-failure defaults; deduplicate bulk requests and return newly loaded counts. Keep native service pointers and loader-private storage internal.
+- Preserve all new core concepts through Node, C/safe Rust, Python, and Swift. Record real header/module/section evidence separately from source-audited bulk-region paths.
+
+### D19.86 Pseudocode Coordinate and Bitmask Constructor Corrections
+
+- Resolve pseudocode positions through the SDK item-coordinate helper. Sort and deduplicate actual `(line, address)` pairs; `line_to_address` chooses a member of the requested line's mapped address set and returns BadAddress for a valid unmapped line, matching its existing contract. Ctree item identity never substitutes for a text coordinate.
+- Build enum constants in a regular SDK enum and then apply `set_enum_is_bitmask()`, following the exact SDK's construction sequence. Preserve width, member bit patterns, names, and comments; propagate conversion failure without exposing partial success.
+
+### D19.87 Existing Sentinel and Nested-Width Contracts
+- Preserve public fixup exhaustion as successful BadAddress and derive mapped/unknown predicates from SDK presence rather than nonzero metadata.
+- Reconstruct a nested instruction's Empty destination width from the containing operand; explicit destination width remains authoritative and must agree when both are given. Validate propagatable opcode and positive result size before native construction. This restores replay of copied graph values without adding raw SDK identities or new public APIs.
+
+### D19.88 Loader Construction Before Descriptor Queries
+- Construct the user loader module with a function-local static in the IDAX_LOADER bridge initializer. The descriptor may query virtual options during dynamic initialization, so the module's construction must precede returning its pointer regardless of translation-unit order.
+- Preserve the public module API and LDSC export. A deterministic descriptor-first CTest establishes the construction-order requirement independently of Swift packaging.
+
+### D19.89 Shared Swift Support with Per-Add-On Factories
+- Link add-ons to one IDAXShared dynamic image containing Swift types and native runtime/resource state. Keep each module's canonical SDK descriptor and factory bridge in its own add-on with hidden factory symbols; expose the documented PLUGIN, LDSC or LPH descriptor.
+- Store the common support library once and use relative loader search paths from add-ons. Validate relocation and multiple module kinds/two plugin instances in one actual host; single-addon symbol inspection is insufficient.
+
+### D19.90 Opaque Custom Registration Generations
+- Give each wrapper-observed custom-data/fixup identity a private generation. An explicit unregister retires its shared owner state before SDK teardown; old ARC owners cannot act on a replacement in the same native slot.
+- Validate generation-bearing identities before all native query/mutation entry points. Keep native numeric IDs private and distinguish the SDK's unobservable external same-slot/same-name replacement boundary in the assumption register. Use database-bound holders for microcode-filter registration and explicit validity reporting.
+
+### D19.91 Private Native Compiler Path Mapping
+- Apply file-prefix maps privately to native library and Swift native/entry targets for GNU/Clang frontends outside MSVC mode. Map lexical and resolved source, build and SDK roots to semantic tokens; installed target interfaces retain no host-specific options.
+- Use file-prefix rather than debug-prefix mapping because SDK helpers can also embed __FILE__/__builtin_FILE() string literals. Probe both DWARF and literal paths, then scan complete native distribution member bytes. MSVC path rewriting is outside this validated compiler change.
+
+### D19.92 Opaque Typed Arguments for Custom Form Markup
+- Preserve caller-authored supported form layouts through an opaque heterogeneous argument value containing checked typed FormBinding owners. Private native slots hold the required SDK scalar, string and path storage; no public native pointers or varargs are exposed.
+- Validate compatible supported controls and argument ordering/count before native vararg dispatch, and convert every accepted output before updating Swift bindings. Keep generated FormBuilder construction and unbound markup as clients of the same storage/validation boundary. Interactive acceptance evidence remains separately host-gated.
+
+### D19.93 Documented Form Cancellation and Shared Validation
+- Preserve the SDK's documented -1 cancellation as successful false when BUTTON NO is present. Zero also remains false, retaining the SDK's ambiguity between No/cancellation/allocation/syntax outcomes; only positive results commit prepared bindings. Unexpected results below -1 remain SDK failures.
+- Unbound and typed native form paths share empty/NUL markup validation. Swift custom and generated forms share checked storage and convert all returned values before mutating any caller binding.

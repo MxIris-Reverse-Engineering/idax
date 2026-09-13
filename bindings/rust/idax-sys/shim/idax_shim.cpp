@@ -171,6 +171,8 @@ struct ErrorState {
     int         category = IDAX_ERROR_NONE;
     int         code     = 0;
     std::string message;
+    std::string message_only;
+    std::string context;
 };
 
 thread_local ErrorState g_last_error;
@@ -179,6 +181,8 @@ void clear_error() {
     g_last_error.category = IDAX_ERROR_NONE;
     g_last_error.code     = 0;
     g_last_error.message.clear();
+    g_last_error.message_only.clear();
+    g_last_error.context.clear();
 }
 
 void set_error(const ida::Error& err) {
@@ -192,6 +196,8 @@ void set_error(const ida::Error& err) {
     }
     g_last_error.code = err.code;
     g_last_error.message = err.message;
+    g_last_error.message_only = err.message;
+    g_last_error.context = err.context;
     if (!err.context.empty()) {
         g_last_error.message += " [";
         g_last_error.message += err.context;
@@ -365,6 +371,14 @@ int idax_last_error_code(void) {
 
 const char* idax_last_error_message(void) {
     return g_last_error.message.c_str();
+}
+
+const char* idax_last_error_context(void) {
+    return g_last_error.context.c_str();
+}
+
+const char* idax_last_error_message_only(void) {
+    return g_last_error.message_only.c_str();
 }
 
 void idax_free_string(char* s) {
@@ -1300,6 +1314,7 @@ int idax_database_init(int argc, char** argv) {
     if (!g_ida_loader.ensure_loaded()) {
         g_last_error.category = IDAX_ERROR_SDK_FAILURE;
         g_last_error.code     = -1;
+        g_last_error.context.clear();
         g_last_error.message  = "Failed to locate IDA runtime libraries. "
             "Set IDADIR to the directory containing libida"
 #if defined(__APPLE__)
@@ -1308,6 +1323,7 @@ int idax_database_init(int argc, char** argv) {
             ".so"
 #endif
             " (e.g. /Applications/IDA\\ Pro.app/Contents/MacOS)";
+        g_last_error.message_only = g_last_error.message;
         return -1;
     }
 #endif
@@ -1336,66 +1352,14 @@ int idax_database_open_non_binary(const char* path, int mode) {
     return 0;
 }
 
-int idax_database_list_input_formats(const char* path,
-                                     IdaxDatabaseInputFormat** out,
-                                     size_t* count) {
-    clear_error();
-    auto r = ida::database::list_input_formats(path);
-    if (!r) return fail(r.error());
-    auto& formats = *r;
-    *count = formats.size();
-    if (formats.empty()) {
-        *out = nullptr;
-        return 0;
-    }
-
-    *out = static_cast<IdaxDatabaseInputFormat*>(
-        std::calloc(formats.size(), sizeof(IdaxDatabaseInputFormat)));
-    if (*out == nullptr) return fail(ida::Error::internal("malloc failed"));
-
-    for (size_t i = 0; i < formats.size(); ++i) {
-        (*out)[i].archive_loader = formats[i].archive_loader ? 1 : 0;
-        (*out)[i].name = dup_string(formats[i].name);
-        (*out)[i].processor = dup_string(formats[i].processor);
-        (*out)[i].loader_path = dup_string(formats[i].loader_path);
-        const bool allocation_failed =
-            ((*out)[i].name == nullptr && !formats[i].name.empty())
-            || ((*out)[i].processor == nullptr && !formats[i].processor.empty())
-            || ((*out)[i].loader_path == nullptr && !formats[i].loader_path.empty());
-        if (allocation_failed) {
-            idax_database_input_formats_free(*out, i + 1);
-            *out = nullptr;
-            *count = 0;
-            return fail(ida::Error::internal("malloc failed"));
-        }
-    }
-    return 0;
-}
-
-void idax_database_input_formats_free(IdaxDatabaseInputFormat* formats,
-                                      size_t count) {
-    if (formats == nullptr) return;
-    for (size_t i = 0; i < count; ++i) {
-        std::free(formats[i].name);
-        std::free(formats[i].processor);
-        std::free(formats[i].loader_path);
-    }
-    std::free(formats);
-}
-
-int idax_database_open_with_options(const char* path, int mode) {
-    clear_error();
-    auto parsed = parse_database_open_mode(mode);
-    if (!parsed) return fail(parsed.error());
-    ida::database::OpenOptions options;
-    options.mode = *parsed;
-    auto s = ida::database::open(path, options);
-    if (!s) return fail(s.error());
-    return 0;
-}
-
 int idax_database_save(void) {
     RETURN_STATUS(ida::database::save());
+}
+
+int idax_database_save_to(const char* output_database_path) {
+    if (output_database_path == nullptr)
+        return fail(ida::Error::validation("Output database path is null"));
+    RETURN_STATUS(ida::database::save_to(output_database_path));
 }
 
 int idax_database_close(int save) {
@@ -1409,8 +1373,7 @@ int idax_database_file_to_database(const char* file_path, int64_t file_offset,
         file_path, file_offset, ea, size, patchable != 0, remote != 0));
 }
 
-int idax_database_memory_to_database(const uint8_t* __counted_by(len) bytes __noescape,
-                                     size_t len,
+int idax_database_memory_to_database(const uint8_t* bytes, size_t len,
                                      uint64_t ea, int64_t file_offset) {
     RETURN_STATUS(ida::database::memory_to_database(
         std::span<const uint8_t>(bytes, len), ea, file_offset));
@@ -4676,8 +4639,8 @@ void fill_instruction(IdaxInstruction* out, const ida::instruction::Instruction&
     out->address       = insn.address();
     out->size          = insn.size();
     out->opcode        = insn.opcode();
-    out->mnemonic      = dup_string(insn.mnemonic());
     out->branch_condition = static_cast<int>(insn.branch_condition());
+    out->mnemonic      = dup_string(insn.mnemonic());
     auto& ops = insn.operands();
     out->operand_count = ops.size();
     if (ops.empty()) {
@@ -4720,6 +4683,14 @@ void idax_instruction_free(IdaxInstruction* insn) {
         }
         insn->operand_count = 0;
     }
+}
+
+int idax_instruction_branch_condition(uint64_t ea, int* out) {
+    clear_error();
+    if (out == nullptr)
+        return fail(ida::Error::validation("Branch condition output is null"));
+    *out = static_cast<int>(ida::instruction::branch_condition(ea));
+    return 0;
 }
 
 int idax_instruction_decode(uint64_t ea, IdaxInstruction* out) {
@@ -5393,8 +5364,7 @@ int idax_data_write_qword(uint64_t ea, uint64_t value) {
     RETURN_STATUS(ida::data::write_qword(ea, value));
 }
 
-int idax_data_write_bytes(uint64_t ea, const uint8_t* __counted_by(len) data __noescape,
-                          size_t len) {
+int idax_data_write_bytes(uint64_t ea, const uint8_t* data, size_t len) {
     RETURN_STATUS(ida::data::write_bytes(ea, std::span<const uint8_t>(data, len)));
 }
 
@@ -5414,8 +5384,7 @@ int idax_data_patch_qword(uint64_t ea, uint64_t value) {
     RETURN_STATUS(ida::data::patch_qword(ea, value));
 }
 
-int idax_data_patch_bytes(uint64_t ea, const uint8_t* __counted_by(len) data __noescape,
-                          size_t len) {
+int idax_data_patch_bytes(uint64_t ea, const uint8_t* data, size_t len) {
     RETURN_STATUS(ida::data::patch_bytes(ea, std::span<const uint8_t>(data, len)));
 }
 
@@ -6691,8 +6660,7 @@ std::vector<std::string> collect_lines_input(const char* const* lines, size_t co
 
 } // anonymous namespace
 
-int idax_comment_set_anterior_lines(uint64_t ea,
-                                    const char* const* __counted_by(count) lines __noescape,
+int idax_comment_set_anterior_lines(uint64_t ea, const char* const* lines,
                                     size_t count) {
     clear_error();
     if (count > 0 && lines == nullptr) {
@@ -6704,8 +6672,7 @@ int idax_comment_set_anterior_lines(uint64_t ea,
     return 0;
 }
 
-int idax_comment_set_posterior_lines(uint64_t ea,
-                                     const char* const* __counted_by(count) lines __noescape,
+int idax_comment_set_posterior_lines(uint64_t ea, const char* const* lines,
                                      size_t count) {
     clear_error();
     if (count > 0 && lines == nullptr) {
@@ -8547,6 +8514,20 @@ int idax_plugin_register_action_ex(const char* id, const char* label,
     RETURN_STATUS(ida::plugin::register_action(action));
 }
 
+int idax_plugin_is_plugin_available(const char* plugin_name, int* out) {
+    clear_error();
+    if (plugin_name == nullptr || out == nullptr)
+        return fail(ida::Error::validation("Plugin name/output is null"));
+    *out = ida::plugin::is_plugin_available(plugin_name) ? 1 : 0;
+    return 0;
+}
+
+int idax_plugin_run_plugin(const char* plugin_name, size_t argument) {
+    if (plugin_name == nullptr)
+        return fail(ida::Error::validation("Plugin name is null"));
+    RETURN_STATUS(ida::plugin::run_plugin(plugin_name, argument));
+}
+
 int idax_plugin_unregister_action(const char* action_id) {
     RETURN_STATUS(ida::plugin::unregister_action(action_id));
 }
@@ -8678,8 +8659,7 @@ int idax_loader_file_to_database(void* li_handle, int64_t file_offset,
         li_handle, file_offset, ea, size, patchable != 0));
 }
 
-int idax_loader_memory_to_database(const uint8_t* __counted_by(size) data __noescape,
-                                   uint64_t ea, uint64_t size) {
+int idax_loader_memory_to_database(const uint8_t* data, uint64_t ea, uint64_t size) {
     RETURN_STATUS(ida::loader::memory_to_database(data, ea, size));
 }
 
@@ -9246,8 +9226,7 @@ int idax_debugger_read_memory(uint64_t address, uint64_t size,
     return 0;
 }
 
-int idax_debugger_write_memory(uint64_t address,
-                               const uint8_t* __counted_by(len) data __noescape,
+int idax_debugger_write_memory(uint64_t address, const uint8_t* data,
                                size_t len) {
     RETURN_STATUS(ida::debugger::write_memory(address, std::span<const uint8_t>(data, len)));
 }
@@ -9915,11 +9894,25 @@ int idax_decompiled_entry_address(IdaxDecompiledHandle handle, uint64_t* out) {
     return 0;
 }
 
+namespace {
+void free_microcode_location(IdaxMicrocodeValueLocation* location);
+ida::Status fill_microcode_location(IdaxMicrocodeValueLocation* out,
+                                    const ida::decompiler::MicrocodeValueLocation& location);
+}
+
 void idax_local_variable_free(IdaxLocalVariable* var) {
     if (var) {
         std::free(var->name);
         std::free(var->type_name);
         std::free(var->comment);
+        std::free(var->processor_register_name);
+        var->processor_register_name = nullptr;
+        if (var->location != nullptr) {
+            free_microcode_location(var->location);
+            std::free(var->location);
+            var->location = nullptr;
+        }
+
         var->name = nullptr;
         var->type_name = nullptr;
         var->comment = nullptr;
@@ -9937,18 +9930,42 @@ void idax_decompiled_variables_free(IdaxLocalVariable* vars, size_t count) {
     std::free(vars);
 }
 
-static void fill_local_variable(IdaxLocalVariable* out,
+static ida::Status fill_local_variable(IdaxLocalVariable* out,
                                 const ida::decompiler::LocalVariable& variable) {
+    std::memset(out, 0, sizeof(*out));
     out->name          = dup_string(variable.name);
     out->type_name     = dup_string(variable.type_name);
     out->is_argument   = variable.is_argument ? 1 : 0;
     out->width         = variable.width;
     out->has_user_name = variable.has_user_name ? 1 : 0;
+    out->has_nice_name = variable.has_nice_name ? 1 : 0;
     out->storage       = static_cast<int>(variable.storage);
     out->comment       = dup_string(variable.comment);
-    out->index           = variable.index;
-    out->stack_offset    = variable.stack_offset;
-    out->register_number = variable.register_number;
+    out->index         = variable.index;
+    out->stack_offset  = variable.stack_offset;
+    if (variable.processor_register_name)
+        out->processor_register_name = dup_string(*variable.processor_register_name);
+    if ((out->name == nullptr && !variable.name.empty())
+        || (out->type_name == nullptr && !variable.type_name.empty())
+        || (out->comment == nullptr && !variable.comment.empty())
+        || (out->processor_register_name == nullptr && variable.processor_register_name)) {
+        idax_local_variable_free(out);
+        return std::unexpected(ida::Error::internal("malloc failed"));
+    }
+    if (variable.location) {
+        out->location = static_cast<IdaxMicrocodeValueLocation*>(
+            std::calloc(1, sizeof(IdaxMicrocodeValueLocation)));
+        if (out->location == nullptr) {
+            idax_local_variable_free(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        auto status = fill_microcode_location(out->location, *variable.location);
+        if (!status) {
+            idax_local_variable_free(out);
+            return status;
+        }
+    }
+    return ida::ok();
 }
 
 int idax_decompiled_variable_count(IdaxDecompiledHandle handle, size_t* out) {
@@ -9966,10 +9983,16 @@ int idax_decompiled_variables(IdaxDecompiledHandle handle,
     *count = v.size();
     if (v.empty()) { *out = nullptr; return 0; }
     *out = static_cast<IdaxLocalVariable*>(
-        std::malloc(v.size() * sizeof(IdaxLocalVariable)));
+        std::calloc(v.size(), sizeof(IdaxLocalVariable)));
     if (!*out) return fail(ida::Error::internal("malloc failed"));
     for (size_t i = 0; i < v.size(); ++i) {
-        fill_local_variable(&(*out)[i], v[i]);
+        auto status = fill_local_variable(&(*out)[i], v[i]);
+        if (!status) {
+            idax_decompiled_variables_free(*out, *count);
+            *out = nullptr;
+            *count = 0;
+            return fail(status.error());
+        }
     }
     return 0;
 }
@@ -9984,8 +10007,8 @@ int idax_decompiled_variable(IdaxDecompiledHandle handle,
     auto r = df->variable(index);
     if (!r) return fail(r.error());
     std::memset(out, 0, sizeof(*out));
-    fill_local_variable(out, *r);
-    return 0;
+    auto status = fill_local_variable(out, *r);
+    return status ? 0 : fail(status.error());
 }
 
 int idax_decompiled_rename_variable(IdaxDecompiledHandle handle,
@@ -10230,21 +10253,25 @@ int idax_decompiled_save_comments(IdaxDecompiledHandle handle) {
     RETURN_STATUS(df->save_comments());
 }
 
-int idax_decompiled_has_orphan_comments(void* handle, int* out_result) {
+int idax_decompiled_has_orphan_comments(IdaxDecompiledHandle handle, int* out) {
     clear_error();
+    if (handle == nullptr || out == nullptr)
+        return fail(ida::Error::validation("Orphan comment handle/output is null"));
     auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
-    auto r = df->has_orphan_comments();
-    if (!r) return fail(r.error());
-    *out_result = *r ? 1 : 0;
+    auto result = df->has_orphan_comments();
+    if (!result) return fail(result.error());
+    *out = *result ? 1 : 0;
     return 0;
 }
 
-int idax_decompiled_remove_orphan_comments(void* handle, int* out_removed_count) {
+int idax_decompiled_remove_orphan_comments(IdaxDecompiledHandle handle, int* out) {
     clear_error();
+    if (handle == nullptr || out == nullptr)
+        return fail(ida::Error::validation("Orphan comment handle/output is null"));
     auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
-    auto r = df->remove_orphan_comments();
-    if (!r) return fail(r.error());
-    *out_removed_count = *r;
+    auto result = df->remove_orphan_comments();
+    if (!result) return fail(result.error());
+    *out = *result;
     return 0;
 }
 
@@ -10337,10 +10364,45 @@ int idax_decompiler_item_type_name(int item_type, char** out) {
     return 0;
 }
 
+// Owns the ordinary C summary values until the visitor callback returns.
+struct CtreeInfoStorage {
+    std::vector<IdaxDecompilerCtreeItemInfo> parents;
+    std::vector<IdaxDecompilerCtreeItemInfo> children;
+    std::vector<std::vector<std::uint64_t>> case_values;
+    std::vector<IdaxDecompilerSwitchCaseInfo> cases;
+    IdaxDecompilerCtreeItemInfo left{}, right{}, third{}, callee{};
+    IdaxDecompilerCtreeItemInfo condition{}, then_branch{}, else_branch{}, body{};
+    IdaxDecompilerCtreeItemInfo init{}, step{}, expression{};
+};
+
+static IdaxDecompilerCtreeItemInfo ctree_summary(
+    const ida::decompiler::CtreeItemView& item) {
+    return {static_cast<int>(item.type), item.address, item.is_expression ? 1 : 0};
+}
+
+static IdaxDecompilerCtreeItemInfo ctree_summary(
+    const ida::decompiler::ExpressionView& item) {
+    return {static_cast<int>(item.type()), item.address(), 1};
+}
+
+static IdaxDecompilerCtreeItemInfo ctree_summary(
+    const ida::decompiler::StatementView& item) {
+    return {static_cast<int>(item.type()), item.address(), 0};
+}
+
+template <typename View>
+static const IdaxDecompilerCtreeItemInfo* optional_ctree_summary(
+    ida::Result<View> item, IdaxDecompilerCtreeItemInfo& storage) {
+    if (!item) return nullptr;
+    storage = ctree_summary(*item);
+    return &storage;
+}
+
 static void fill_expression_info(IdaxDecompilerExpressionInfo* raw,
                                  ida::decompiler::ExpressionView expr,
                                  std::string* helper_name,
-                                 std::string* type_declaration) {
+                                 std::string* type_declaration,
+                                 CtreeInfoStorage& storage) {
     std::memset(raw, 0, sizeof(*raw));
     raw->type = static_cast<int>(expr.type());
     raw->address = expr.address();
@@ -10368,6 +10430,11 @@ static void fill_expression_info(IdaxDecompilerExpressionInfo* raw,
 
     auto parents = expr.parents();
     if (parents) {
+        storage.parents.reserve(parents->size());
+        for (const auto& parent : *parents)
+            storage.parents.push_back(ctree_summary(parent));
+        raw->parents = storage.parents.data();
+        raw->parent_count = storage.parents.size();
         raw->parent_depth = parents->size();
         if (!parents->empty()) {
             const auto& parent = parents->back();
@@ -10377,16 +10444,37 @@ static void fill_expression_info(IdaxDecompilerExpressionInfo* raw,
             raw->parent_is_expression = parent.is_expression ? 1 : 0;
         }
     }
+    raw->left = optional_ctree_summary(expr.left(), storage.left);
+    raw->right = optional_ctree_summary(expr.right(), storage.right);
+    raw->third = optional_ctree_summary(expr.third(), storage.third);
+    raw->call_callee = optional_ctree_summary(expr.call_callee(), storage.callee);
+    raw->operand_count = expr.operand_count();
+    auto argument_count = expr.call_argument_count();
+    if (argument_count) {
+        storage.children.reserve(*argument_count);
+        for (std::size_t index = 0; index < *argument_count; ++index) {
+            auto child = expr.call_argument(index);
+            if (child) storage.children.push_back(ctree_summary(*child));
+        }
+        raw->call_arguments = storage.children.data();
+        raw->call_argument_count = storage.children.size();
+    }
 }
 
 static void fill_statement_info(IdaxDecompilerStatementInfo* raw,
-                                ida::decompiler::StatementView stmt) {
+                                ida::decompiler::StatementView stmt,
+                                CtreeInfoStorage& storage) {
     std::memset(raw, 0, sizeof(*raw));
     raw->type = static_cast<int>(stmt.type());
     raw->address = stmt.address();
 
     auto parents = stmt.parents();
     if (parents) {
+        storage.parents.reserve(parents->size());
+        for (const auto& parent : *parents)
+            storage.parents.push_back(ctree_summary(parent));
+        raw->parents = storage.parents.data();
+        raw->parent_count = storage.parents.size();
         raw->parent_depth = parents->size();
         if (!parents->empty()) {
             const auto& parent = parents->back();
@@ -10395,6 +10483,38 @@ static void fill_statement_info(IdaxDecompilerStatementInfo* raw,
             raw->parent_address = parent.address;
             raw->parent_is_expression = parent.is_expression ? 1 : 0;
         }
+    }
+    raw->condition = optional_ctree_summary(stmt.condition(), storage.condition);
+    raw->then_branch = optional_ctree_summary(stmt.then_branch(), storage.then_branch);
+    raw->else_branch = optional_ctree_summary(stmt.else_branch(), storage.else_branch);
+    raw->body = optional_ctree_summary(stmt.body(), storage.body);
+    raw->init_expression = optional_ctree_summary(stmt.init_expression(), storage.init);
+    raw->step_expression = optional_ctree_summary(stmt.step_expression(), storage.step);
+    raw->expression = optional_ctree_summary(stmt.expression(), storage.expression);
+    auto block_size = stmt.block_size();
+    if (block_size) {
+        storage.children.reserve(*block_size);
+        for (std::size_t index = 0; index < *block_size; ++index) {
+            auto child = stmt.block_statement(index);
+            if (child) storage.children.push_back(ctree_summary(*child));
+        }
+        raw->block_statements = storage.children.data();
+        raw->block_statement_count = storage.children.size();
+    }
+    auto case_count = stmt.switch_case_count();
+    if (case_count) {
+        storage.case_values.reserve(*case_count);
+        storage.cases.reserve(*case_count);
+        for (std::size_t index = 0; index < *case_count; ++index) {
+            auto values = stmt.switch_case_values(index);
+            auto body = stmt.switch_case_body(index);
+            if (!values || !body) continue;
+            storage.case_values.push_back(std::move(*values));
+            const auto& copied = storage.case_values.back();
+            storage.cases.push_back({copied.data(), copied.size(), ctree_summary(*body)});
+        }
+        raw->switch_cases = storage.cases.data();
+        raw->switch_case_count = storage.cases.size();
     }
 }
 
@@ -10418,7 +10538,8 @@ int idax_decompiler_for_each_expression(IdaxDecompiledHandle handle,
             std::string helper_name;
             std::string type_declaration;
             IdaxDecompilerExpressionInfo raw{};
-            fill_expression_info(&raw, expr, &helper_name, &type_declaration);
+            CtreeInfoStorage storage;
+            fill_expression_info(&raw, expr, &helper_name, &type_declaration, storage);
             return visit_action_from_c_int(callback(context, &raw));
         }
 
@@ -10463,7 +10584,8 @@ int idax_decompiler_for_each_item(IdaxDecompiledHandle handle,
             std::string helper_name;
             std::string type_declaration;
             IdaxDecompilerExpressionInfo raw{};
-            fill_expression_info(&raw, expr, &helper_name, &type_declaration);
+            CtreeInfoStorage storage;
+            fill_expression_info(&raw, expr, &helper_name, &type_declaration, storage);
             return visit_action_from_c_int(expression_callback(context, &raw));
         }
 
@@ -10472,7 +10594,8 @@ int idax_decompiler_for_each_item(IdaxDecompiledHandle handle,
             if (statement_callback == nullptr)
                 return ida::decompiler::VisitAction::Continue;
             IdaxDecompilerStatementInfo raw{};
-            fill_statement_info(&raw, stmt);
+            CtreeInfoStorage storage;
+            fill_statement_info(&raw, stmt, storage);
             return visit_action_from_c_int(statement_callback(context, &raw));
         }
 
@@ -10524,6 +10647,26 @@ void free_microcode_operand(IdaxMicrocodeOperand* operand) {
         operand->call_arguments = nullptr;
     }
     operand->call_argument_count = 0;
+    std::free(operand->string_constant);
+    operand->string_constant = nullptr;
+    std::free(operand->global_name);
+    operand->global_name = nullptr;
+    std::free(operand->call_argument_properties);
+    operand->call_argument_properties = nullptr;
+    operand->call_argument_property_count = 0;
+    if (operand->call_return_operands != nullptr) {
+        for (std::size_t index = 0; index < operand->call_return_operand_count; ++index)
+            free_microcode_operand(&operand->call_return_operands[index]);
+        std::free(operand->call_return_operands);
+        operand->call_return_operands = nullptr;
+    }
+    operand->call_return_operand_count = 0;
+    std::free(operand->call_return_registers);
+    operand->call_return_registers = nullptr;
+    operand->call_return_register_count = 0;
+    std::free(operand->switch_cases);
+    operand->switch_cases = nullptr;
+    operand->switch_case_count = 0;
 }
 
 ida::Status fill_microcode_operand(IdaxMicrocodeOperand* out,
@@ -10541,12 +10684,27 @@ ida::Status fill_microcode_operand(IdaxMicrocodeOperand* out,
     out->stack_offset = operand.stack_offset;
     out->helper_name = dup_string(operand.helper_name);
     out->block_index = operand.block_index;
+    out->processor_register_id = operand.processor_register_id;
     out->unsigned_immediate = operand.unsigned_immediate;
     out->signed_immediate = operand.signed_immediate;
     out->byte_width = operand.byte_width;
     out->mark_user_defined_type = operand.mark_user_defined_type ? 1 : 0;
+    out->call_target = operand.call_target;
+    out->text = dup_string(operand.text);
+    out->string_constant = dup_string(operand.string_constant);
+    out->global_name = dup_string(operand.global_name);
+    out->has_floating_point_constant = operand.floating_point_constant.has_value();
+    out->floating_point_constant = operand.floating_point_constant.value_or(0.0);
+    out->has_value_number = operand.value_number.has_value();
+    out->value_number = operand.value_number.value_or(0);
+    out->has_switch_default_target = operand.switch_default_target.has_value();
+    out->switch_default_target = operand.switch_default_target.value_or(0);
 
-    if (out->helper_name == nullptr && !operand.helper_name.empty()) {
+    if ((out->helper_name == nullptr && !operand.helper_name.empty())
+        || (out->text == nullptr && !operand.text.empty())
+        || (out->string_constant == nullptr && !operand.string_constant.empty())
+        || (out->global_name == nullptr && !operand.global_name.empty())) {
+        free_microcode_operand(out);
         return std::unexpected(ida::Error::internal("malloc failed"));
     }
 
@@ -10554,8 +10712,7 @@ ida::Status fill_microcode_operand(IdaxMicrocodeOperand* out,
         out->nested_instruction = static_cast<IdaxMicrocodeInstruction*>(
             std::calloc(1, sizeof(IdaxMicrocodeInstruction)));
         if (out->nested_instruction == nullptr) {
-            std::free(out->helper_name);
-            out->helper_name = nullptr;
+            free_microcode_operand(out);
             return std::unexpected(ida::Error::internal("malloc failed"));
         }
 
@@ -10565,9 +10722,102 @@ ida::Status fill_microcode_operand(IdaxMicrocodeOperand* out,
             idax_microcode_instruction_free(out->nested_instruction);
             std::free(out->nested_instruction);
             out->nested_instruction = nullptr;
-            std::free(out->helper_name);
-            out->helper_name = nullptr;
+            free_microcode_operand(out);
             return status;
+        }
+    }
+
+    if (operand.referenced_operand != nullptr) {
+        out->referenced_operand = static_cast<IdaxMicrocodeOperand*>(
+            std::calloc(1, sizeof(IdaxMicrocodeOperand)));
+        if (out->referenced_operand == nullptr) {
+            free_microcode_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+
+        auto status = fill_microcode_operand(out->referenced_operand,
+                                             *operand.referenced_operand);
+        if (!status) {
+            free_microcode_operand(out);
+            return status;
+        }
+    }
+
+    if (!operand.call_arguments.empty()) {
+        out->call_argument_count = operand.call_arguments.size();
+        out->call_arguments = static_cast<IdaxMicrocodeOperand*>(
+            std::calloc(out->call_argument_count, sizeof(IdaxMicrocodeOperand)));
+        if (out->call_arguments == nullptr) {
+            free_microcode_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+
+        for (std::size_t index = 0; index < out->call_argument_count; ++index) {
+            auto status = fill_microcode_operand(&out->call_arguments[index],
+                                                 operand.call_arguments[index]);
+            if (!status) {
+                free_microcode_operand(out);
+                return status;
+            }
+        }
+    }
+
+    if (!operand.call_argument_properties.empty()) {
+        out->call_argument_property_count = operand.call_argument_properties.size();
+        out->call_argument_properties = static_cast<IdaxMicrocodeCallArgumentProperties*>(
+            std::calloc(out->call_argument_property_count, sizeof(IdaxMicrocodeCallArgumentProperties)));
+        if (out->call_argument_properties == nullptr) {
+            free_microcode_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        for (std::size_t index = 0; index < out->call_argument_property_count; ++index) {
+            const auto& source = operand.call_argument_properties[index];
+            out->call_argument_properties[index] = {
+                source.hidden, source.return_value_pointer, source.structure_argument,
+                source.array_argument, source.unused, source.swift_self};
+        }
+    }
+
+    if (!operand.call_return_operands.empty()) {
+        out->call_return_operand_count = operand.call_return_operands.size();
+        out->call_return_operands = static_cast<IdaxMicrocodeOperand*>(
+            std::calloc(out->call_return_operand_count, sizeof(IdaxMicrocodeOperand)));
+        if (out->call_return_operands == nullptr) {
+            free_microcode_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        for (std::size_t index = 0; index < out->call_return_operand_count; ++index) {
+            const auto& source = operand.call_return_operands[index];
+            auto status = fill_microcode_operand(&out->call_return_operands[index], source);
+            if (!status) { free_microcode_operand(out); return status; }
+        }
+    }
+
+    if (!operand.call_return_registers.empty()) {
+        out->call_return_register_count = operand.call_return_registers.size();
+        out->call_return_registers = static_cast<IdaxMicrocodeRegisterRange*>(
+            std::calloc(out->call_return_register_count, sizeof(IdaxMicrocodeRegisterRange)));
+        if (out->call_return_registers == nullptr) {
+            free_microcode_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        for (std::size_t index = 0; index < out->call_return_register_count; ++index) {
+            const auto& source = operand.call_return_registers[index];
+            out->call_return_registers[index] = {source.register_id, source.byte_width};
+        }
+    }
+
+    if (!operand.switch_cases.empty()) {
+        out->switch_case_count = operand.switch_cases.size();
+        out->switch_cases = static_cast<IdaxMicrocodeSwitchCase*>(
+            std::calloc(out->switch_case_count, sizeof(IdaxMicrocodeSwitchCase)));
+        if (out->switch_cases == nullptr) {
+            free_microcode_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        for (std::size_t index = 0; index < out->switch_case_count; ++index) {
+            const auto& source = operand.switch_cases[index];
+            out->switch_cases[index] = {source.value, source.target_block};
         }
     }
 
@@ -10582,22 +10832,28 @@ ida::Status fill_microcode_instruction(IdaxMicrocodeInstruction* out,
     std::memset(out, 0, sizeof(*out));
     out->opcode = static_cast<int>(instruction.opcode);
     out->floating_point_instruction = instruction.floating_point_instruction ? 1 : 0;
+    out->modifies_destination = instruction.modifies_destination ? 1 : 0;
+    out->address = instruction.address;
+    out->text = dup_string(instruction.text);
+    if (out->text == nullptr && !instruction.text.empty())
+        return std::unexpected(ida::Error::internal("malloc failed"));
 
     auto left_status = fill_microcode_operand(&out->left, instruction.left);
-    if (!left_status)
+    if (!left_status) {
+        idax_microcode_instruction_free(out);
         return left_status;
+    }
 
     auto right_status = fill_microcode_operand(&out->right, instruction.right);
     if (!right_status) {
-        free_microcode_operand(&out->left);
+        idax_microcode_instruction_free(out);
         return right_status;
     }
 
     auto destination_status = fill_microcode_operand(&out->destination,
                                                      instruction.destination);
     if (!destination_status) {
-        free_microcode_operand(&out->right);
-        free_microcode_operand(&out->left);
+        idax_microcode_instruction_free(out);
         return destination_status;
     }
 
@@ -10699,6 +10955,9 @@ void free_microcode_function_contents(IdaxMicrocodeFunction* function) {
         function->blocks = nullptr;
     }
     function->block_count = 0;
+    idax_decompiled_variables_free(function->local_variables, function->local_variable_count);
+    function->local_variables = nullptr;
+    function->local_variable_count = 0;
 }
 
 ida::Status fill_microcode_function(
@@ -10710,6 +10969,24 @@ ida::Status fill_microcode_function(
     std::memset(out, 0, sizeof(*out));
     out->entry_address = function.entry_address;
     out->maturity = static_cast<int>(function.maturity);
+    out->stack_frame_size = function.stack_frame_size;
+    out->local_stack_size = function.local_stack_size;
+    out->saved_register_size = function.saved_register_size;
+    out->has_return_variable_index = function.return_variable_index.has_value();
+    out->return_variable_index = function.return_variable_index.value_or(0);
+    if (!function.local_variables.empty()) {
+        out->local_variable_count = function.local_variables.size();
+        out->local_variables = static_cast<IdaxLocalVariable*>(
+            std::calloc(out->local_variable_count, sizeof(IdaxLocalVariable)));
+        if (out->local_variables == nullptr) {
+            free_microcode_function_contents(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        for (std::size_t index = 0; index < out->local_variable_count; ++index) {
+            auto status = fill_local_variable(&out->local_variables[index], function.local_variables[index]);
+            if (!status) { free_microcode_function_contents(out); return status; }
+        }
+    }
 
     if (!function.arguments.empty()) {
         out->argument_count = function.arguments.size();
@@ -10763,6 +11040,7 @@ ida::Status fill_microcode_function(
             const auto& source = function.blocks[block_index];
             auto& destination = out->blocks[block_index];
             destination.index = source.index;
+            destination.kind = static_cast<int>(source.kind);
             destination.start_address = source.start_address;
             destination.end_address = source.end_address;
 
@@ -10848,8 +11126,11 @@ void idax_microcode_instruction_free(IdaxMicrocodeInstruction* instruction) {
     free_microcode_operand(&instruction->left);
     free_microcode_operand(&instruction->right);
     free_microcode_operand(&instruction->destination);
+    std::free(instruction->text);
+    instruction->text = nullptr;
     instruction->opcode = 0;
     instruction->floating_point_instruction = 0;
+    instruction->address = 0;
 }
 
 int idax_decompiler_generate_microcode(uint64_t function_address,
@@ -11090,8 +11371,7 @@ int idax_storage_node_sup_get(IdaxNodeHandle node, uint64_t index,
 }
 
 int idax_storage_node_sup_set(IdaxNodeHandle node, uint64_t index,
-                              const uint8_t* __counted_by(len) data __noescape,
-                              size_t len, uint8_t tag) {
+                              const uint8_t* data, size_t len, uint8_t tag) {
     RETURN_STATUS(static_cast<ida::storage::Node*>(node)->set_sup(
         index, std::span<const uint8_t>(data, len), tag));
 }
@@ -11121,8 +11401,7 @@ int idax_storage_node_blob_get(IdaxNodeHandle node, uint64_t index,
 }
 
 int idax_storage_node_blob_set(IdaxNodeHandle node, uint64_t index,
-                               const uint8_t* __counted_by(len) data __noescape,
-                               size_t len, uint8_t tag) {
+                               const uint8_t* data, size_t len, uint8_t tag) {
     RETURN_STATUS(static_cast<ida::storage::Node*>(node)->set_blob(
         index, std::span<const uint8_t>(data, len), tag));
 }
@@ -12873,8 +13152,8 @@ int idax_lumina_close_all_connections(void) {
     RETURN_STATUS(ida::lumina::close_all_connections());
 }
 
-int idax_lumina_pull(const uint64_t* __counted_by(count) addresses __noescape,
-                     size_t count, int auto_apply, int feature,
+int idax_lumina_pull(const uint64_t* addresses, size_t count,
+                     int auto_apply, int feature,
                      IdaxLuminaBatchResult* out) {
     clear_error();
     std::span<const ida::Address> addrs(addresses, count);
@@ -12890,8 +13169,8 @@ int idax_lumina_pull(const uint64_t* __counted_by(count) addresses __noescape,
     return 0;
 }
 
-int idax_lumina_push(const uint64_t* __counted_by(count) addresses __noescape,
-                     size_t count, int push_mode, int feature,
+int idax_lumina_push(const uint64_t* addresses, size_t count,
+                     int push_mode, int feature,
                      IdaxLuminaBatchResult* out) {
     clear_error();
     std::span<const ida::Address> addrs(addresses, count);
@@ -12906,1997 +13185,86 @@ int idax_lumina_push(const uint64_t* __counted_by(count) addresses __noescape,
     return 0;
 }
 
-
-// ─── merged from fork: functions not present upstream ───
-
-// Fork-local helpers and types the upstream shim does not define.
-
-// Forward declarations: ProcessorBridge below calls these, but their
-// definitions live further down with the rest of the fork-local functions.
-void fill_switch_description(IdaxSwitchDescription* out,
-                             const ida::processor::SwitchDescription& desc);
-ida::processor::SwitchDescription to_cpp_switch_description(
-        const IdaxSwitchDescription* desc);
-
-namespace {
-
-using CtreeParentMap = std::unordered_map<const void*, ida::decompiler::CtreeItemView>;
-
-thread_local CtreeParentMap* g_ctree_parent_map = nullptr;
-
-struct CtreeParentMapScope {
-    CtreeParentMap* previous;
-    explicit CtreeParentMapScope(CtreeParentMap* current) noexcept
-        : previous(g_ctree_parent_map) {
-        g_ctree_parent_map = current;
-    }
-    ~CtreeParentMapScope() {
-        g_ctree_parent_map = previous;
-    }
-    CtreeParentMapScope(const CtreeParentMapScope&) = delete;
-    CtreeParentMapScope& operator=(const CtreeParentMapScope&) = delete;
-};
-
-template <typename View>
-void record_ctree_parent(CtreeParentMap& parent_map, const View& view) {
-    auto parent = view.parent();
-    if (!parent || !*parent)
-        return;
-    parent_map[view.raw_handle()] = **parent;
-}
-
-int populate_ctree_parent_info(const void* handle, IdaxCtreeItemInfo* out) {
-    if (!out)
-        return fail(ida::Error::validation("out is null"));
-    out->has_value     = 0;
-    out->type          = 0;
-    out->address       = 0;
-    out->is_expression = 0;
-    if (!handle || !g_ctree_parent_map)
-        return 0;
-    auto it = g_ctree_parent_map->find(handle);
-    if (it == g_ctree_parent_map->end())
-        return 0;
-    out->has_value     = 1;
-    out->type          = static_cast<int>(it->second.type);
-    out->address       = it->second.address;
-    out->is_expression = it->second.is_expression ? 1 : 0;
-    return 0;
-}
-
-static ida::decompiler::MicrocodeContext* as_mutable_microcode_context(void* raw) {
-    return static_cast<ida::decompiler::MicrocodeContext*>(raw);
-}
-
-struct ProcessorBridge final : ida::processor::Processor {
-    IdaxProcessorCallbacks callbacks;
-
-    explicit ProcessorBridge(const IdaxProcessorCallbacks& cbs) : callbacks(cbs) {}
-
-    // ── Required overrides ─────────────────────────────────────────────
-
-    ida::processor::ProcessorInfo info() const override {
-        IdaxProcessorInfo raw{};
-        callbacks.info(callbacks.context, &raw);
-
-        ida::processor::ProcessorInfo result;
-        result.id    = raw.id;
-        result.flags = raw.flags;
-        result.flags2 = raw.flags2;
-        result.code_bits_per_byte = raw.code_bits_per_byte;
-        result.data_bits_per_byte = raw.data_bits_per_byte;
-        result.code_segment_register  = raw.code_segment_register;
-        result.data_segment_register  = raw.data_segment_register;
-        result.first_segment_register = raw.first_segment_register;
-        result.last_segment_register  = raw.last_segment_register;
-        result.segment_register_size  = raw.segment_register_size;
-        result.return_icode = raw.return_icode;
-        result.default_bitness = raw.default_bitness;
-
-        for (size_t i = 0; i < raw.short_name_count; ++i) {
-            if (raw.short_names[i])
-                result.short_names.emplace_back(raw.short_names[i]);
-        }
-        for (size_t i = 0; i < raw.long_name_count; ++i) {
-            if (raw.long_names[i])
-                result.long_names.emplace_back(raw.long_names[i]);
-        }
-        for (size_t i = 0; i < raw.register_count; ++i) {
-            result.registers.push_back({
-                raw.registers[i].name ? std::string(raw.registers[i].name) : std::string(),
-                raw.registers[i].read_only != 0
-            });
-        }
-        for (size_t i = 0; i < raw.instruction_count; ++i) {
-            auto& src = raw.instructions[i];
-            ida::processor::InstructionDescriptor desc;
-            desc.mnemonic      = src.mnemonic ? std::string(src.mnemonic) : std::string();
-            desc.feature_flags = src.feature_flags;
-            desc.operand_count = src.operand_count;
-            desc.description   = src.description ? std::string(src.description) : std::string();
-            desc.privileged    = src.privileged != 0;
-            result.instructions.push_back(std::move(desc));
-        }
-        for (size_t i = 0; i < raw.assembler_count; ++i) {
-            auto& src = raw.assemblers[i];
-            ida::processor::AssemblerInfo asm_info;
-            asm_info.name              = src.name ? std::string(src.name) : std::string();
-            asm_info.comment_prefix    = src.comment_prefix ? std::string(src.comment_prefix) : std::string();
-            asm_info.origin            = src.origin ? std::string(src.origin) : std::string();
-            asm_info.end_directive     = src.end_directive ? std::string(src.end_directive) : std::string();
-            asm_info.string_delim      = src.string_delim;
-            asm_info.char_delim        = src.char_delim;
-            asm_info.byte_directive    = src.byte_directive ? std::string(src.byte_directive) : std::string();
-            asm_info.word_directive    = src.word_directive ? std::string(src.word_directive) : std::string();
-            asm_info.dword_directive   = src.dword_directive ? std::string(src.dword_directive) : std::string();
-            asm_info.qword_directive   = src.qword_directive ? std::string(src.qword_directive) : std::string();
-            asm_info.oword_directive   = src.oword_directive ? std::string(src.oword_directive) : std::string();
-            asm_info.float_directive   = src.float_directive ? std::string(src.float_directive) : std::string();
-            asm_info.double_directive  = src.double_directive ? std::string(src.double_directive) : std::string();
-            asm_info.tbyte_directive   = src.tbyte_directive ? std::string(src.tbyte_directive) : std::string();
-            asm_info.align_directive   = src.align_directive ? std::string(src.align_directive) : std::string();
-            asm_info.include_directive = src.include_directive ? std::string(src.include_directive) : std::string();
-            asm_info.public_directive  = src.public_directive ? std::string(src.public_directive) : std::string();
-            asm_info.weak_directive    = src.weak_directive ? std::string(src.weak_directive) : std::string();
-            asm_info.external_directive = src.external_directive ? std::string(src.external_directive) : std::string();
-            asm_info.current_ip_symbol  = src.current_ip_symbol ? std::string(src.current_ip_symbol) : std::string();
-            asm_info.uppercase_mnemonics         = src.uppercase_mnemonics != 0;
-            asm_info.uppercase_registers         = src.uppercase_registers != 0;
-            asm_info.requires_colon_after_labels = src.requires_colon_after_labels != 0;
-            asm_info.supports_quoted_names       = src.supports_quoted_names != 0;
-            result.assemblers.push_back(std::move(asm_info));
-        }
-
-        idax_processor_info_free(&raw);
-        return result;
-    }
-
-    ida::Result<int> analyze(ida::Address address) override {
-        int size = 0;
-        int ret = callbacks.analyze(callbacks.context, address, &size);
-        if (ret != 0) {
-            return std::unexpected(ida::Error::sdk("analyze callback failed"));
-        }
-        return size;
-    }
-
-    ida::processor::EmulateResult emulate(ida::Address address) override {
-        int ret = callbacks.emulate(callbacks.context, address);
-        return static_cast<ida::processor::EmulateResult>(ret);
-    }
-
-    void output_instruction(ida::Address address) override {
-        callbacks.output_instruction(callbacks.context, address);
-    }
-
-    ida::processor::OutputOperandResult output_operand(ida::Address address,
-                                                       int operand_index) override {
-        int ret = callbacks.output_operand(callbacks.context, address, operand_index);
-        return static_cast<ida::processor::OutputOperandResult>(ret);
-    }
-
-    // ── Optional overrides ─────────────────────────────────────────────
-
-    void on_new_file(std::string_view filename) override {
-        if (callbacks.on_new_file)
-            callbacks.on_new_file(callbacks.context, std::string(filename).c_str());
-    }
-
-    void on_old_file(std::string_view filename) override {
-        if (callbacks.on_old_file)
-            callbacks.on_old_file(callbacks.context, std::string(filename).c_str());
-    }
-
-    int is_call(ida::Address address) override {
-        if (!callbacks.is_call) return 0;
-        return callbacks.is_call(callbacks.context, address);
-    }
-
-    int is_return(ida::Address address) override {
-        if (!callbacks.is_return) return 0;
-        return callbacks.is_return(callbacks.context, address);
-    }
-
-    int may_be_function(ida::Address address) override {
-        if (!callbacks.may_be_function) return 0;
-        return callbacks.may_be_function(callbacks.context, address);
-    }
-
-    int is_sane_instruction(ida::Address address, bool no_code_references) override {
-        if (!callbacks.is_sane_instruction) return 0;
-        return callbacks.is_sane_instruction(callbacks.context, address,
-                                             no_code_references ? 1 : 0);
-    }
-
-    int is_indirect_jump(ida::Address address) override {
-        if (!callbacks.is_indirect_jump) return 0;
-        return callbacks.is_indirect_jump(callbacks.context, address);
-    }
-
-    int is_basic_block_end(ida::Address address,
-                           bool call_instruction_stops_block) override {
-        if (!callbacks.is_basic_block_end) return 0;
-        return callbacks.is_basic_block_end(callbacks.context, address,
-                                            call_instruction_stops_block ? 1 : 0);
-    }
-
-    bool create_function_frame(ida::Address function_start) override {
-        if (!callbacks.create_function_frame) return false;
-        return callbacks.create_function_frame(callbacks.context, function_start) != 0;
-    }
-
-    int adjust_function_bounds(ida::Address function_start,
-                               ida::Address max_function_end,
-                               int suggested_result) override {
-        if (!callbacks.adjust_function_bounds) return suggested_result;
-        return callbacks.adjust_function_bounds(callbacks.context, function_start,
-                                                max_function_end, suggested_result);
-    }
-
-    int analyze_function_prolog(ida::Address function_start) override {
-        if (!callbacks.analyze_function_prolog) return 0;
-        return callbacks.analyze_function_prolog(callbacks.context, function_start);
-    }
-
-    int calculate_stack_pointer_delta(ida::Address address,
-                                      std::int64_t& out_delta) override {
-        if (!callbacks.calculate_stack_pointer_delta) {
-            out_delta = 0;
-            return 0;
-        }
-        return callbacks.calculate_stack_pointer_delta(callbacks.context, address,
-                                                       &out_delta);
-    }
-
-    int get_return_address_size(ida::Address function_start) override {
-        if (!callbacks.get_return_address_size) return 0;
-        return callbacks.get_return_address_size(callbacks.context, function_start);
-    }
-
-    int detect_switch(ida::Address address,
-                      ida::processor::SwitchDescription& out_switch) override {
-        if (!callbacks.detect_switch) return 0;
-        IdaxSwitchDescription raw{};
-        int ret = callbacks.detect_switch(callbacks.context, address, &raw);
-        if (ret > 0) {
-            out_switch = to_cpp_switch_description(&raw);
-        }
-        return ret;
-    }
-
-    int calculate_switch_cases(ida::Address address,
-                               const ida::processor::SwitchDescription& switch_description,
-                               std::vector<ida::processor::SwitchCase>& out_cases) override {
-        if (!callbacks.calculate_switch_cases) return 0;
-        IdaxSwitchDescription raw_switch{};
-        fill_switch_description(&raw_switch, switch_description);
-
-        IdaxSwitchCase* raw_cases = nullptr;
-        size_t raw_case_count = 0;
-        int ret = callbacks.calculate_switch_cases(callbacks.context, address,
-                                                   &raw_switch, &raw_cases,
-                                                   &raw_case_count);
-        if (ret > 0 && raw_cases != nullptr) {
-            for (size_t i = 0; i < raw_case_count; ++i) {
-                ida::processor::SwitchCase sc;
-                sc.target = raw_cases[i].target;
-                if (raw_cases[i].values && raw_cases[i].value_count > 0) {
-                    sc.values.assign(raw_cases[i].values,
-                                     raw_cases[i].values + raw_cases[i].value_count);
-                }
-                out_cases.push_back(std::move(sc));
-            }
-            idax_switch_cases_free(raw_cases, raw_case_count);
-        }
-        return ret;
-    }
-
-    int create_switch_references(ida::Address address,
-                                 const ida::processor::SwitchDescription& switch_description) override {
-        if (!callbacks.create_switch_references) return 0;
-        IdaxSwitchDescription raw{};
-        fill_switch_description(&raw, switch_description);
-        return callbacks.create_switch_references(callbacks.context, address, &raw);
-    }
-
-    ida::processor::OutputInstructionResult output_mnemonic_with_context(
-            ida::Address address,
-            ida::processor::OutputContext& output) override {
-        if (!callbacks.output_mnemonic_with_context)
-            return ida::processor::OutputInstructionResult::NotImplemented;
-        int ret = callbacks.output_mnemonic_with_context(callbacks.context, address, &output);
-        return static_cast<ida::processor::OutputInstructionResult>(ret);
-    }
-
-    ida::processor::OutputInstructionResult output_instruction_with_context(
-            ida::Address address,
-            ida::processor::OutputContext& output) override {
-        if (!callbacks.output_instruction_with_context) {
-            return Processor::output_instruction_with_context(address, output);
-        }
-        int ret = callbacks.output_instruction_with_context(callbacks.context, address, &output);
-        return static_cast<ida::processor::OutputInstructionResult>(ret);
-    }
-
-    ida::processor::OutputOperandResult output_operand_with_context(
-            ida::Address address,
-            int operand_index,
-            ida::processor::OutputContext& output) override {
-        if (!callbacks.output_operand_with_context) {
-            return output_operand(address, operand_index);
-        }
-        int ret = callbacks.output_operand_with_context(callbacks.context, address,
-                                                        operand_index, &output);
-        return static_cast<ida::processor::OutputOperandResult>(ret);
-    }
-};
-
-int copy_dyld_cache_modules(
-    const ida::Result<std::vector<ida::dyld_cache::ModuleInfo>>& module_result,
-    IdaxDyldCacheModule** output_modules,
-    size_t* output_count
-) {
-    if (!module_result)
-        return fail(module_result.error());
-
-    const auto& modules = *module_result;
-    *output_count = modules.size();
-    if (modules.empty()) {
-        *output_modules = nullptr;
-        return 0;
-    }
-
-    *output_modules = static_cast<IdaxDyldCacheModule*>(
-        std::calloc(modules.size(), sizeof(IdaxDyldCacheModule)));
-    if (*output_modules == nullptr)
-        return fail(ida::Error::internal("malloc failed"));
-
-    for (size_t module_index = 0; module_index < modules.size(); ++module_index) {
-        (*output_modules)[module_index].load_address = modules[module_index].load_address;
-        (*output_modules)[module_index].path = dup_string(modules[module_index].path);
-        if ((*output_modules)[module_index].path == nullptr
-            && !modules[module_index].path.empty()) {
-            idax_dyld_cache_list_modules_free(*output_modules, module_index + 1);
-            *output_modules = nullptr;
-            *output_count = 0;
-            return fail(ida::Error::internal("malloc failed"));
-        }
-    }
-    return 0;
-}
-
-ida::microcode::Maturity parse_microcode_maturity(int raw) {
-    switch (raw) {
-        case 0:
-        case IDAX_MICROCODE_MATURITY_LVARS:
-            return ida::microcode::Maturity::Lvars;
-        case IDAX_MICROCODE_MATURITY_GENERATED:
-            return ida::microcode::Maturity::Generated;
-        case IDAX_MICROCODE_MATURITY_PREOPTIMIZED:
-            return ida::microcode::Maturity::Preoptimized;
-        case IDAX_MICROCODE_MATURITY_LOCOPT:
-            return ida::microcode::Maturity::Locopt;
-        case IDAX_MICROCODE_MATURITY_CALLED_ARGUMENTS:
-            return ida::microcode::Maturity::CalledArguments;
-        case IDAX_MICROCODE_MATURITY_GLBOPT1:
-            return ida::microcode::Maturity::Glbopt1;
-        case IDAX_MICROCODE_MATURITY_GLBOPT2:
-            return ida::microcode::Maturity::Glbopt2;
-        case IDAX_MICROCODE_MATURITY_GLBOPT3:
-            return ida::microcode::Maturity::Glbopt3;
-        default:
-            return ida::microcode::Maturity::Lvars;
-    }
-}
-
-ida::microcode::FunctionSnapshot* as_microcode_snapshot(IdaxMicrocodeSnapshotHandle handle) {
-    return static_cast<ida::microcode::FunctionSnapshot*>(handle);
-}
-
-}  // namespace
-
-
-int idax_database_save_to(const char* output_database_path) {
-    if (output_database_path == nullptr)
-        return fail(ida::Error::validation("Output database path is null"));
-    RETURN_STATUS(ida::database::save_to(output_database_path));
-}
-
-int idax_database_init_with_options(const IdaxRuntimeOptions* options) {
-    clear_error();
-    ida::database::RuntimeOptions opts;
-    if (options) {
-        opts.quiet = (options->quiet != 0);
-        opts.plugin_policy.disable_user_plugins = (options->disable_user_plugins != 0);
-        if (options->input_format != nullptr) opts.input_format = options->input_format;
-    }
-    RETURN_STATUS(ida::database::init(opts));
-}
-
-int idax_database_open_with_intent(const char* path, int intent, int mode) {
-    clear_error();
-    auto load_intent = static_cast<ida::database::LoadIntent>(intent);
-    auto open_mode   = static_cast<ida::database::OpenMode>(mode);
-    RETURN_STATUS(ida::database::open(path, load_intent, open_mode));
-}
-
-int idax_instruction_set_operand_struct_offset_by_id(uint64_t ea,
-                                                     int n,
-                                                     uint64_t structure_id,
-                                                     int64_t delta) {
-    RETURN_STATUS(ida::instruction::set_operand_struct_offset(
-        ea,
-        n,
-        structure_id,
-        delta));
-}
-
-int idax_instruction_branch_condition(uint64_t ea, int* out) {
-    clear_error();
-    if (!out) return fail(ida::Error::validation("out is null"));
-    *out = static_cast<int>(ida::instruction::branch_condition(ea));
-    return 0;
-}
-
-int idax_ctree_visit(IdaxDecompiledHandle handle,
-                     IdaxCtreeExprVisitor expr_cb,
-                     IdaxCtreeStmtVisitor stmt_cb,
-                     void* context,
-                     int post_order,
-                     int* out_visited) {
-    clear_error();
-    if (expr_cb == nullptr && stmt_cb == nullptr)
-        return fail(ida::Error::validation("at least one ctree visitor callback is required"));
-
-    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
-    ida::decompiler::VisitOptions opts;
-    opts.post_order = (post_order != 0);
-    opts.track_parents = true;
-
-    class Visitor : public ida::decompiler::CtreeVisitor {
-    public:
-        IdaxCtreeExprVisitor expr_cb_;
-        IdaxCtreeStmtVisitor stmt_cb_;
-        void* ctx_;
-        CtreeParentMap parent_map;
-
-        Visitor(IdaxCtreeExprVisitor ec, IdaxCtreeStmtVisitor sc, void* c)
-            : expr_cb_(ec), stmt_cb_(sc), ctx_(c) {}
-
-        ida::decompiler::VisitAction visit_expression(ida::decompiler::ExpressionView expr) override {
-            record_ctree_parent(parent_map, expr);
-            if (expr_cb_ == nullptr)
-                return ida::decompiler::VisitAction::Continue;
-            return visit_action_from_c_int(expr_cb_(ctx_, expr.raw_handle()));
-        }
-        ida::decompiler::VisitAction visit_statement(ida::decompiler::StatementView stmt) override {
-            record_ctree_parent(parent_map, stmt);
-            if (stmt_cb_ == nullptr)
-                return ida::decompiler::VisitAction::Continue;
-            return visit_action_from_c_int(stmt_cb_(ctx_, stmt.raw_handle()));
-        }
-    };
-
-    Visitor visitor(expr_cb, stmt_cb, context);
-    CtreeParentMapScope scope(&visitor.parent_map);
-    auto result = df->visit(visitor, opts);
-    if (!result) return fail(result.error());
-    *out_visited = *result;
-    return 0;
-}
-
-int idax_decompiled_retype_variable(void* handle, const char* variable_name,
-                                     const char* type_declaration) {
-    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
-    auto type_result = ida::type::TypeInfo::from_declaration(type_declaration);
-    if (!type_result) return fail(type_result.error());
-    RETURN_STATUS(df->retype_variable(variable_name, *type_result));
-}
-
-int idax_decompiled_retype_variable_by_index(void* handle, size_t variable_index,
-                                              IdaxTypeHandle type_handle) {
-    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
-    auto* ti = static_cast<ida::type::TypeInfo*>(type_handle);
-    RETURN_STATUS(df->retype_variable(variable_index, *ti));
-}
-
-int idax_decompiled_refresh(void* handle) {
-    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
-    RETURN_STATUS(df->refresh());
-}
-
-int idax_decompiled_address_map(void* handle, uint64_t** out_line_numbers,
-                                 uint64_t** out_addresses, size_t* out_count) {
-    clear_error();
-    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
-    auto r = df->address_map();
-    if (!r) return fail(r.error());
-    auto& mappings = *r;
-    size_t count = mappings.size();
-    auto* lines = static_cast<uint64_t*>(malloc(count * sizeof(uint64_t)));
-    auto* addrs = static_cast<uint64_t*>(malloc(count * sizeof(uint64_t)));
-    if (!lines || !addrs) {
-        free(lines);
-        free(addrs);
-        return fail(ida::Error::internal("malloc failed"));
-    }
-    for (size_t i = 0; i < count; ++i) {
-        lines[i] = static_cast<uint64_t>(mappings[i].line_number);
-        addrs[i] = mappings[i].address;
-    }
-    *out_line_numbers = lines;
-    *out_addresses = addrs;
-    *out_count = count;
-    return 0;
-}
-
-void idax_decompiled_address_map_free(uint64_t* line_numbers, uint64_t* addresses) {
-    free(line_numbers);
-    free(addresses);
-}
-
-int idax_decompiled_microcode_lines(void* handle, char*** out_lines, size_t* out_count) {
-    clear_error();
-    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
-    auto r = df->microcode_lines();
-    if (!r) return fail(r.error());
-    auto& vec = *r;
-    size_t count = vec.size();
-    auto** arr = static_cast<char**>(malloc(count * sizeof(char*)));
-    if (!arr) return fail(ida::Error::internal("malloc failed"));
-    for (size_t i = 0; i < count; ++i) {
-        arr[i] = dup_string(vec[i]);
-    }
-    *out_lines = arr;
-    *out_count = count;
-    return 0;
-}
-
-int idax_ctree_visit_ex(void* handle,
-                         IdaxCtreeExprVisitor visit_expr,
-                         IdaxCtreeStmtVisitor visit_stmt,
-                         IdaxCtreeExprLeaveVisitor leave_expr,
-                         IdaxCtreeStmtLeaveVisitor leave_stmt,
-                         void* context,
-                         int post_order,
-                         int* out_visited) {
-    clear_error();
-    auto* df = static_cast<ida::decompiler::DecompiledFunction*>(handle);
-    ida::decompiler::VisitOptions opts;
-    opts.post_order = (post_order != 0);
-    opts.track_parents = true;
-
-    class VisitorEx : public ida::decompiler::CtreeVisitor {
-    public:
-        IdaxCtreeExprVisitor visit_expr_;
-        IdaxCtreeStmtVisitor visit_stmt_;
-        IdaxCtreeExprLeaveVisitor leave_expr_;
-        IdaxCtreeStmtLeaveVisitor leave_stmt_;
-        void* ctx_;
-        CtreeParentMap parent_map;
-
-        VisitorEx(IdaxCtreeExprVisitor ve, IdaxCtreeStmtVisitor vs,
-                  IdaxCtreeExprLeaveVisitor le, IdaxCtreeStmtLeaveVisitor ls,
-                  void* c)
-            : visit_expr_(ve), visit_stmt_(vs),
-              leave_expr_(le), leave_stmt_(ls), ctx_(c) {}
-
-        ida::decompiler::VisitAction visit_expression(
-                ida::decompiler::ExpressionView expr) override {
-            record_ctree_parent(parent_map, expr);
-            if (!visit_expr_) return ida::decompiler::VisitAction::Continue;
-            return visit_action_from_c_int(visit_expr_(ctx_, expr.raw_handle()));
-        }
-        ida::decompiler::VisitAction visit_statement(
-                ida::decompiler::StatementView stmt) override {
-            record_ctree_parent(parent_map, stmt);
-            if (!visit_stmt_) return ida::decompiler::VisitAction::Continue;
-            return visit_action_from_c_int(visit_stmt_(ctx_, stmt.raw_handle()));
-        }
-        ida::decompiler::VisitAction leave_expression(
-                ida::decompiler::ExpressionView expr) override {
-            record_ctree_parent(parent_map, expr);
-            if (!leave_expr_) return ida::decompiler::VisitAction::Continue;
-            return visit_action_from_c_int(leave_expr_(ctx_, expr.raw_handle()));
-        }
-        ida::decompiler::VisitAction leave_statement(
-                ida::decompiler::StatementView stmt) override {
-            record_ctree_parent(parent_map, stmt);
-            if (!leave_stmt_) return ida::decompiler::VisitAction::Continue;
-            return visit_action_from_c_int(leave_stmt_(ctx_, stmt.raw_handle()));
-        }
-    };
-
-    VisitorEx visitor(visit_expr, visit_stmt, leave_expr, leave_stmt, context);
-    CtreeParentMapScope scope(&visitor.parent_map);
-    auto result = df->visit(visitor, opts);
-    if (!result) return fail(result.error());
-    *out_visited = *result;
-    return 0;
-}
-
-int idax_ctree_expr_parent(IdaxCtreeExprHandle expr, IdaxCtreeItemInfo* out) {
-    clear_error();
-    return populate_ctree_parent_info(expr, out);
-}
-
-int idax_ctree_stmt_parent(IdaxCtreeStmtHandle stmt, IdaxCtreeItemInfo* out) {
-    clear_error();
-    return populate_ctree_parent_info(stmt, out);
-}
-
-int idax_ctree_expr_type(IdaxCtreeExprHandle expr, int* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    *out = static_cast<int>(ev.type());
-    return 0;
-}
-
-int idax_ctree_expr_address(IdaxCtreeExprHandle expr, uint64_t* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    *out = ev.address();
-    return 0;
-}
-
-int idax_ctree_expr_number_value(IdaxCtreeExprHandle expr, uint64_t* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    auto r = ev.number_value();
-    if (!r) return fail(r.error());
-    *out = *r;
-    return 0;
-}
-
-int idax_ctree_expr_string_value(IdaxCtreeExprHandle expr, char** out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    auto r = ev.string_value();
-    if (!r) return fail(r.error());
-    *out = dup_string(*r);
-    return 0;
-}
-
-int idax_ctree_expr_object_address(IdaxCtreeExprHandle expr, uint64_t* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    auto r = ev.object_address();
-    if (!r) return fail(r.error());
-    *out = *r;
-    return 0;
-}
-
-int idax_ctree_expr_variable_index(IdaxCtreeExprHandle expr, int* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    auto r = ev.variable_index();
-    if (!r) return fail(r.error());
-    *out = *r;
-    return 0;
-}
-
-int idax_ctree_expr_operand_count(IdaxCtreeExprHandle expr, int* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    *out = ev.operand_count();
-    return 0;
-}
-
-int idax_ctree_expr_left(IdaxCtreeExprHandle expr, IdaxCtreeExprHandle* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    auto r = ev.left();
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_expr_right(IdaxCtreeExprHandle expr, IdaxCtreeExprHandle* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    auto r = ev.right();
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_expr_call_argument_count(IdaxCtreeExprHandle expr, size_t* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    auto r = ev.call_argument_count();
-    if (!r) return fail(r.error());
-    *out = *r;
-    return 0;
-}
-
-int idax_ctree_expr_call_callee(IdaxCtreeExprHandle expr, IdaxCtreeExprHandle* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    auto r = ev.call_callee();
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_expr_call_argument(IdaxCtreeExprHandle expr, size_t index,
-                                  IdaxCtreeExprHandle* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    auto r = ev.call_argument(index);
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_expr_member_offset(IdaxCtreeExprHandle expr, uint32_t* out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    auto r = ev.member_offset();
-    if (!r) return fail(r.error());
-    *out = *r;
-    return 0;
-}
-
-int idax_ctree_expr_to_string(IdaxCtreeExprHandle expr, char** out) {
-    clear_error();
-    auto ev = ida::decompiler::ExpressionView(
-        ida::decompiler::ExpressionView::Tag{}, const_cast<void*>(expr));
-    auto r = ev.to_string();
-    if (!r) return fail(r.error());
-    *out = dup_string(*r);
-    return 0;
-}
-
-int idax_ctree_stmt_type(IdaxCtreeStmtHandle stmt, int* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    *out = static_cast<int>(sv.type());
-    return 0;
-}
-
-int idax_ctree_stmt_address(IdaxCtreeStmtHandle stmt, uint64_t* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    *out = sv.address();
-    return 0;
-}
-
-int idax_ctree_stmt_goto_target_label(IdaxCtreeStmtHandle stmt, int* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.goto_target_label();
-    if (!r) return fail(r.error());
-    *out = *r;
-    return 0;
-}
-
-int idax_ctree_stmt_condition(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.condition();
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_stmt_then_branch(IdaxCtreeStmtHandle stmt, IdaxCtreeStmtHandle* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.then_branch();
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_stmt_else_branch(IdaxCtreeStmtHandle stmt, IdaxCtreeStmtHandle* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.else_branch();
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_stmt_has_else_branch(IdaxCtreeStmtHandle stmt, int* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    *out = sv.has_else_branch() ? 1 : 0;
-    return 0;
-}
-
-int idax_ctree_stmt_body(IdaxCtreeStmtHandle stmt, IdaxCtreeStmtHandle* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.body();
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_stmt_init_expression(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.init_expression();
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_stmt_step_expression(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.step_expression();
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_stmt_expression(IdaxCtreeStmtHandle stmt, IdaxCtreeExprHandle* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.expression();
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_stmt_block_size(IdaxCtreeStmtHandle stmt, size_t* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.block_size();
-    if (!r) return fail(r.error());
-    *out = *r;
-    return 0;
-}
-
-int idax_ctree_stmt_block_statement(IdaxCtreeStmtHandle stmt, size_t index,
-                                    IdaxCtreeStmtHandle* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.block_statement(index);
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-int idax_ctree_stmt_switch_case_count(IdaxCtreeStmtHandle stmt, size_t* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.switch_case_count();
-    if (!r) return fail(r.error());
-    *out = *r;
-    return 0;
-}
-
-int idax_ctree_stmt_switch_case_values(IdaxCtreeStmtHandle stmt, size_t index,
-                                       uint64_t** out, size_t* count) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.switch_case_values(index);
-    if (!r) return fail(r.error());
-    *count = r->size();
-    if (r->empty()) {
-        *out = nullptr;
-        return 0;
-    }
-    auto* arr = static_cast<uint64_t*>(malloc(r->size() * sizeof(uint64_t)));
-    std::copy(r->begin(), r->end(), arr);
-    *out = arr;
-    return 0;
-}
-
-int idax_ctree_stmt_switch_case_body(IdaxCtreeStmtHandle stmt, size_t index,
-                                     IdaxCtreeStmtHandle* out) {
-    clear_error();
-    auto sv = ida::decompiler::StatementView(
-        ida::decompiler::StatementView::Tag{}, const_cast<void*>(stmt));
-    auto r = sv.switch_case_body(index);
-    if (!r) return fail(r.error());
-    *out = r->raw_handle();
-    return 0;
-}
-
-void idax_ctree_switch_case_values_free(uint64_t* values) {
-    free(values);
-}
-
-static ida::decompiler::MicrocodeOperand make_cpp_operand(const IdaxMicrocodeOperand& c) {
-    ida::decompiler::MicrocodeOperand operand;
-    operand.kind                  = static_cast<ida::decompiler::MicrocodeOperandKind>(c.kind);
-    operand.register_id           = c.register_id;
-    operand.local_variable_index  = c.local_variable_index;
-    operand.local_variable_offset = c.local_variable_offset;
-    operand.second_register_id    = c.second_register_id;
-    operand.global_address        = c.global_address;
-    operand.stack_offset          = c.stack_offset;
-    if (c.helper_name != nullptr)
-        operand.helper_name       = c.helper_name;
-    operand.block_index           = c.block_index;
-    operand.unsigned_immediate    = c.unsigned_immediate;
-    operand.signed_immediate      = c.signed_immediate;
-    operand.byte_width            = c.byte_width;
-    operand.mark_user_defined_type = c.mark_user_defined_type != 0;
-    return operand;
-}
-
-static ida::decompiler::MicrocodeInstruction make_cpp_instruction(
-    const IdaxMicrocodeInstruction& c)
-{
-    ida::decompiler::MicrocodeInstruction instruction;
-    instruction.opcode                    = static_cast<ida::decompiler::MicrocodeOpcode>(c.opcode);
-    instruction.left                      = make_cpp_operand(c.left);
-    instruction.right                     = make_cpp_operand(c.right);
-    instruction.destination               = make_cpp_operand(c.destination);
-    instruction.floating_point_instruction = c.floating_point_instruction != 0;
-    return instruction;
-}
-
-static std::vector<ida::decompiler::MicrocodeValue> make_cpp_microcode_values(
-    const IdaxMicrocodeValue* args, size_t arg_count)
-{
-    std::vector<ida::decompiler::MicrocodeValue> values;
-    values.reserve(arg_count);
-    for (size_t value_index = 0; value_index < arg_count; ++value_index) {
-        const IdaxMicrocodeValue& source = args[value_index];
-        ida::decompiler::MicrocodeValue value;
-        value.kind       = static_cast<ida::decompiler::MicrocodeValueKind>(source.kind);
-        value.byte_width = source.byte_width;
-
-        using Kind = ida::decompiler::MicrocodeValueKind;
-        switch (value.kind) {
-            case Kind::Register:
-                value.register_id = static_cast<int>(source.data);
-                break;
-            case Kind::LocalVariable:
-                value.local_variable_index = static_cast<int>(source.data);
-                break;
-            case Kind::GlobalAddress:
-                value.global_address = static_cast<ida::Address>(source.data);
-                break;
-            case Kind::StackVariable:
-                value.stack_offset = source.data;
-                break;
-            case Kind::UnsignedImmediate:
-                value.unsigned_immediate = static_cast<std::uint64_t>(source.data);
-                break;
-            case Kind::SignedImmediate:
-                value.signed_immediate = source.data;
-                break;
-            default:
-                // For complex kinds not supported by the simplified shim,
-                // store data in signed_immediate as a best-effort passthrough.
-                value.signed_immediate = source.data;
-                break;
-        }
-        values.push_back(std::move(value));
-    }
-    return values;
-}
-
-int idax_microcode_context_remove_last_emitted(void* mctx) {
-    if (mctx == nullptr)
-        return fail(ida::Error::validation("microcode context is null"));
-    RETURN_STATUS(as_mutable_microcode_context(mctx)->remove_last_emitted_instruction());
-}
-
-int idax_microcode_context_remove_at_index(void* mctx, int index) {
-    if (mctx == nullptr)
-        return fail(ida::Error::validation("microcode context is null"));
-    RETURN_STATUS(as_mutable_microcode_context(mctx)->remove_instruction_at_index(index));
-}
-
-int idax_microcode_context_emit_noop(void* mctx, int policy) {
-    if (mctx == nullptr)
-        return fail(ida::Error::validation("microcode context is null"));
-    auto* context = as_mutable_microcode_context(mctx);
-    if (policy < 0) {
-        RETURN_STATUS(context->emit_noop());
-    }
-    RETURN_STATUS(context->emit_noop_with_policy(
-        static_cast<ida::decompiler::MicrocodeInsertPolicy>(policy)));
-}
-
-int idax_microcode_context_emit_instruction(void* mctx,
-    const IdaxMicrocodeInstruction* instr, int policy)
-{
-    if (mctx == nullptr || instr == nullptr)
-        return fail(ida::Error::validation("microcode context or instruction is null"));
-    auto cpp_instruction = make_cpp_instruction(*instr);
-    auto* context = as_mutable_microcode_context(mctx);
-    if (policy < 0) {
-        RETURN_STATUS(context->emit_instruction(cpp_instruction));
-    }
-    RETURN_STATUS(context->emit_instruction_with_policy(
-        cpp_instruction,
-        static_cast<ida::decompiler::MicrocodeInsertPolicy>(policy)));
-}
-
-int idax_microcode_context_load_operand_register(void* mctx,
-    int operand_index, int* out_reg)
-{
-    clear_error();
-    if (mctx == nullptr || out_reg == nullptr)
-        return fail(ida::Error::validation("microcode context or output is null"));
-    auto result = as_mutable_microcode_context(mctx)->load_operand_register(operand_index);
-    if (!result) return fail(result.error());
-    *out_reg = *result;
-    return 0;
-}
-
-int idax_microcode_context_load_effective_address_register(void* mctx,
-    int operand_index, int* out_reg)
-{
-    clear_error();
-    if (mctx == nullptr || out_reg == nullptr)
-        return fail(ida::Error::validation("microcode context or output is null"));
-    auto result = as_mutable_microcode_context(mctx)->load_effective_address_register(operand_index);
-    if (!result) return fail(result.error());
-    *out_reg = *result;
-    return 0;
-}
-
-int idax_microcode_context_allocate_temporary_register(void* mctx,
-    int byte_width, int* out_reg)
-{
-    clear_error();
-    if (mctx == nullptr || out_reg == nullptr)
-        return fail(ida::Error::validation("microcode context or output is null"));
-    auto result = as_mutable_microcode_context(mctx)->allocate_temporary_register(byte_width);
-    if (!result) return fail(result.error());
-    *out_reg = *result;
-    return 0;
-}
-
-int idax_microcode_context_store_operand_register(void* mctx,
-    int operand_index, int source_reg, int byte_width, int mark_udt)
-{
-    if (mctx == nullptr)
-        return fail(ida::Error::validation("microcode context is null"));
-    RETURN_STATUS(as_mutable_microcode_context(mctx)->store_operand_register(
-        operand_index, source_reg, byte_width, mark_udt != 0));
-}
-
-int idax_microcode_context_emit_move_register(void* mctx,
-    int src, int dst, int byte_width, int mark_udt, int policy)
-{
-    if (mctx == nullptr)
-        return fail(ida::Error::validation("microcode context is null"));
-    auto* context = as_mutable_microcode_context(mctx);
-    if (policy < 0) {
-        RETURN_STATUS(context->emit_move_register(src, dst, byte_width, mark_udt != 0));
-    }
-    RETURN_STATUS(context->emit_move_register_with_policy(
-        src, dst, byte_width,
-        static_cast<ida::decompiler::MicrocodeInsertPolicy>(policy),
-        mark_udt != 0));
-}
-
-int idax_microcode_context_emit_load_memory_register(void* mctx,
-    int sel, int off, int dst, int byte_width, int off_byte_width,
-    int mark_udt, int policy)
-{
-    if (mctx == nullptr)
-        return fail(ida::Error::validation("microcode context is null"));
-    auto* context = as_mutable_microcode_context(mctx);
-    if (policy < 0) {
-        RETURN_STATUS(context->emit_load_memory_register(
-            sel, off, dst, byte_width, off_byte_width, mark_udt != 0));
-    }
-    RETURN_STATUS(context->emit_load_memory_register_with_policy(
-        sel, off, dst, byte_width, off_byte_width,
-        static_cast<ida::decompiler::MicrocodeInsertPolicy>(policy),
-        mark_udt != 0));
-}
-
-int idax_microcode_context_emit_store_memory_register(void* mctx,
-    int src, int sel, int off, int byte_width, int off_byte_width,
-    int mark_udt, int policy)
-{
-    if (mctx == nullptr)
-        return fail(ida::Error::validation("microcode context is null"));
-    auto* context = as_mutable_microcode_context(mctx);
-    if (policy < 0) {
-        RETURN_STATUS(context->emit_store_memory_register(
-            src, sel, off, byte_width, off_byte_width, mark_udt != 0));
-    }
-    RETURN_STATUS(context->emit_store_memory_register_with_policy(
-        src, sel, off, byte_width, off_byte_width,
-        static_cast<ida::decompiler::MicrocodeInsertPolicy>(policy),
-        mark_udt != 0));
-}
-
-int idax_microcode_context_emit_helper_call(void* mctx, const char* name) {
-    if (mctx == nullptr || name == nullptr)
-        return fail(ida::Error::validation("microcode context or name is null"));
-    RETURN_STATUS(as_mutable_microcode_context(mctx)->emit_helper_call(name));
-}
-
-int idax_microcode_context_emit_helper_call_with_args(void* mctx,
-    const char* name, const IdaxMicrocodeValue* args, size_t arg_count)
-{
-    if (mctx == nullptr || name == nullptr)
-        return fail(ida::Error::validation("microcode context or name is null"));
-    auto cpp_args = make_cpp_microcode_values(args, arg_count);
-    RETURN_STATUS(as_mutable_microcode_context(mctx)->emit_helper_call_with_arguments(
-        name, cpp_args));
-}
-
-int idax_microcode_context_emit_helper_call_to_register(void* mctx,
-    const char* name, const IdaxMicrocodeValue* args, size_t arg_count,
-    int dst_reg, int dst_byte_width, int dst_unsigned)
-{
-    if (mctx == nullptr || name == nullptr)
-        return fail(ida::Error::validation("microcode context or name is null"));
-    auto cpp_args = make_cpp_microcode_values(args, arg_count);
-    RETURN_STATUS(as_mutable_microcode_context(mctx)->emit_helper_call_with_arguments_to_register(
-        name, cpp_args, dst_reg, dst_byte_width, dst_unsigned != 0));
-}
-
-int idax_microcode_context_emit_helper_call_to_operand(void* mctx,
-    const char* name, const IdaxMicrocodeValue* args, size_t arg_count,
-    int dst_operand_index, int dst_byte_width, int dst_unsigned)
-{
-    if (mctx == nullptr || name == nullptr)
-        return fail(ida::Error::validation("microcode context or name is null"));
-    auto cpp_args = make_cpp_microcode_values(args, arg_count);
-    RETURN_STATUS(as_mutable_microcode_context(mctx)->emit_helper_call_with_arguments_to_operand(
-        name, cpp_args, dst_operand_index, dst_byte_width, dst_unsigned != 0));
-}
-
-void fill_processor_info(IdaxProcessorInfo* out,
-                         const ida::processor::ProcessorInfo& info) {
-    std::memset(out, 0, sizeof(*out));
-    out->id = info.id;
-
-    // Short names
-    out->short_name_count = info.short_names.size();
-    if (!info.short_names.empty()) {
-        out->short_names = static_cast<char**>(
-            std::malloc(info.short_names.size() * sizeof(char*)));
-        for (size_t i = 0; i < info.short_names.size(); ++i)
-            out->short_names[i] = dup_string(info.short_names[i]);
-    }
-
-    // Long names
-    out->long_name_count = info.long_names.size();
-    if (!info.long_names.empty()) {
-        out->long_names = static_cast<char**>(
-            std::malloc(info.long_names.size() * sizeof(char*)));
-        for (size_t i = 0; i < info.long_names.size(); ++i)
-            out->long_names[i] = dup_string(info.long_names[i]);
-    }
-
-    out->flags  = info.flags;
-    out->flags2 = info.flags2;
-    out->code_bits_per_byte = info.code_bits_per_byte;
-    out->data_bits_per_byte = info.data_bits_per_byte;
-
-    // Registers
-    out->register_count = info.registers.size();
-    if (!info.registers.empty()) {
-        out->registers = static_cast<IdaxRegisterInfo*>(
-            std::malloc(info.registers.size() * sizeof(IdaxRegisterInfo)));
-        for (size_t i = 0; i < info.registers.size(); ++i) {
-            out->registers[i].name = dup_string(info.registers[i].name);
-            out->registers[i].read_only = info.registers[i].read_only ? 1 : 0;
-        }
-    }
-    out->code_segment_register  = info.code_segment_register;
-    out->data_segment_register  = info.data_segment_register;
-    out->first_segment_register = info.first_segment_register;
-    out->last_segment_register  = info.last_segment_register;
-    out->segment_register_size  = info.segment_register_size;
-
-    // Instructions
-    out->instruction_count = info.instructions.size();
-    if (!info.instructions.empty()) {
-        out->instructions = static_cast<IdaxInstructionDescriptor*>(
-            std::malloc(info.instructions.size() * sizeof(IdaxInstructionDescriptor)));
-        for (size_t i = 0; i < info.instructions.size(); ++i) {
-            out->instructions[i].mnemonic = dup_string(info.instructions[i].mnemonic);
-            out->instructions[i].feature_flags = info.instructions[i].feature_flags;
-            out->instructions[i].operand_count = info.instructions[i].operand_count;
-            out->instructions[i].description = dup_string(info.instructions[i].description);
-            out->instructions[i].privileged = info.instructions[i].privileged ? 1 : 0;
-        }
-    }
-    out->return_icode = info.return_icode;
-
-    // Assemblers
-    out->assembler_count = info.assemblers.size();
-    if (!info.assemblers.empty()) {
-        out->assemblers = static_cast<IdaxAssemblerInfo*>(
-            std::malloc(info.assemblers.size() * sizeof(IdaxAssemblerInfo)));
-        for (size_t i = 0; i < info.assemblers.size(); ++i) {
-            auto& src = info.assemblers[i];
-            auto& dst = out->assemblers[i];
-            dst.name              = dup_string(src.name);
-            dst.comment_prefix    = dup_string(src.comment_prefix);
-            dst.origin            = dup_string(src.origin);
-            dst.end_directive     = dup_string(src.end_directive);
-            dst.string_delim      = src.string_delim;
-            dst.char_delim        = src.char_delim;
-            dst.byte_directive    = dup_string(src.byte_directive);
-            dst.word_directive    = dup_string(src.word_directive);
-            dst.dword_directive   = dup_string(src.dword_directive);
-            dst.qword_directive   = dup_string(src.qword_directive);
-            dst.oword_directive   = dup_string(src.oword_directive);
-            dst.float_directive   = dup_string(src.float_directive);
-            dst.double_directive  = dup_string(src.double_directive);
-            dst.tbyte_directive   = dup_string(src.tbyte_directive);
-            dst.align_directive   = dup_string(src.align_directive);
-            dst.include_directive = dup_string(src.include_directive);
-            dst.public_directive  = dup_string(src.public_directive);
-            dst.weak_directive    = dup_string(src.weak_directive);
-            dst.external_directive = dup_string(src.external_directive);
-            dst.current_ip_symbol  = dup_string(src.current_ip_symbol);
-            dst.uppercase_mnemonics          = src.uppercase_mnemonics ? 1 : 0;
-            dst.uppercase_registers          = src.uppercase_registers ? 1 : 0;
-            dst.requires_colon_after_labels  = src.requires_colon_after_labels ? 1 : 0;
-            dst.supports_quoted_names        = src.supports_quoted_names ? 1 : 0;
-        }
-    }
-
-    out->default_bitness = info.default_bitness;
-}
-
-void fill_switch_description(IdaxSwitchDescription* out,
-                             const ida::processor::SwitchDescription& desc) {
-    std::memset(out, 0, sizeof(*out));
-    out->kind                    = static_cast<int>(desc.kind);
-    out->jump_table              = desc.jump_table;
-    out->values_table            = desc.values_table;
-    out->default_target          = desc.default_target;
-    out->idiom_start             = desc.idiom_start;
-    out->element_base            = desc.element_base;
-    out->low_case_value          = desc.low_case_value;
-    out->indirect_low_case_value = desc.indirect_low_case_value;
-    out->case_count              = desc.case_count;
-    out->jump_table_entry_count  = desc.jump_table_entry_count;
-    out->jump_element_size       = desc.jump_element_size;
-    out->value_element_size      = desc.value_element_size;
-    out->shift                   = desc.shift;
-    out->expression_register     = desc.expression_register;
-    out->expression_data_type    = desc.expression_data_type;
-    out->has_default             = desc.has_default ? 1 : 0;
-    out->default_in_table        = desc.default_in_table ? 1 : 0;
-    out->values_signed           = desc.values_signed ? 1 : 0;
-    out->subtract_values         = desc.subtract_values ? 1 : 0;
-    out->self_relative           = desc.self_relative ? 1 : 0;
-    out->inverted                = desc.inverted ? 1 : 0;
-    out->user_defined            = desc.user_defined ? 1 : 0;
-}
-
-ida::processor::SwitchDescription to_cpp_switch_description(
-        const IdaxSwitchDescription* desc) {
-    ida::processor::SwitchDescription result;
-    result.kind                    = static_cast<ida::processor::SwitchTableKind>(desc->kind);
-    result.jump_table              = desc->jump_table;
-    result.values_table            = desc->values_table;
-    result.default_target          = desc->default_target;
-    result.idiom_start             = desc->idiom_start;
-    result.element_base            = desc->element_base;
-    result.low_case_value          = desc->low_case_value;
-    result.indirect_low_case_value = desc->indirect_low_case_value;
-    result.case_count              = desc->case_count;
-    result.jump_table_entry_count  = desc->jump_table_entry_count;
-    result.jump_element_size       = desc->jump_element_size;
-    result.value_element_size      = desc->value_element_size;
-    result.shift                   = desc->shift;
-    result.expression_register     = desc->expression_register;
-    result.expression_data_type    = desc->expression_data_type;
-    result.has_default             = desc->has_default != 0;
-    result.default_in_table        = desc->default_in_table != 0;
-    result.values_signed           = desc->values_signed != 0;
-    result.subtract_values         = desc->subtract_values != 0;
-    result.self_relative           = desc->self_relative != 0;
-    result.inverted                = desc->inverted != 0;
-    result.user_defined            = desc->user_defined != 0;
-    return result;
-}
-
-void idax_processor_info_free(IdaxProcessorInfo* info) {
-    if (!info) return;
-
-    for (size_t i = 0; i < info->short_name_count; ++i)
-        std::free(info->short_names[i]);
-    std::free(info->short_names);
-
-    for (size_t i = 0; i < info->long_name_count; ++i)
-        std::free(info->long_names[i]);
-    std::free(info->long_names);
-
-    for (size_t i = 0; i < info->register_count; ++i)
-        std::free(info->registers[i].name);
-    std::free(info->registers);
-
-    for (size_t i = 0; i < info->instruction_count; ++i) {
-        std::free(info->instructions[i].mnemonic);
-        std::free(info->instructions[i].description);
-    }
-    std::free(info->instructions);
-
-    for (size_t i = 0; i < info->assembler_count; ++i) {
-        auto& a = info->assemblers[i];
-        std::free(a.name);
-        std::free(a.comment_prefix);
-        std::free(a.origin);
-        std::free(a.end_directive);
-        std::free(a.byte_directive);
-        std::free(a.word_directive);
-        std::free(a.dword_directive);
-        std::free(a.qword_directive);
-        std::free(a.oword_directive);
-        std::free(a.float_directive);
-        std::free(a.double_directive);
-        std::free(a.tbyte_directive);
-        std::free(a.align_directive);
-        std::free(a.include_directive);
-        std::free(a.public_directive);
-        std::free(a.weak_directive);
-        std::free(a.external_directive);
-        std::free(a.current_ip_symbol);
-    }
-    std::free(info->assemblers);
-
-    std::memset(info, 0, sizeof(*info));
-}
-
-void idax_switch_description_free(IdaxSwitchDescription* desc) {
-    if (desc)
-        std::memset(desc, 0, sizeof(*desc));
-}
-
-void idax_switch_cases_free(IdaxSwitchCase* cases, size_t count) {
-    if (!cases) return;
-    for (size_t i = 0; i < count; ++i)
-        std::free(cases[i].values);
-    std::free(cases);
-}
-
-int idax_processor_register(const IdaxProcessorCallbacks* callbacks,
-                            IdaxProcessorHandle* out_handle) {
-    clear_error();
-    if (!callbacks || !out_handle)
-        return fail(ida::Error::validation("callbacks/out_handle is null"));
-    if (!callbacks->info || !callbacks->analyze || !callbacks->emulate
-        || !callbacks->output_instruction || !callbacks->output_operand)
-        return fail(ida::Error::validation("required processor callbacks must not be null"));
-
-    auto* bridge = new ProcessorBridge(*callbacks);
-    *out_handle = bridge;
-    return 0;
-}
-
-void idax_processor_unregister(IdaxProcessorHandle handle) {
-    if (handle)
-        delete static_cast<ProcessorBridge*>(handle);
-}
-
-void idax_output_context_mnemonic(void* ctx, const char* text) {
-    if (ctx && text)
-        static_cast<ida::processor::OutputContext*>(ctx)->mnemonic(text);
-}
-
-void idax_output_context_register_name(void* ctx, const char* text) {
-    if (ctx && text)
-        static_cast<ida::processor::OutputContext*>(ctx)->register_name(text);
-}
-
-void idax_output_context_symbol(void* ctx, const char* text) {
-    if (ctx && text)
-        static_cast<ida::processor::OutputContext*>(ctx)->symbol(text);
-}
-
-void idax_output_context_keyword(void* ctx, const char* text) {
-    if (ctx && text)
-        static_cast<ida::processor::OutputContext*>(ctx)->keyword(text);
-}
-
-void idax_output_context_comment(void* ctx, const char* text) {
-    if (ctx && text)
-        static_cast<ida::processor::OutputContext*>(ctx)->comment(text);
-}
-
-void idax_output_context_number(void* ctx, const char* text) {
-    if (ctx && text)
-        static_cast<ida::processor::OutputContext*>(ctx)->number(text);
-}
-
-void idax_output_context_operator_symbol(void* ctx, const char* text) {
-    if (ctx && text)
-        static_cast<ida::processor::OutputContext*>(ctx)->operator_symbol(text);
-}
-
-void idax_output_context_punctuation(void* ctx, const char* text) {
-    if (ctx && text)
-        static_cast<ida::processor::OutputContext*>(ctx)->punctuation(text);
-}
-
-void idax_output_context_whitespace(void* ctx, const char* text) {
-    if (ctx)
-        static_cast<ida::processor::OutputContext*>(ctx)->whitespace(
-            text ? text : " ");
-}
-
-void idax_output_context_string_literal(void* ctx, const char* text, char quote) {
-    if (ctx && text)
-        static_cast<ida::processor::OutputContext*>(ctx)->string_literal(text, quote);
-}
-
-void idax_output_context_immediate(void* ctx, int64_t value, int radix) {
-    if (ctx)
-        static_cast<ida::processor::OutputContext*>(ctx)->immediate(value, radix);
-}
-
-void idax_output_context_address(void* ctx, uint64_t address) {
-    if (ctx)
-        static_cast<ida::processor::OutputContext*>(ctx)->address(address);
-}
-
-void idax_output_context_character(void* ctx, char ch) {
-    if (ctx)
-        static_cast<ida::processor::OutputContext*>(ctx)->character(ch);
-}
-
-void idax_output_context_space(void* ctx) {
-    if (ctx)
-        static_cast<ida::processor::OutputContext*>(ctx)->space();
-}
-
-void idax_output_context_comma(void* ctx) {
-    if (ctx)
-        static_cast<ida::processor::OutputContext*>(ctx)->comma();
-}
-
-void idax_output_context_clear(void* ctx) {
-    if (ctx)
-        static_cast<ida::processor::OutputContext*>(ctx)->clear();
-}
-
-int idax_output_context_is_empty(void* ctx) {
-    if (!ctx) return 1;
-    return static_cast<ida::processor::OutputContext*>(ctx)->empty() ? 1 : 0;
-}
-
-int idax_output_context_text(void* ctx, char** out) {
-    if (!ctx || !out) return -1;
-    auto& text = static_cast<ida::processor::OutputContext*>(ctx)->text();
-    *out = dup_string(text);
-    return 0;
-}
-
-void idax_output_context_append(void* ctx, const char* text) {
-    if (ctx && text)
-        static_cast<ida::processor::OutputContext*>(ctx)->append(text);
-}
-
-void idax_output_context_token(void* ctx, int kind, const char* text) {
-    if (ctx && text)
-        static_cast<ida::processor::OutputContext*>(ctx)->token(
-            static_cast<ida::processor::OutputTokenKind>(kind), text);
-}
-
-int idax_dyld_cache_is_available(void) {
-    return ida::dyld_cache::is_available() ? 1 : 0;
-}
-
-int idax_dyld_cache_list_modules(
-    IdaxDyldCacheModule** output_modules,
-    size_t* module_count
-) {
-    clear_error();
-    if (output_modules == nullptr || module_count == nullptr)
-        return fail(ida::Error::validation("Module output pointers cannot be null"));
-    auto module_result = ida::dyld_cache::list_modules();
-    return copy_dyld_cache_modules(module_result, output_modules, module_count);
-}
-
-int idax_dyld_cache_list_modules_at_path(
-    const char* cache_path,
-    IdaxDyldCacheModule** output_modules,
-    size_t* module_count
-) {
-    clear_error();
-    if (cache_path == nullptr)
-        return fail(ida::Error::validation("Dyld shared cache path is null"));
-    if (output_modules == nullptr || module_count == nullptr)
-        return fail(ida::Error::validation("Module output pointers cannot be null"));
-    auto module_result = ida::dyld_cache::list_modules(cache_path);
-    return copy_dyld_cache_modules(module_result, output_modules, module_count);
-}
-
-void idax_dyld_cache_list_modules_free(
-    IdaxDyldCacheModule* modules,
-    size_t module_count
-) {
+// Owned dyld cache inventories, released by the matching free function.
+void idax_dyld_cache_modules_free(IdaxDyldCacheModuleInfo* modules, size_t count) {
     if (modules == nullptr) return;
-    for (size_t module_index = 0; module_index < module_count; ++module_index)
-        std::free(modules[module_index].path);
+    for (size_t index = 0; index < count; ++index) std::free(modules[index].path);
     std::free(modules);
 }
-
-int idax_dyld_cache_load_module(const char* module_path, int wait_for_analysis) {
-    if (module_path == nullptr)
-        return fail(ida::Error::validation("module path is null"));
-    RETURN_STATUS(ida::dyld_cache::load_module(module_path, wait_for_analysis != 0));
+static int copy_dyld_cache_modules(const ida::Result<std::vector<ida::dyld_cache::ModuleInfo>>& result,
+                                  IdaxDyldCacheModuleInfo** out, size_t* count) {
+    if (!result) { set_error(result.error()); return -1; }
+    if (result->empty()) return 0;
+    auto* modules = static_cast<IdaxDyldCacheModuleInfo*>(std::calloc(result->size(), sizeof(IdaxDyldCacheModuleInfo)));
+    if (modules == nullptr) { set_error(ida::Error::internal("malloc failed")); return -1; }
+    for (size_t index = 0; index < result->size(); ++index) {
+        modules[index].path = dup_string((*result)[index].path);
+        modules[index].load_address = (*result)[index].load_address;
+        if (modules[index].path == nullptr) {
+            idax_dyld_cache_modules_free(modules, result->size());
+            set_error(ida::Error::internal("malloc failed")); return -1;
+        }
+    }
+    *out = modules; *count = result->size(); return 0;
 }
-
+int idax_dyld_cache_is_available(int* out) {
+    clear_error();
+    if (out == nullptr) { set_error(ida::Error::validation("null output")); return -1; }
+    *out = ida::dyld_cache::is_available() ? 1 : 0; return 0;
+}
+int idax_dyld_cache_list_modules(IdaxDyldCacheModuleInfo** out, size_t* count) {
+    clear_error();
+    if (out == nullptr || count == nullptr) { set_error(ida::Error::validation("null output")); return -1; }
+    *out = nullptr; *count = 0;
+    try { return copy_dyld_cache_modules(ida::dyld_cache::list_modules(), out, count); }
+    catch (...) { set_error(ida::Error::internal("Cannot allocate dyld cache inventory")); return -1; }
+}
+int idax_dyld_cache_list_modules_from_file(const char* path, IdaxDyldCacheModuleInfo** out, size_t* count) {
+    clear_error();
+    if (out == nullptr || count == nullptr) { set_error(ida::Error::validation("null output")); return -1; }
+    *out = nullptr; *count = 0;
+    if (path == nullptr) { set_error(ida::Error::validation("null cache path")); return -1; }
+    try { return copy_dyld_cache_modules(ida::dyld_cache::list_modules(path), out, count); }
+    catch (...) { set_error(ida::Error::internal("Cannot allocate dyld cache inventory")); return -1; }
+}
+int idax_dyld_cache_load_module(const char* path, int wait_for_analysis) {
+    clear_error();
+    if (path == nullptr) { set_error(ida::Error::validation("null module path")); return -1; }
+    RETURN_STATUS(ida::dyld_cache::load_module(path, wait_for_analysis != 0));
+}
 int idax_dyld_cache_load_section(uint64_t address, int wait_for_analysis) {
     RETURN_STATUS(ida::dyld_cache::load_section(address, wait_for_analysis != 0));
 }
-
 int idax_dyld_cache_load_dyld_header(int wait_for_analysis) {
     RETURN_STATUS(ida::dyld_cache::load_dyld_header(wait_for_analysis != 0));
 }
-
 int idax_dyld_cache_load_branch_islands(int wait_for_analysis, size_t* out) {
+    clear_error();
+    if (out == nullptr) { set_error(ida::Error::validation("null output")); return -1; }
+    *out = 0;
     RETURN_RESULT_VALUE(ida::dyld_cache::load_branch_islands(wait_for_analysis != 0));
 }
-
 int idax_dyld_cache_load_branch_mappings(int wait_for_analysis, size_t* out) {
+    clear_error();
+    if (out == nullptr) { set_error(ida::Error::validation("null output")); return -1; }
+    *out = 0;
     RETURN_RESULT_VALUE(ida::dyld_cache::load_branch_mappings(wait_for_analysis != 0));
 }
-
 int idax_dyld_cache_load_global_offset_tables(int wait_for_analysis, size_t* out) {
+    clear_error();
+    if (out == nullptr) { set_error(ida::Error::validation("null output")); return -1; }
+    *out = 0;
     RETURN_RESULT_VALUE(ida::dyld_cache::load_global_offset_tables(wait_for_analysis != 0));
 }
-
 int idax_dyld_cache_load_gaps(int wait_for_analysis, size_t* out) {
+    clear_error();
+    if (out == nullptr) { set_error(ida::Error::validation("null output")); return -1; }
+    *out = 0;
     RETURN_RESULT_VALUE(ida::dyld_cache::load_gaps(wait_for_analysis != 0));
 }
-
 int idax_dyld_cache_load_cache_data(int wait_for_analysis, size_t* out) {
+    clear_error();
+    if (out == nullptr) { set_error(ida::Error::validation("null output")); return -1; }
+    *out = 0;
     RETURN_RESULT_VALUE(ida::dyld_cache::load_cache_data(wait_for_analysis != 0));
-}
-
-int idax_plugin_is_plugin_available(const char* plugin_name) {
-    if (plugin_name == nullptr) return 0;
-    return ida::plugin::is_plugin_available(plugin_name) ? 1 : 0;
-}
-
-int idax_plugin_run_plugin(const char* plugin_name, size_t argument) {
-    if (plugin_name == nullptr)
-        return fail(ida::Error::validation("plugin name is null"));
-    RETURN_STATUS(ida::plugin::run_plugin(plugin_name, argument));
-}
-
-void free_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* op) {
-    if (op == nullptr) return;
-    std::free(op->helper_name);
-    op->helper_name = nullptr;
-    std::free(op->string_literal);
-    op->string_literal = nullptr;
-    std::free(op->global_name);
-    op->global_name = nullptr;
-    for (size_t i = 0; i < op->call_argument_count; ++i)
-        free_microcode_snapshot_operand(&op->call_arguments[i]);
-    std::free(op->call_arguments);
-    op->call_arguments = nullptr;
-    op->call_argument_count = 0;
-    std::free(op->argument_flags);
-    op->argument_flags = nullptr;
-    op->argument_flags_count = 0;
-    for (size_t i = 0; i < op->return_register_count; ++i)
-        free_microcode_snapshot_operand(&op->return_registers[i]);
-    std::free(op->return_registers);
-    op->return_registers = nullptr;
-    op->return_register_count = 0;
-    std::free(op->return_register_ids);
-    op->return_register_ids = nullptr;
-    op->return_register_id_count = 0;
-    std::free(op->switch_case_values);
-    op->switch_case_values = nullptr;
-    op->switch_case_value_count = 0;
-    std::free(op->switch_case_target_blocks);
-    op->switch_case_target_blocks = nullptr;
-}
-
-ida::Status fill_microcode_snapshot_operand(IdaxMicrocodeSnapshotOperand* out,
-                                            const ida::microcode::Operand& operand) {
-    if (out == nullptr)
-        return std::unexpected(ida::Error::internal("null microcode-snapshot operand output"));
-
-    std::memset(out, 0, sizeof(*out));
-    out->kind                  = static_cast<int>(operand.kind);
-    out->byte_width            = operand.byte_width;
-    out->register_id           = operand.register_id;
-    out->second_register_id    = operand.second_register_id;
-    out->numeric_value         = operand.numeric_value;
-    out->float_value           = operand.float_value;
-    out->stack_offset          = operand.stack_offset;
-    out->global_address        = operand.global_address;
-    out->local_variable_index  = operand.local_variable_index;
-    out->local_variable_offset = operand.local_variable_offset;
-    out->block_index           = operand.block_index;
-    out->nested_instruction_id = operand.nested_instruction_id;
-    out->operand_properties    = operand.operand_properties;
-    out->switch_default_target_block = operand.switch_default_target_block;
-
-    if (operand.ssa_version) {
-        out->ssa_version     = *operand.ssa_version;
-        out->has_ssa_version = 1;
-    }
-
-    if (!operand.helper_name.empty()) {
-        out->helper_name = dup_string(operand.helper_name);
-        if (out->helper_name == nullptr)
-            return std::unexpected(ida::Error::internal("malloc failed"));
-    }
-    if (!operand.string_literal.empty()) {
-        out->string_literal = dup_string(operand.string_literal);
-        if (out->string_literal == nullptr) {
-            free_microcode_snapshot_operand(out);
-            return std::unexpected(ida::Error::internal("malloc failed"));
-        }
-    }
-    if (!operand.global_name.empty()) {
-        out->global_name = dup_string(operand.global_name);
-        if (out->global_name == nullptr) {
-            free_microcode_snapshot_operand(out);
-            return std::unexpected(ida::Error::internal("malloc failed"));
-        }
-    }
-    if (!operand.call_arguments.empty()) {
-        const size_t count = operand.call_arguments.size();
-        auto* arguments = static_cast<IdaxMicrocodeSnapshotOperand*>(
-            std::calloc(count, sizeof(IdaxMicrocodeSnapshotOperand)));
-        if (arguments == nullptr) {
-            free_microcode_snapshot_operand(out);
-            return std::unexpected(ida::Error::internal("malloc failed"));
-        }
-        // Assign before filling so a mid-loop failure frees what was built.
-        out->call_arguments      = arguments;
-        out->call_argument_count = count;
-        for (size_t i = 0; i < count; ++i) {
-            if (auto status = fill_microcode_snapshot_operand(&arguments[i], operand.call_arguments[i]); !status) {
-                free_microcode_snapshot_operand(out);
-                return status;
-            }
-        }
-    }
-    if (!operand.argument_flags.empty()) {
-        const size_t count = operand.argument_flags.size();
-        auto* flags = static_cast<uint32_t*>(std::calloc(count, sizeof(uint32_t)));
-        if (flags == nullptr) {
-            free_microcode_snapshot_operand(out);
-            return std::unexpected(ida::Error::internal("malloc failed"));
-        }
-        out->argument_flags       = flags;
-        out->argument_flags_count = count;
-        for (size_t i = 0; i < count; ++i)
-            flags[i] = operand.argument_flags[i];
-    }
-    if (!operand.return_registers.empty()) {
-        const size_t count = operand.return_registers.size();
-        auto* return_registers = static_cast<IdaxMicrocodeSnapshotOperand*>(
-            std::calloc(count, sizeof(IdaxMicrocodeSnapshotOperand)));
-        if (return_registers == nullptr) {
-            free_microcode_snapshot_operand(out);
-            return std::unexpected(ida::Error::internal("malloc failed"));
-        }
-        // Assign before filling so a mid-loop failure frees what was built.
-        out->return_registers      = return_registers;
-        out->return_register_count = count;
-        for (size_t i = 0; i < count; ++i) {
-            if (auto status = fill_microcode_snapshot_operand(&return_registers[i], operand.return_registers[i]); !status) {
-                free_microcode_snapshot_operand(out);
-                return status;
-            }
-        }
-    }
-    if (!operand.return_register_ids.empty()) {
-        const size_t count = operand.return_register_ids.size();
-        auto* ids = static_cast<int*>(std::calloc(count, sizeof(int)));
-        if (ids == nullptr) {
-            free_microcode_snapshot_operand(out);
-            return std::unexpected(ida::Error::internal("malloc failed"));
-        }
-        out->return_register_ids      = ids;
-        out->return_register_id_count = count;
-        for (size_t i = 0; i < count; ++i)
-            ids[i] = operand.return_register_ids[i];
-    }
-    if (!operand.switch_case_values.empty()) {
-        const size_t count = operand.switch_case_values.size();
-        auto* values = static_cast<int64_t*>(std::calloc(count, sizeof(int64_t)));
-        if (values == nullptr) {
-            free_microcode_snapshot_operand(out);
-            return std::unexpected(ida::Error::internal("malloc failed"));
-        }
-        // Assign before filling so a mid-loop failure frees what was built.
-        out->switch_case_values      = values;
-        out->switch_case_value_count = count;
-        for (size_t i = 0; i < count; ++i)
-            values[i] = operand.switch_case_values[i];
-
-        auto* target_blocks = static_cast<int*>(std::calloc(count, sizeof(int)));
-        if (target_blocks == nullptr) {
-            free_microcode_snapshot_operand(out);
-            return std::unexpected(ida::Error::internal("malloc failed"));
-        }
-        out->switch_case_target_blocks = target_blocks;
-        for (size_t i = 0; i < count; ++i)
-            target_blocks[i] = operand.switch_case_target_blocks[i];
-    }
-    return ida::ok();
-}
-
-void free_microcode_snapshot_instruction_fields(IdaxMicrocodeSnapshotInstruction* inst) {
-    if (inst == nullptr) return;
-    std::free(inst->opcode_name);
-    inst->opcode_name = nullptr;
-    free_microcode_snapshot_operand(&inst->left);
-    free_microcode_snapshot_operand(&inst->right);
-    free_microcode_snapshot_operand(&inst->destination);
-}
-
-ida::Status fill_microcode_snapshot_instruction(IdaxMicrocodeSnapshotInstruction* out,
-                                                const ida::microcode::Instruction& instruction) {
-    if (out == nullptr)
-        return std::unexpected(ida::Error::internal("null microcode-snapshot instruction output"));
-
-    std::memset(out, 0, sizeof(*out));
-    out->id             = instruction.id;
-    out->source_address = instruction.source_address;
-    out->opcode         = instruction.opcode;
-    out->flags          = instruction.flags;
-    out->opcode_name    = dup_string(instruction.opcode_name);
-    if (out->opcode_name == nullptr && !instruction.opcode_name.empty())
-        return std::unexpected(ida::Error::internal("malloc failed"));
-
-    if (auto status = fill_microcode_snapshot_operand(&out->left, instruction.left); !status) {
-        free_microcode_snapshot_instruction_fields(out);
-        return status;
-    }
-    if (auto status = fill_microcode_snapshot_operand(&out->right, instruction.right); !status) {
-        free_microcode_snapshot_instruction_fields(out);
-        return status;
-    }
-    if (auto status = fill_microcode_snapshot_operand(&out->destination, instruction.destination); !status) {
-        free_microcode_snapshot_instruction_fields(out);
-        return status;
-    }
-    return ida::ok();
-}
-
-int idax_microcode_snapshot_create(uint64_t function_address,
-                                   int maturity,
-                                   IdaxMicrocodeSnapshotHandle* out) {
-    clear_error();
-    if (out == nullptr)
-        return fail(ida::Error::validation("snapshot output pointer is null"));
-
-    auto result = ida::microcode::snapshot(function_address, parse_microcode_maturity(maturity));
-    if (!result)
-        return fail(result.error());
-
-    auto* heap = new ida::microcode::FunctionSnapshot(std::move(*result));
-    *out = heap;
-    return 0;
-}
-
-void idax_microcode_snapshot_free(IdaxMicrocodeSnapshotHandle handle) {
-    if (handle == nullptr) return;
-    delete as_microcode_snapshot(handle);
-}
-
-int idax_microcode_snapshot_function_address(IdaxMicrocodeSnapshotHandle handle,
-                                             uint64_t* out) {
-    clear_error();
-    if (handle == nullptr || out == nullptr)
-        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
-    *out = as_microcode_snapshot(handle)->function_address();
-    return 0;
-}
-
-int idax_microcode_snapshot_maturity(IdaxMicrocodeSnapshotHandle handle, int* out) {
-    clear_error();
-    if (handle == nullptr || out == nullptr)
-        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
-    *out = static_cast<int>(as_microcode_snapshot(handle)->maturity());
-    return 0;
-}
-
-int idax_microcode_snapshot_local_variables_size(IdaxMicrocodeSnapshotHandle handle,
-                                                 int64_t* out) {
-    clear_error();
-    if (handle == nullptr || out == nullptr)
-        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
-    *out = as_microcode_snapshot(handle)->local_variables_size();
-    return 0;
-}
-
-int idax_microcode_snapshot_saved_registers_size(IdaxMicrocodeSnapshotHandle handle,
-                                                 int64_t* out) {
-    clear_error();
-    if (handle == nullptr || out == nullptr)
-        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
-    *out = as_microcode_snapshot(handle)->saved_registers_size();
-    return 0;
-}
-
-int idax_microcode_snapshot_stack_size(IdaxMicrocodeSnapshotHandle handle,
-                                       int64_t* out) {
-    clear_error();
-    if (handle == nullptr || out == nullptr)
-        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
-    *out = as_microcode_snapshot(handle)->stack_size();
-    return 0;
-}
-
-int idax_microcode_snapshot_return_value_variable_index(IdaxMicrocodeSnapshotHandle handle,
-                                                        int* out) {
-    clear_error();
-    if (handle == nullptr || out == nullptr)
-        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
-    *out = as_microcode_snapshot(handle)->return_value_variable_index();
-    return 0;
-}
-
-int idax_microcode_snapshot_block_count(IdaxMicrocodeSnapshotHandle handle,
-                                        size_t* out) {
-    clear_error();
-    if (handle == nullptr || out == nullptr)
-        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
-    *out = as_microcode_snapshot(handle)->blocks().size();
-    return 0;
-}
-
-int idax_microcode_snapshot_block(IdaxMicrocodeSnapshotHandle handle,
-                                  size_t index,
-                                  IdaxMicrocodeSnapshotBlock* out) {
-    clear_error();
-    if (handle == nullptr || out == nullptr)
-        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
-
-    const auto& blocks = as_microcode_snapshot(handle)->blocks();
-    if (index >= blocks.size())
-        return fail(ida::Error::not_found(
-            "block index out of range", std::to_string(index)));
-
-    const auto& block = blocks[index];
-    std::memset(out, 0, sizeof(*out));
-    out->index               = block.index;
-    out->start_address       = block.start_address;
-    out->end_address         = block.end_address;
-    out->kind                = static_cast<int>(block.kind);
-    out->flags               = block.flags;
-    out->predecessor_count   = block.predecessor_indices.size();
-    out->successor_count     = block.successor_indices.size();
-    out->instruction_count   = block.instructions.size();
-
-    if (!block.predecessor_indices.empty()) {
-        out->predecessor_indices = static_cast<int*>(
-            std::malloc(block.predecessor_indices.size() * sizeof(int)));
-        if (out->predecessor_indices == nullptr) {
-            idax_microcode_snapshot_block_free(out);
-            return fail(ida::Error::internal("malloc failed"));
-        }
-        std::memcpy(out->predecessor_indices,
-                    block.predecessor_indices.data(),
-                    block.predecessor_indices.size() * sizeof(int));
-    }
-    if (!block.successor_indices.empty()) {
-        out->successor_indices = static_cast<int*>(
-            std::malloc(block.successor_indices.size() * sizeof(int)));
-        if (out->successor_indices == nullptr) {
-            idax_microcode_snapshot_block_free(out);
-            return fail(ida::Error::internal("malloc failed"));
-        }
-        std::memcpy(out->successor_indices,
-                    block.successor_indices.data(),
-                    block.successor_indices.size() * sizeof(int));
-    }
-
-    if (!block.instructions.empty()) {
-        out->instructions = static_cast<IdaxMicrocodeSnapshotInstruction*>(
-            std::calloc(block.instructions.size(),
-                        sizeof(IdaxMicrocodeSnapshotInstruction)));
-        if (out->instructions == nullptr) {
-            idax_microcode_snapshot_block_free(out);
-            return fail(ida::Error::internal("malloc failed"));
-        }
-        for (size_t i = 0; i < block.instructions.size(); ++i) {
-            auto status = fill_microcode_snapshot_instruction(
-                &out->instructions[i], block.instructions[i]);
-            if (!status) {
-                idax_microcode_snapshot_block_free(out);
-                return fail(status.error());
-            }
-        }
-    }
-    return 0;
-}
-
-void idax_microcode_snapshot_block_free(IdaxMicrocodeSnapshotBlock* block) {
-    if (block == nullptr) return;
-    std::free(block->predecessor_indices);
-    block->predecessor_indices = nullptr;
-    std::free(block->successor_indices);
-    block->successor_indices = nullptr;
-    if (block->instructions != nullptr) {
-        for (size_t i = 0; i < block->instruction_count; ++i)
-            free_microcode_snapshot_instruction_fields(&block->instructions[i]);
-        std::free(block->instructions);
-        block->instructions = nullptr;
-    }
-    block->predecessor_count = 0;
-    block->successor_count   = 0;
-    block->instruction_count = 0;
-}
-
-int idax_microcode_snapshot_nested_instruction(IdaxMicrocodeSnapshotHandle handle,
-                                               int nested_instruction_id,
-                                               IdaxMicrocodeSnapshotInstruction* out) {
-    clear_error();
-    if (handle == nullptr || out == nullptr)
-        return fail(ida::Error::validation("snapshot handle/out pointer is null"));
-    auto result = as_microcode_snapshot(handle)->nested_instruction(nested_instruction_id);
-    if (!result)
-        return fail(result.error());
-    auto status = fill_microcode_snapshot_instruction(out, *result);
-    if (!status)
-        return fail(status.error());
-    return 0;
-}
-
-void idax_microcode_snapshot_instruction_free(IdaxMicrocodeSnapshotInstruction* instruction) {
-    free_microcode_snapshot_instruction_fields(instruction);
-}
-
-int idax_microcode_snapshot_local_variables(IdaxMicrocodeSnapshotHandle handle,
-                                            IdaxLocalVariable** out,
-                                            size_t* count) {
-    clear_error();
-    if (handle == nullptr || out == nullptr || count == nullptr)
-        return fail(ida::Error::validation("snapshot handle/out/count pointer is null"));
-
-    auto result = as_microcode_snapshot(handle)->local_variables();
-    if (!result)
-        return fail(result.error());
-
-    const auto& variables = *result;
-    *count = variables.size();
-    if (variables.empty()) {
-        *out = nullptr;
-        return 0;
-    }
-    *out = static_cast<IdaxLocalVariable*>(
-        std::malloc(variables.size() * sizeof(IdaxLocalVariable)));
-    if (*out == nullptr)
-        return fail(ida::Error::internal("malloc failed"));
-    for (size_t i = 0; i < variables.size(); ++i) {
-        std::memset(&(*out)[i], 0, sizeof(IdaxLocalVariable));
-        fill_local_variable(&(*out)[i], variables[i]);
-    }
-    return 0;
 }

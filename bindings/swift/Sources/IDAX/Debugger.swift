@@ -1,1190 +1,517 @@
 internal import CIDAX
-import Darwin
 
-// MARK: - Value types
-
-/// Thread information snapshot.
-public struct ThreadInfo: Sendable {
-    public let id: Int32
-    public let name: String
-    public let isCurrent: Bool
-}
-
-/// Debugger backend descriptor.
-public struct BackendInfo: Sendable {
-    public let name: String
-    public let displayName: String
-    public let remote: Bool
-    public let supportsAppcall: Bool
-    public let supportsAttach: Bool
-    public let loaded: Bool
-}
-
-/// Debugger register descriptor.
-public struct RegisterInfo: Sendable {
-    public let name: String
-    public let readOnly: Bool
-    public let instructionPointer: Bool
-    public let stackPointer: Bool
-    public let framePointer: Bool
-    public let mayContainAddress: Bool
-    public let customFormat: Bool
-}
-
-/// Loaded module information from the debugger.
-public struct ModuleInfo: Sendable {
-    public let name: String
-    public let base: Address
-    public let size: UInt64
-}
-
-/// Exception information from the debugger.
-public struct ExceptionInfo: Sendable {
-    public let address: Address
-    public let code: UInt32
-    public let canContinue: Bool
-    public let message: String
-}
-
-/// Debugger state value.
-public struct DebuggerState: Sendable, Equatable {
-    public let rawValue: Int32
-
-    public init(rawValue: Int32) { self.rawValue = rawValue }
-}
-
-/// Breakpoint change kind.
-public enum BreakpointChange: Int32, Sendable {
-    case added = 0
-    case removed = 1
-    case changed = 2
-}
-
-// MARK: - Appcall types
-
-/// Appcall value kind matching the C enum.
-public enum AppcallValueKind: Int32, Sendable {
-    case signedInteger = 0
-    case unsignedInteger = 1
-    case floatingPoint = 2
-    case string = 3
-    case address = 4
-    case boolean = 5
-}
-
-/// Tagged union for appcall argument/return values.
-public enum AppcallValue: Sendable {
-    case signedInteger(Int64)
-    case unsignedInteger(UInt64)
-    case floatingPoint(Double)
-    case string(String)
-    case address(Address)
-    case boolean(Bool)
-}
-
-/// Options for an appcall invocation.
-public struct AppcallOptions: Sendable {
-    public var threadId: Int32?
-    public var manual: Bool
-    public var includeDebugEvent: Bool
-    public var timeoutMilliseconds: UInt32?
-
-    public init(
-        threadId: Int32? = nil,
-        manual: Bool = false,
-        includeDebugEvent: Bool = false,
-        timeoutMilliseconds: UInt32? = nil
-    ) {
-        self.threadId = threadId
-        self.manual = manual
-        self.includeDebugEvent = includeDebugEvent
-        self.timeoutMilliseconds = timeoutMilliseconds
-    }
-}
-
-/// Result of an appcall invocation.
-public struct AppcallResult: Sendable {
-    public let returnValue: AppcallValue
-    public let diagnostics: String
-}
-
-// MARK: - Appcall conversion helpers
-
-/// Convert a Swift `AppcallValue` to the C struct representation.
-private nonisolated func makeCAppcallValue(_ value: AppcallValue) -> IdaxDebuggerAppcallValue {
-    var c = IdaxDebuggerAppcallValue()
-    switch value {
-    case .signedInteger(let v):
-        c.kind = AppcallValueKind.signedInteger.rawValue
-        c.signed_value = v
-    case .unsignedInteger(let v):
-        c.kind = AppcallValueKind.unsignedInteger.rawValue
-        c.unsigned_value = v
-    case .floatingPoint(let v):
-        c.kind = AppcallValueKind.floatingPoint.rawValue
-        c.floating_value = v
-    case .string(let v):
-        c.kind = AppcallValueKind.string.rawValue
-        c.string_value = strdup(v)
-    case .address(let v):
-        c.kind = AppcallValueKind.address.rawValue
-        c.address_value = v
-    case .boolean(let v):
-        c.kind = AppcallValueKind.boolean.rawValue
-        c.boolean_value = v ? 1 : 0
-    }
-    return c
-}
-
-/// Convert a C `IdaxDebuggerAppcallValue` to the Swift enum. Does not free the C value.
-private nonisolated func makeSwiftAppcallValue(_ c: IdaxDebuggerAppcallValue) -> AppcallValue {
-    switch AppcallValueKind(rawValue: c.kind) {
-    case .signedInteger:
-        return .signedInteger(c.signed_value)
-    case .unsignedInteger:
-        return .unsignedInteger(c.unsigned_value)
-    case .floatingPoint:
-        return .floatingPoint(c.floating_value)
-    case .string:
-        let s = c.string_value.map { String(cString: $0) } ?? ""
-        return .string(s)
-    case .address:
-        return .address(c.address_value)
-    case .boolean:
-        return .boolean(c.boolean_value != 0)
-    case .none:
-        return .signedInteger(c.signed_value)
-    }
-}
-
-/// Convert `AppcallOptions` to the C struct.
-private func makeCAppcallOptions(_ opts: AppcallOptions) -> IdaxDebuggerAppcallOptions {
-    var c = IdaxDebuggerAppcallOptions()
-    if let tid = opts.threadId {
-        c.has_thread_id = 1
-        c.thread_id = tid
-    } else {
-        c.has_thread_id = 0
-    }
-    c.manual = opts.manual ? 1 : 0
-    c.include_debug_event = opts.includeDebugEvent ? 1 : 0
-    if let timeout = opts.timeoutMilliseconds {
-        c.has_timeout_milliseconds = 1
-        c.timeout_milliseconds = timeout
-    } else {
-        c.has_timeout_milliseconds = 0
-    }
-    return c
-}
-
-// MARK: - DebuggerSubscription
-
-/// RAII debugger event subscription token. Unsubscribes on deinit.
-public struct DebuggerSubscription: ~Copyable, @unchecked Sendable {
-    private let token: UInt64
-    private let context: UnsafeMutableRawPointer
-
-    init(token: UInt64, context: UnsafeMutableRawPointer) {
-        self.token = token
-        self.context = context
-    }
-
-    deinit {
-        idax_debugger_unsubscribe(token)
-        Unmanaged<AnyObject>.fromOpaque(context).release()
-    }
-
-    public consuming func cancel() {
-        idax_debugger_unsubscribe(token)
-        Unmanaged<AnyObject>.fromOpaque(context).release()
-        discard self
-    }
-}
-
-// MARK: - Callback boxes
-
-private nonisolated final class ProcessStartedBox {
-    let handler: @IDAActor (ModuleInfo) -> Void
-    init(handler: @escaping @IDAActor (ModuleInfo) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class ProcessExitedBox {
-    let handler: @IDAActor (Int32) -> Void
-    init(handler: @escaping @IDAActor (Int32) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class ProcessSuspendedBox {
-    let handler: @IDAActor (Address) -> Void
-    init(handler: @escaping @IDAActor (Address) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class BreakpointHitBox {
-    let handler: @IDAActor (Int32, Address) -> Void
-    init(handler: @escaping @IDAActor (Int32, Address) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class TraceBox {
-    let handler: @IDAActor (Int32, Address) -> Bool
-    init(handler: @escaping @IDAActor (Int32, Address) -> Bool) { self.handler = handler }
-}
-
-private nonisolated final class ExceptionBox {
-    let handler: @IDAActor (ExceptionInfo) -> Void
-    init(handler: @escaping @IDAActor (ExceptionInfo) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class ThreadStartedBox {
-    let handler: @IDAActor (Int32, String) -> Void
-    init(handler: @escaping @IDAActor (Int32, String) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class ThreadExitedBox {
-    let handler: @IDAActor (Int32, Int32) -> Void
-    init(handler: @escaping @IDAActor (Int32, Int32) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class LibraryLoadedBox {
-    let handler: @IDAActor (ModuleInfo) -> Void
-    init(handler: @escaping @IDAActor (ModuleInfo) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class LibraryUnloadedBox {
-    let handler: @IDAActor (String) -> Void
-    init(handler: @escaping @IDAActor (String) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class BreakpointChangedBox {
-    let handler: @IDAActor (BreakpointChange, Address) -> Void
-    init(handler: @escaping @IDAActor (BreakpointChange, Address) -> Void) { self.handler = handler }
-}
-
-private nonisolated final class AppcallExecutorBox {
-    let callback: @IDAActor (Address, UnsafeMutableRawPointer?, [AppcallValue], AppcallOptions) -> AppcallResult?
-    let cleanup: @IDAActor () -> Void
-    init(
-        callback: @escaping @IDAActor (Address, UnsafeMutableRawPointer?, [AppcallValue], AppcallOptions) -> AppcallResult?,
-        cleanup: @escaping @IDAActor () -> Void
-    ) {
-        self.callback = callback
-        self.cleanup = cleanup
-    }
-}
-
-// MARK: - Trampolines
-
-private nonisolated func processStartedTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    info: UnsafePointer<IdaxDebuggerModuleInfo>?
-) {
-    nonisolated(unsafe) let ctx = ctx
-    nonisolated(unsafe) let info = info
-    onIDAThread {
-        guard let ctx, let info else { return }
-        let box = Unmanaged<ProcessStartedBox>.fromOpaque(ctx).takeUnretainedValue()
-        let mi = ModuleInfo(
-            name: borrowCString(info.pointee.name),
-            base: info.pointee.base,
-            size: info.pointee.size
-        )
-        box.handler(mi)
-    }
-}
-
-private nonisolated func processExitedTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    exitCode: Int32
-) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<ProcessExitedBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(exitCode)
-    }
-}
-
-private nonisolated func processSuspendedTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    address: UInt64
-) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<ProcessSuspendedBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(address)
-    }
-}
-
-private nonisolated func breakpointHitTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    threadId: Int32,
-    address: UInt64
-) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<BreakpointHitBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(threadId, address)
-    }
-}
-
-private nonisolated func traceTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    threadId: Int32,
-    ip: UInt64
-) -> Int32 {
-    nonisolated(unsafe) let ctx = ctx
-    return onIDAThread {
-        guard let ctx else { return 0 }
-        let box = Unmanaged<TraceBox>.fromOpaque(ctx).takeUnretainedValue()
-        return box.handler(threadId, ip) ? 1 : 0
-    }
-}
-
-private nonisolated func exceptionTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    info: UnsafePointer<IdaxDebuggerExceptionInfo>?
-) {
-    nonisolated(unsafe) let ctx = ctx
-    nonisolated(unsafe) let info = info
-    onIDAThread {
-        guard let ctx, let info else { return }
-        let box = Unmanaged<ExceptionBox>.fromOpaque(ctx).takeUnretainedValue()
-        let ei = ExceptionInfo(
-            address: info.pointee.ea,
-            code: info.pointee.code,
-            canContinue: info.pointee.can_continue != 0,
-            message: borrowCString(info.pointee.message)
-        )
-        box.handler(ei)
-    }
-}
-
-private nonisolated func threadStartedTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    threadId: Int32,
-    name: UnsafePointer<CChar>?
-) {
-    nonisolated(unsafe) let ctx = ctx
-    nonisolated(unsafe) let name = name
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<ThreadStartedBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(threadId, borrowCString(name))
-    }
-}
-
-private nonisolated func threadExitedTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    threadId: Int32,
-    exitCode: Int32
-) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<ThreadExitedBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(threadId, exitCode)
-    }
-}
-
-private nonisolated func libraryLoadedTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    info: UnsafePointer<IdaxDebuggerModuleInfo>?
-) {
-    nonisolated(unsafe) let ctx = ctx
-    nonisolated(unsafe) let info = info
-    onIDAThread {
-        guard let ctx, let info else { return }
-        let box = Unmanaged<LibraryLoadedBox>.fromOpaque(ctx).takeUnretainedValue()
-        let mi = ModuleInfo(
-            name: borrowCString(info.pointee.name),
-            base: info.pointee.base,
-            size: info.pointee.size
-        )
-        box.handler(mi)
-    }
-}
-
-private nonisolated func libraryUnloadedTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    name: UnsafePointer<CChar>?
-) {
-    nonisolated(unsafe) let ctx = ctx
-    nonisolated(unsafe) let name = name
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<LibraryUnloadedBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.handler(borrowCString(name))
-    }
-}
-
-private nonisolated func breakpointChangedTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    change: Int32,
-    address: UInt64
-) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<BreakpointChangedBox>.fromOpaque(ctx).takeUnretainedValue()
-        let kind = BreakpointChange(rawValue: change) ?? .changed
-        box.handler(kind, address)
-    }
-}
-
-private nonisolated func appcallExecutorTrampoline(
-    ctx: UnsafeMutableRawPointer?,
-    request: UnsafePointer<IdaxDebuggerAppcallRequest>?,
-    outResult: UnsafeMutablePointer<IdaxDebuggerAppcallResult>?
-) -> Int32 {
-    nonisolated(unsafe) let ctx = ctx
-    nonisolated(unsafe) let request = request
-    nonisolated(unsafe) let outResult = outResult
-    return onIDAThread {
-        guard let ctx, let request, let outResult else { return 0 }
-        let box = Unmanaged<AppcallExecutorBox>.fromOpaque(ctx).takeUnretainedValue()
-
-        // Convert arguments
-        var args: [AppcallValue] = []
-        if let argPtr = request.pointee.arguments, request.pointee.argument_count > 0 {
-            let buf = UnsafeBufferPointer(start: argPtr, count: request.pointee.argument_count)
-            args = buf.map { makeSwiftAppcallValue($0) }
-        }
-
-        // Convert options
-        var opts = AppcallOptions()
-        let cOpts = request.pointee.options
-        if cOpts.has_thread_id != 0 { opts.threadId = cOpts.thread_id }
-        opts.manual = cOpts.manual != 0
-        opts.includeDebugEvent = cOpts.include_debug_event != 0
-        if cOpts.has_timeout_milliseconds != 0 { opts.timeoutMilliseconds = cOpts.timeout_milliseconds }
-
-        guard let result = box.callback(
-            request.pointee.function_address,
-            request.pointee.function_type,
-            args,
-            opts
-        ) else {
-            return 0
-        }
-
-        outResult.pointee.return_value = makeCAppcallValue(result.returnValue)
-        outResult.pointee.diagnostics = result.diagnostics.isEmpty ? nil : strdup(result.diagnostics)
-        return 1
-    }
-}
-
-private nonisolated func appcallExecutorCleanupTrampoline(ctx: UnsafeMutableRawPointer?) {
-    nonisolated(unsafe) let ctx = ctx
-    onIDAThread {
-        guard let ctx else { return }
-        let box = Unmanaged<AppcallExecutorBox>.fromOpaque(ctx).takeUnretainedValue()
-        box.cleanup()
-    }
-}
-
-// MARK: - Debugger namespace
-
-/// Debugger control and inspection.
-///
-/// Mirrors C++ `ida::debugger`.
+/// Debugger control, copied runtime metadata, and owned callback registrations.
 public enum Debugger {
-
-    // MARK: - Backend
-
-    /// List all available debugger backends.
-    public static func availableBackends() throws(IDAError) -> [BackendInfo] {
-        var ptr: UnsafeMutablePointer<IdaxBackendInfo>? = nil
-        var count: Int = 0
-        try checkStatus(idax_debugger_available_backends(&ptr, &count), "debugger.availableBackends")
-        guard let ptr, count > 0 else { return [] }
+    public enum ProcessState: Sendable { case noProcess, running, suspended }
+    public struct Backend: Sendable {
+        public var name, displayName: String
+        public var remote, supportsAppcall, supportsAttach, loaded: Bool
+        public init(name: String = "", displayName: String = "", remote: Bool = false,
+                    supportsAppcall: Bool = false, supportsAttach: Bool = false, loaded: Bool = false) {
+            self.name = name
+            self.displayName = displayName
+            self.remote = remote
+            self.supportsAppcall = supportsAppcall
+            self.supportsAttach = supportsAttach
+            self.loaded = loaded
+        }
+        internal init(_ raw: IdaxBackendInfo) throws(IDAError) {
+            name = try borrowCString(raw.name, "debugger.backend.name")
+            displayName = try borrowCString(raw.display_name, "debugger.backend.displayName")
+            remote = raw.remote != 0
+            supportsAppcall = raw.supports_appcall != 0
+            supportsAttach = raw.supports_attach != 0
+            loaded = raw.loaded != 0
+        }
+    }
+    public struct Thread: Sendable {
+        public var identifier: Int32
+        public var name: String
+        public var isCurrent: Bool
+        public init(identifier: Int32 = 0, name: String = "", isCurrent: Bool = false) {
+            self.identifier = identifier
+            self.name = name
+            self.isCurrent = isCurrent
+        }
+    }
+    public struct Register: Sendable {
+        public var name: String
+        public var readOnly, instructionPointer, stackPointer, framePointer, mayContainAddress,
+            customFormat: Bool
+        public init(name: String = "", readOnly: Bool = false, instructionPointer: Bool = false,
+                    stackPointer: Bool = false, framePointer: Bool = false,
+                    mayContainAddress: Bool = false, customFormat: Bool = false) {
+            self.name = name
+            self.readOnly = readOnly
+            self.instructionPointer = instructionPointer
+            self.stackPointer = stackPointer
+            self.framePointer = framePointer
+            self.mayContainAddress = mayContainAddress
+            self.customFormat = customFormat
+        }
+    }
+    public static func availableBackends() throws(IDAError) -> [Backend] {
+        try requireRuntimeThread("debugger.availableBackends")
+        var pointer: UnsafeMutablePointer<IdaxBackendInfo>?
+        var count = 0
+        try checkStatus(idax_debugger_available_backends(&pointer, &count), "debugger.availableBackends")
         defer {
-            for i in 0..<count {
-                var item = ptr[i]
-                idax_backend_info_free(&item)
+            if let pointer {
+                for index in 0..<count { idax_backend_info_free(pointer.advanced(by: index)) }
+                idax_free_bytes(UnsafeMutableRawPointer(pointer).assumingMemoryBound(to: UInt8.self))
             }
-            free(ptr)
         }
-        let buf = UnsafeBufferPointer(start: ptr, count: count)
-        return buf.map { raw in
-            BackendInfo(
-                name: borrowCString(raw.name),
-                displayName: borrowCString(raw.display_name),
-                remote: raw.remote != 0,
-                supportsAppcall: raw.supports_appcall != 0,
-                supportsAttach: raw.supports_attach != 0,
-                loaded: raw.loaded != 0
-            )
+        var result: [Backend] = []
+        for value in try checkedBuffer(pointer, count: count, "debugger.availableBackends") {
+            result.append(try Backend(value))
         }
+        return result
     }
-
-    /// Get the currently loaded debugger backend.
-    public static func currentBackend() throws(IDAError) -> BackendInfo {
-        var raw = IdaxBackendInfo()
-        try checkStatus(idax_debugger_current_backend(&raw), "debugger.currentBackend")
-        defer { idax_backend_info_free(&raw) }
-        return BackendInfo(
-            name: borrowCString(raw.name),
-            displayName: borrowCString(raw.display_name),
-            remote: raw.remote != 0,
-            supportsAppcall: raw.supports_appcall != 0,
-            supportsAttach: raw.supports_attach != 0,
-            loaded: raw.loaded != 0
-        )
+    public static func currentBackend() throws(IDAError) -> Backend {
+        try requireRuntimeThread("debugger.currentBackend")
+        var value = IdaxBackendInfo()
+        defer { idax_backend_info_free(&value) }
+        try checkStatus(idax_debugger_current_backend(&value), "debugger.currentBackend")
+        return try Backend(value)
     }
-
-    /// Load a debugger backend by name.
     public static func loadBackend(_ name: String, remote: Bool = false) throws(IDAError) {
+        try requireRuntimeThread("debugger.loadBackend")
+        let text = try LifecycleStrings([name])
+        try checkStatus(idax_debugger_load_backend(text[0], remote ? 1 : 0), "debugger.loadBackend")
+    }
+    public static func start(path: String = "", arguments: String = "", workingDirectory: String = "")
+        throws(IDAError)
+    {
+        try requireRuntimeThread("debugger.start")
+        let text = try LifecycleStrings([path, arguments, workingDirectory])
+        try checkStatus(idax_debugger_start(text[0], text[1], text[2]), "debugger.start")
+    }
+    public static func requestStart(path: String = "", arguments: String = "", workingDirectory: String = "")
+        throws(IDAError)
+    {
+        try requireRuntimeThread("debugger.requestStart")
+        let text = try LifecycleStrings([path, arguments, workingDirectory])
+        try checkStatus(idax_debugger_request_start(text[0], text[1], text[2]), "debugger.requestStart")
+    }
+    public static func state() throws(IDAError) -> ProcessState {
+        let state = try withOutput("debugger.state", initial: Int32(0)) { idax_debugger_state($0) }
+        switch state {
+        case 0: return .noProcess
+        case 1: return .running
+        case 2: return .suspended
+        default: throw IDAError(category: .unsupported, message: "Unknown process state")
+        }
+    }
+    public static func registerValue(_ name: String) throws(IDAError) -> UInt64 {
+        let text = try LifecycleStrings([name])
+        return try withOutput("debugger.registerValue", initial: UInt64(0)) {
+            idax_debugger_register_value(text[0], $0)
+        }
+    }
+    public static func setRegister(_ name: String, value: UInt64) throws(IDAError) {
+        try requireRuntimeThread("debugger.setRegister")
+        let text = try LifecycleStrings([name])
+        try checkStatus(idax_debugger_set_register(text[0], value), "debugger.setRegister")
+    }
+    public static func readMemory(at address: Address, size: UInt64) throws(IDAError) -> [UInt8] {
+        try requireRuntimeThread("debugger.readMemory")
+        var bytes: UnsafeMutablePointer<UInt8>?
+        var count = 0
+        try checkStatus(idax_debugger_read_memory(address, size, &bytes, &count), "debugger.readMemory")
+        defer { idax_free_bytes(bytes) }
+        return Array(try checkedBuffer(bytes, count: count, "debugger.readMemory"))
+    }
+    public static func writeMemory(at address: Address, bytes: [UInt8]) throws(IDAError) {
+        try requireRuntimeThread("debugger.writeMemory")
         try checkStatus(
-            name.withCString { idax_debugger_load_backend($0, remote ? 1 : 0) },
-            "debugger.loadBackend"
-        )
+            bytes.withUnsafeBufferPointer { idax_debugger_write_memory(address, $0.baseAddress, $0.count) },
+            "debugger.writeMemory")
     }
-
-    // MARK: - Process control
-
-    /// Start a process under the debugger.
-    public static func start(
-        path: String, args: String = "", workingDirectory: String = ""
-    ) throws(IDAError) {
-        try checkStatus(
-            path.withCString { p in
-                args.withCString { a in
-                    workingDirectory.withCString { w in
-                        idax_debugger_start(p, a, w)
-                    }
-                }
-            },
-            "debugger.start"
-        )
+    public static func threads() throws(IDAError) -> [Thread] {
+        try requireRuntimeThread("debugger.threads")
+        var pointer: UnsafeMutablePointer<IdaxThreadInfo>?
+        var count = 0
+        try checkStatus(idax_debugger_threads(&pointer, &count), "debugger.threads")
+        defer {
+            if let pointer {
+                for i in 0..<count { idax_thread_info_free(pointer.advanced(by: i)) }
+                idax_free_bytes(UnsafeMutableRawPointer(pointer).assumingMemoryBound(to: UInt8.self))
+            }
+        }
+        var result: [Thread] = []
+        for value in try checkedBuffer(pointer, count: count, "debugger.threads") {
+            result.append(
+                Thread(
+                    identifier: value.id, name: try borrowCString(value.name, "debugger.thread.name"),
+                    isCurrent: value.is_current != 0))
+        }
+        return result
     }
-
-    /// Request asynchronous process start.
-    public static func requestStart(
-        path: String, args: String = "", workingDirectory: String = ""
-    ) throws(IDAError) {
-        try checkStatus(
-            path.withCString { p in
-                args.withCString { a in
-                    workingDirectory.withCString { w in
-                        idax_debugger_request_start(p, a, w)
-                    }
-                }
-            },
-            "debugger.requestStart"
-        )
+    public static func registerInformation(_ name: String) throws(IDAError) -> Register {
+        try requireRuntimeThread("debugger.registerInformation")
+        let text = try LifecycleStrings([name])
+        var raw = IdaxDebuggerRegisterInfo()
+        defer { idax_debugger_register_info_free(&raw) }
+        try checkStatus(idax_debugger_register_info(text[0], &raw), "debugger.registerInformation")
+        return Register(
+            name: try borrowCString(raw.name, "debugger.register.name"), readOnly: raw.read_only != 0,
+            instructionPointer: raw.instruction_pointer != 0, stackPointer: raw.stack_pointer != 0,
+            framePointer: raw.frame_pointer != 0, mayContainAddress: raw.may_contain_address != 0,
+            customFormat: raw.custom_format != 0)
     }
-
-    /// Attach to a running process by PID.
-    public static func attach(pid: Int32) throws(IDAError) {
-        try checkStatus(idax_debugger_attach(pid), "debugger.attach")
+    public static func isRequestRunning() throws(IDAError) -> Bool {
+        try requireRuntimeThread("debugger.isRequestRunning")
+        return idax_debugger_is_request_running() != 0
     }
-
-    /// Request asynchronous attach to a process.
-    public static func requestAttach(pid: Int32, eventId: Int32 = -1) throws(IDAError) {
-        try checkStatus(idax_debugger_request_attach(pid, eventId), "debugger.requestAttach")
-    }
-
-    /// Detach from the debugged process.
     public static func detach() throws(IDAError) {
+        try requireRuntimeThread("debugger.detach")
         try checkStatus(idax_debugger_detach(), "debugger.detach")
     }
-
-    /// Terminate the debugged process.
     public static func terminate() throws(IDAError) {
+        try requireRuntimeThread("debugger.terminate")
         try checkStatus(idax_debugger_terminate(), "debugger.terminate")
     }
-
-    // MARK: - Execution control
-
-    /// Suspend all threads.
     public static func suspend() throws(IDAError) {
+        try requireRuntimeThread("debugger.suspend")
         try checkStatus(idax_debugger_suspend(), "debugger.suspend")
     }
-
-    /// Resume execution.
     public static func resume() throws(IDAError) {
+        try requireRuntimeThread("debugger.resume")
         try checkStatus(idax_debugger_resume(), "debugger.resume")
     }
-
-    /// Step into the next instruction.
     public static func stepInto() throws(IDAError) {
+        try requireRuntimeThread("debugger.stepInto")
         try checkStatus(idax_debugger_step_into(), "debugger.stepInto")
     }
-
-    /// Step over the next instruction.
     public static func stepOver() throws(IDAError) {
+        try requireRuntimeThread("debugger.stepOver")
         try checkStatus(idax_debugger_step_over(), "debugger.stepOver")
     }
-
-    /// Step out of the current function.
     public static func stepOut() throws(IDAError) {
+        try requireRuntimeThread("debugger.stepOut")
         try checkStatus(idax_debugger_step_out(), "debugger.stepOut")
     }
-
-    /// Run until a specific address.
-    public static func runTo(_ address: Address) throws(IDAError) {
-        try checkStatus(idax_debugger_run_to(address), "debugger.runTo")
-    }
-
-    // MARK: - State queries
-
-    /// Get the current debugger state.
-    public static func state() throws(IDAError) -> DebuggerState {
-        let raw = try withOutput("debugger.state", Int32(0)) { idax_debugger_state($0) }
-        return DebuggerState(rawValue: raw)
-    }
-
-    /// Get the current instruction pointer.
-    public static func instructionPointer() throws(IDAError) -> Address {
-        try withOutput("debugger.instructionPointer", UInt64(0)) { idax_debugger_instruction_pointer($0) }
-    }
-
-    /// Get the current stack pointer.
-    public static func stackPointer() throws(IDAError) -> Address {
-        try withOutput("debugger.stackPointer", UInt64(0)) { idax_debugger_stack_pointer($0) }
-    }
-
-    /// Read a register value by name.
-    public static func registerValue(_ regName: String) throws(IDAError) -> UInt64 {
-        try withOutput("debugger.registerValue", UInt64(0)) { out in
-            regName.withCString { idax_debugger_register_value($0, out) }
-        }
-    }
-
-    /// Set a register value by name.
-    public static func setRegister(_ regName: String, value: UInt64) throws(IDAError) {
-        try checkStatus(
-            regName.withCString { idax_debugger_set_register($0, value) },
-            "debugger.setRegister"
-        )
-    }
-
-    // MARK: - Breakpoints
-
-    /// Add a breakpoint at the given address.
-    public static func addBreakpoint(at address: Address) throws(IDAError) {
-        try checkStatus(idax_debugger_add_breakpoint(address), "debugger.addBreakpoint")
-    }
-
-    /// Remove a breakpoint at the given address.
-    public static func removeBreakpoint(at address: Address) throws(IDAError) {
-        try checkStatus(idax_debugger_remove_breakpoint(address), "debugger.removeBreakpoint")
-    }
-
-    /// Check whether a breakpoint exists at the given address.
-    public static func hasBreakpoint(at address: Address) throws(IDAError) -> Bool {
-        let out = try withOutput("debugger.hasBreakpoint", Int32(0)) { idax_debugger_has_breakpoint(address, $0) }
-        return out != 0
-    }
-
-    // MARK: - Memory
-
-    /// Read bytes from debuggee memory.
-    public static func readMemory(at address: Address, size: UInt64) throws(IDAError) -> [UInt8] {
-        var ptr: UnsafeMutablePointer<UInt8>? = nil
-        var len: Int = 0
-        try checkStatus(idax_debugger_read_memory(address, size, &ptr, &len), "debugger.readMemory")
-        defer { idax_free_bytes(ptr) }
-        guard let ptr, len > 0 else { return [] }
-        return Array(UnsafeBufferPointer(start: ptr, count: len))
-    }
-
-    /// Write bytes to debuggee memory.
-    public static func writeMemory(at address: Address, data: [UInt8]) throws(IDAError) {
-        let ret = data.withUnsafeBufferPointer { buf in
-            idax_debugger_write_memory(address, buf.baseAddress, buf.count)
-        }
-        try checkStatus(ret, "debugger.writeMemory")
-    }
-
-    // MARK: - Async requests
-
-    /// Check whether an asynchronous request is currently running.
-    public static func isRequestRunning() -> Bool {
-        idax_debugger_is_request_running() != 0
-    }
-
-    /// Run pending asynchronous requests.
     public static func runRequests() throws(IDAError) {
+        try requireRuntimeThread("debugger.runRequests")
         try checkStatus(idax_debugger_run_requests(), "debugger.runRequests")
     }
-
-    /// Request asynchronous suspend.
     public static func requestSuspend() throws(IDAError) {
+        try requireRuntimeThread("debugger.requestSuspend")
         try checkStatus(idax_debugger_request_suspend(), "debugger.requestSuspend")
     }
-
-    /// Request asynchronous resume.
     public static func requestResume() throws(IDAError) {
+        try requireRuntimeThread("debugger.requestResume")
         try checkStatus(idax_debugger_request_resume(), "debugger.requestResume")
     }
-
-    /// Request asynchronous step-into.
     public static func requestStepInto() throws(IDAError) {
+        try requireRuntimeThread("debugger.requestStepInto")
         try checkStatus(idax_debugger_request_step_into(), "debugger.requestStepInto")
     }
-
-    /// Request asynchronous step-over.
     public static func requestStepOver() throws(IDAError) {
+        try requireRuntimeThread("debugger.requestStepOver")
         try checkStatus(idax_debugger_request_step_over(), "debugger.requestStepOver")
     }
-
-    /// Request asynchronous step-out.
     public static func requestStepOut() throws(IDAError) {
+        try requireRuntimeThread("debugger.requestStepOut")
         try checkStatus(idax_debugger_request_step_out(), "debugger.requestStepOut")
     }
-
-    /// Request asynchronous run-to.
+    public static func attach(_ processID: Int32) throws(IDAError) {
+        try requireRuntimeThread("debugger.attach")
+        try checkStatus(idax_debugger_attach(processID), "debugger.attach")
+    }
+    public static func runTo(_ address: Address) throws(IDAError) {
+        try requireRuntimeThread("debugger.runTo")
+        try checkStatus(idax_debugger_run_to(address), "debugger.runTo")
+    }
     public static func requestRunTo(_ address: Address) throws(IDAError) {
+        try requireRuntimeThread("debugger.requestRunTo")
         try checkStatus(idax_debugger_request_run_to(address), "debugger.requestRunTo")
     }
-
-    // MARK: - Threads
-
-    /// Get the number of threads.
+    public static func addBreakpoint(_ address: Address) throws(IDAError) {
+        try requireRuntimeThread("debugger.addBreakpoint")
+        try checkStatus(idax_debugger_add_breakpoint(address), "debugger.addBreakpoint")
+    }
+    public static func removeBreakpoint(_ address: Address) throws(IDAError) {
+        try requireRuntimeThread("debugger.removeBreakpoint")
+        try checkStatus(idax_debugger_remove_breakpoint(address), "debugger.removeBreakpoint")
+    }
+    public static func selectThread(_ threadID: Int32) throws(IDAError) {
+        try requireRuntimeThread("debugger.selectThread")
+        try checkStatus(idax_debugger_select_thread(threadID), "debugger.selectThread")
+    }
+    public static func requestSelectThread(_ threadID: Int32) throws(IDAError) {
+        try requireRuntimeThread("debugger.requestSelectThread")
+        try checkStatus(idax_debugger_request_select_thread(threadID), "debugger.requestSelectThread")
+    }
+    public static func suspendThread(_ threadID: Int32) throws(IDAError) {
+        try requireRuntimeThread("debugger.suspendThread")
+        try checkStatus(idax_debugger_suspend_thread(threadID), "debugger.suspendThread")
+    }
+    public static func requestSuspendThread(_ threadID: Int32) throws(IDAError) {
+        try requireRuntimeThread("debugger.requestSuspendThread")
+        try checkStatus(idax_debugger_request_suspend_thread(threadID), "debugger.requestSuspendThread")
+    }
+    public static func resumeThread(_ threadID: Int32) throws(IDAError) {
+        try requireRuntimeThread("debugger.resumeThread")
+        try checkStatus(idax_debugger_resume_thread(threadID), "debugger.resumeThread")
+    }
+    public static func requestResumeThread(_ threadID: Int32) throws(IDAError) {
+        try requireRuntimeThread("debugger.requestResumeThread")
+        try checkStatus(idax_debugger_request_resume_thread(threadID), "debugger.requestResumeThread")
+    }
+    public static func instructionPointer() throws(IDAError) -> Address {
+        try withOutput("debugger.instructionPointer", initial: UInt64(0)) {
+            idax_debugger_instruction_pointer($0)
+        }
+    }
+    public static func stackPointer() throws(IDAError) -> Address {
+        try withOutput("debugger.stackPointer", initial: UInt64(0)) { idax_debugger_stack_pointer($0) }
+    }
     public static func threadCount() throws(IDAError) -> Int {
-        var out: Int = 0
-        try checkStatus(idax_debugger_thread_count(&out), "debugger.threadCount")
-        return out
+        try withOutput("debugger.threadCount", initial: Int(0)) { idax_debugger_thread_count($0) }
     }
-
-    /// Get the thread ID at the given index.
-    public static func threadId(at index: Int) throws(IDAError) -> Int32 {
-        try withOutput("debugger.threadIdAt", Int32(0)) { idax_debugger_thread_id_at(index, $0) }
-    }
-
-    /// Get the thread name at the given index.
-    public static func threadName(at index: Int) throws(IDAError) -> String {
-        try withStringOutput("debugger.threadNameAt") { idax_debugger_thread_name_at(index, $0) }
-    }
-
-    /// Get the current thread ID.
     public static func currentThreadId() throws(IDAError) -> Int32 {
-        try withOutput("debugger.currentThreadId", Int32(0)) { idax_debugger_current_thread_id($0) }
+        try withOutput("debugger.currentThreadId", initial: Int32(0)) { idax_debugger_current_thread_id($0) }
     }
-
-    /// List all threads.
-    public static func threads() throws(IDAError) -> [ThreadInfo] {
-        var ptr: UnsafeMutablePointer<IdaxThreadInfo>? = nil
-        var count: Int = 0
-        try checkStatus(idax_debugger_threads(&ptr, &count), "debugger.threads")
-        guard let ptr, count > 0 else { return [] }
-        defer {
-            for i in 0..<count {
-                var item = ptr[i]
-                idax_thread_info_free(&item)
+    public static func isIntegerRegister(_ name: String) throws(IDAError) -> Bool {
+        let text = try LifecycleStrings([name])
+        return try withOutput("debugger.isIntegerRegister", initial: Int32(0)) {
+            idax_debugger_is_integer_register(text[0], $0)
+        } != 0
+    }
+    public static func isFloatingRegister(_ name: String) throws(IDAError) -> Bool {
+        let text = try LifecycleStrings([name])
+        return try withOutput("debugger.isFloatingRegister", initial: Int32(0)) {
+            idax_debugger_is_floating_register(text[0], $0)
+        } != 0
+    }
+    public static func isCustomRegister(_ name: String) throws(IDAError) -> Bool {
+        let text = try LifecycleStrings([name])
+        return try withOutput("debugger.isCustomRegister", initial: Int32(0)) {
+            idax_debugger_is_custom_register(text[0], $0)
+        } != 0
+    }
+    public static func requestAttach(_ processID: Int32, eventID: Int32 = -1) throws(IDAError) {
+        try requireRuntimeThread("debugger.requestAttach")
+        try checkStatus(idax_debugger_request_attach(processID, eventID), "debugger.requestAttach")
+    }
+    public static func hasBreakpoint(at address: Address) throws(IDAError) -> Bool {
+        try withOutput("debugger.hasBreakpoint", initial: Int32(0)) {
+            idax_debugger_has_breakpoint(address, $0)
+        } != 0
+    }
+    public static func threadID(at index: Int) throws(IDAError) -> Int32 {
+        guard index >= 0 else { throw IDAError(category: .validation, message: "Negative thread index") }
+        return try withOutput("debugger.threadID", initial: Int32(0)) {
+            idax_debugger_thread_id_at(index, $0)
+        }
+    }
+    public static func threadName(at index: Int) throws(IDAError) -> String {
+        guard index >= 0 else { throw IDAError(category: .validation, message: "Negative thread index") }
+        return try withStringOutput("debugger.threadName") { idax_debugger_thread_name_at(index, $0) }
+    }
+    public enum AppcallValue: Sendable, Equatable {
+        case signedInteger(Int64), unsignedInteger(UInt64), floatingPoint(Double), string(String), address(
+            Address), boolean(Bool)
+    }
+    public struct AppcallOptions: Sendable {
+        public var threadID: Int32?
+        public var manual, includeDebugEvent: Bool
+        public var timeoutMilliseconds: UInt32?
+        public init(
+            threadID: Int32? = nil, manual: Bool = false, includeDebugEvent: Bool = false,
+            timeoutMilliseconds: UInt32? = nil
+        ) {
+            self.threadID = threadID
+            self.manual = manual
+            self.includeDebugEvent = includeDebugEvent
+            self.timeoutMilliseconds = timeoutMilliseconds
+        }
+        internal var native: IdaxDebuggerAppcallOptions {
+            IdaxDebuggerAppcallOptions(
+                has_thread_id: threadID == nil ? 0 : 1, thread_id: threadID ?? 0, manual: manual ? 1 : 0,
+                include_debug_event: includeDebugEvent ? 1 : 0,
+                has_timeout_milliseconds: timeoutMilliseconds == nil ? 0 : 1,
+                timeout_milliseconds: timeoutMilliseconds ?? 0)
+        }
+    }
+    public struct AppcallRequest {
+        public var functionAddress: Address
+        public var functionType: TypeInfo
+        public var arguments: [AppcallValue]
+        public var options: AppcallOptions
+        public init(
+            functionAddress: Address, functionType: TypeInfo, arguments: [AppcallValue] = [],
+            options: AppcallOptions = .init()
+        ) {
+            self.functionAddress = functionAddress
+            self.functionType = functionType
+            self.arguments = arguments
+            self.options = options
+        }
+    }
+    public struct AppcallResult: Sendable {
+        public var returnValue: AppcallValue
+        public var diagnostics: String
+        public init(returnValue: AppcallValue, diagnostics: String = "") {
+            self.returnValue = returnValue
+            self.diagnostics = diagnostics
+        }
+    }
+    public static func appcall(_ request: AppcallRequest, executor: String? = nil) throws(IDAError)
+        -> AppcallResult
+    {
+        return try request.functionType.withHandle("debugger.appcall") {
+            (type) throws(IDAError) -> AppcallResult in
+            let text = try LifecycleStrings(executor.map { [$0] } ?? [])
+            var arguments: [IdaxDebuggerAppcallValue] = []
+            defer { for i in arguments.indices { idax_debugger_appcall_value_free(&arguments[i]) } }
+            for value in request.arguments { arguments.append(try nativeAppcallValue(value)) }
+            var raw = IdaxDebuggerAppcallRequest(
+                function_address: request.functionAddress, function_type: type, arguments: nil,
+                argument_count: arguments.count, options: request.options.native)
+            var result = IdaxDebuggerAppcallResult()
+            defer { idax_debugger_appcall_result_free(&result) }
+            try bridgeCall("debugger.appcall") { error in
+                arguments.withUnsafeMutableBufferPointer { buffer in
+                    raw.arguments = buffer.baseAddress
+                    return idax_swift_debugger_appcall(executor == nil ? nil : text[0], &raw, &result, error)
+                }
             }
-            free(ptr)
-        }
-        let buf = UnsafeBufferPointer(start: ptr, count: count)
-        return buf.map { raw in
-            ThreadInfo(
-                id: raw.id,
-                name: borrowCString(raw.name),
-                isCurrent: raw.is_current != 0
-            )
+            return AppcallResult(
+                returnValue: try swiftAppcallValue(result.return_value),
+                diagnostics: try borrowCString(result.diagnostics, "debugger.appcall.diagnostics"))
         }
     }
-
-    /// Select a thread by ID.
-    public static func selectThread(_ threadId: Int32) throws(IDAError) {
-        try checkStatus(idax_debugger_select_thread(threadId), "debugger.selectThread")
-    }
-
-    /// Request asynchronous thread selection.
-    public static func requestSelectThread(_ threadId: Int32) throws(IDAError) {
-        try checkStatus(idax_debugger_request_select_thread(threadId), "debugger.requestSelectThread")
-    }
-
-    /// Suspend a specific thread.
-    public static func suspendThread(_ threadId: Int32) throws(IDAError) {
-        try checkStatus(idax_debugger_suspend_thread(threadId), "debugger.suspendThread")
-    }
-
-    /// Request asynchronous thread suspend.
-    public static func requestSuspendThread(_ threadId: Int32) throws(IDAError) {
-        try checkStatus(idax_debugger_request_suspend_thread(threadId), "debugger.requestSuspendThread")
-    }
-
-    /// Resume a specific thread.
-    public static func resumeThread(_ threadId: Int32) throws(IDAError) {
-        try checkStatus(idax_debugger_resume_thread(threadId), "debugger.resumeThread")
-    }
-
-    /// Request asynchronous thread resume.
-    public static func requestResumeThread(_ threadId: Int32) throws(IDAError) {
-        try checkStatus(idax_debugger_request_resume_thread(threadId), "debugger.requestResumeThread")
-    }
-
-    // MARK: - Register info
-
-    /// Get detailed register information by name.
-    public static func registerInfo(_ registerName: String) throws(IDAError) -> RegisterInfo {
-        var raw = IdaxDebuggerRegisterInfo()
+    public static func cleanupAppcall(threadID: Int32? = nil) throws(IDAError) {
+        try requireRuntimeThread("debugger.cleanupAppcall")
         try checkStatus(
-            registerName.withCString { idax_debugger_register_info($0, &raw) },
-            "debugger.registerInfo"
-        )
-        defer { idax_debugger_register_info_free(&raw) }
-        return RegisterInfo(
-            name: borrowCString(raw.name),
-            readOnly: raw.read_only != 0,
-            instructionPointer: raw.instruction_pointer != 0,
-            stackPointer: raw.stack_pointer != 0,
-            framePointer: raw.frame_pointer != 0,
-            mayContainAddress: raw.may_contain_address != 0,
-            customFormat: raw.custom_format != 0
-        )
+            idax_debugger_cleanup_appcall(threadID == nil ? 0 : 1, threadID ?? 0), "debugger.cleanupAppcall")
     }
-
-    /// Check whether a register is an integer register.
-    public static func isIntegerRegister(_ registerName: String) throws(IDAError) -> Bool {
-        let out = try withOutput("debugger.isIntegerRegister", Int32(0)) { out in
-            registerName.withCString { idax_debugger_is_integer_register($0, out) }
-        }
-        return out != 0
-    }
-
-    /// Check whether a register is a floating-point register.
-    public static func isFloatingRegister(_ registerName: String) throws(IDAError) -> Bool {
-        let out = try withOutput("debugger.isFloatingRegister", Int32(0)) { out in
-            registerName.withCString { idax_debugger_is_floating_register($0, out) }
-        }
-        return out != 0
-    }
-
-    /// Check whether a register is a custom register.
-    public static func isCustomRegister(_ registerName: String) throws(IDAError) -> Bool {
-        let out = try withOutput("debugger.isCustomRegister", Int32(0)) { out in
-            registerName.withCString { idax_debugger_is_custom_register($0, out) }
-        }
-        return out != 0
-    }
-
-    // MARK: - Appcall
-
-    /// Invoke an appcall.
-    public static func appcall(
-        functionAddress: Address,
-        functionType: borrowing TypeHandle,
-        arguments: [AppcallValue],
-        options: AppcallOptions = AppcallOptions()
-    ) throws(IDAError) -> AppcallResult {
-        var cArgs = arguments.map { makeCAppcallValue($0) }
-        defer {
-            for i in 0..<cArgs.count {
-                idax_debugger_appcall_value_free(&cArgs[i])
-            }
-        }
-        let cOpts = makeCAppcallOptions(options)
-
-        var request = IdaxDebuggerAppcallRequest()
-        request.function_address = functionAddress
-        request.function_type = UnsafeMutableRawPointer(functionType.handle)
-        request.argument_count = cArgs.count
-        request.options = cOpts
-
-        var result = IdaxDebuggerAppcallResult()
-        let ret: Int32 = cArgs.withUnsafeMutableBufferPointer { buf in
-            request.arguments = buf.baseAddress
-            return idax_debugger_appcall(&request, &result)
-        }
-        defer { idax_debugger_appcall_result_free(&result) }
-        try checkStatus(ret, "debugger.appcall")
-
-        let returnValue = makeSwiftAppcallValue(result.return_value)
-        let diagnostics = result.diagnostics.map { String(cString: $0) } ?? ""
-        return AppcallResult(returnValue: returnValue, diagnostics: diagnostics)
-    }
-
-    /// Clean up after an appcall.
-    public static func cleanupAppcall(threadId: Int32? = nil) throws(IDAError) {
-        if let tid = threadId {
-            try checkStatus(idax_debugger_cleanup_appcall(1, tid), "debugger.cleanupAppcall")
-        } else {
-            try checkStatus(idax_debugger_cleanup_appcall(0, 0), "debugger.cleanupAppcall")
-        }
-    }
-
-    /// Register an appcall executor with the given name.
     public static func registerExecutor(
-        name: String,
-        callback: @escaping @IDAActor (Address, UnsafeMutableRawPointer?, [AppcallValue], AppcallOptions) -> AppcallResult?,
-        cleanup: @escaping @IDAActor () -> Void = {}
-    ) throws(IDAError) {
-        let box = AppcallExecutorBox(callback: callback, cleanup: cleanup)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        do {
-            try checkStatus(
-                name.withCString { n in
-                    idax_debugger_register_executor(
-                        n,
-                        appcallExecutorTrampoline,
-                        appcallExecutorCleanupTrampoline,
-                        ctx
-                    )
-                },
-                "debugger.registerExecutor"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
+        name: String, execute: @escaping (AppcallRequest) throws(IDAError) -> AppcallResult
+    ) throws(IDAError) -> Registration {
+        let text = try LifecycleStrings([name])
+        let context = Unmanaged.passRetained(ExecutorCallback(execute)).toOpaque()
+        var handle: UnsafeMutableRawPointer?
+        try bridgeCall("debugger.registerExecutor") {
+            idax_swift_executor_register(text[0], context, executorInvoke, executorDestroy, &handle, $0)
         }
+        return Registration(owning: try requireLifecycleHandle(handle, "debugger.registerExecutor"))
     }
-
-    /// Unregister a named appcall executor.
-    public static func unregisterExecutor(_ name: String) throws(IDAError) {
-        try checkStatus(
-            name.withCString { idax_debugger_unregister_executor($0) },
-            "debugger.unregisterExecutor"
-        )
+    public enum EventKind: CaseIterable, Sendable {
+        case processStarted, processExited, processSuspended, breakpointHit, trace, exception, threadStarted,
+            threadExited, libraryLoaded, libraryUnloaded, breakpointChanged
     }
-
-    /// Invoke an appcall through a named executor.
-    public static func appcallWithExecutor(
-        name: String,
-        functionAddress: Address,
-        functionType: borrowing TypeHandle,
-        arguments: [AppcallValue],
-        options: AppcallOptions = AppcallOptions()
-    ) throws(IDAError) -> AppcallResult {
-        var cArgs = arguments.map { makeCAppcallValue($0) }
-        defer {
-            for i in 0..<cArgs.count {
-                idax_debugger_appcall_value_free(&cArgs[i])
-            }
-        }
-        let cOpts = makeCAppcallOptions(options)
-
-        var request = IdaxDebuggerAppcallRequest()
-        request.function_address = functionAddress
-        request.function_type = UnsafeMutableRawPointer(functionType.handle)
-        request.argument_count = cArgs.count
-        request.options = cOpts
-
-        var result = IdaxDebuggerAppcallResult()
-        let ret: Int32 = cArgs.withUnsafeMutableBufferPointer { buf in
-            request.arguments = buf.baseAddress
-            return name.withCString { n in
-                idax_debugger_appcall_with_executor(n, &request, &result)
-            }
-        }
-        defer { idax_debugger_appcall_result_free(&result) }
-        try checkStatus(ret, "debugger.appcallWithExecutor")
-
-        let returnValue = makeSwiftAppcallValue(result.return_value)
-        let diagnostics = result.diagnostics.map { String(cString: $0) } ?? ""
-        return AppcallResult(returnValue: returnValue, diagnostics: diagnostics)
+    public struct Change: Sendable {
+        public let kind: EventKind
+        public let address: Address
+        public let size: UInt64
+        public let name: String
+        public let threadID: Int32
+        public let exitCode: Int32
+        public let exceptionCode: UInt32
+        public let canContinue: Bool
+        public let breakpointChange: BreakpointChange?
     }
-
-    // MARK: - Event subscriptions
-
-    /// Subscribe to process-started events.
-    public static func onProcessStarted(
-        _ handler: @escaping @IDAActor (ModuleInfo) -> Void
-    ) throws(IDAError) -> DebuggerSubscription {
-        let box = ProcessStartedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_debugger_on_process_started(processStartedTrampoline, ctx, &token),
-                "debugger.onProcessStarted"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
+    public enum BreakpointChange: Sendable { case added, removed, changed }
+    /// Return true from trace callbacks to suppress the native trace log entry.
+    public static func subscribe(to kind: EventKind, handler: @escaping (Change) throws(IDAError) -> Bool)
+        throws(IDAError) -> Registration
+    {
+        let callbacks = callbackDescriptor { raw, reply in
+            let change = Change(
+                kind: kind, address: raw.address, size: raw.size,
+                name: try borrowCString(raw.text, "debugger.event.name"), threadID: raw.number,
+                exitCode: kind == .processExited ? raw.number : raw.secondary_number,
+                exceptionCode: raw.value, canContinue: raw.flag != 0,
+                breakpointChange: kind == .breakpointChanged
+                    ? (raw.number == 0 ? .added : raw.number == 1 ? .removed : .changed) : nil)
+            reply.pointee.decision = try handler(change) ? 1 : 0
         }
-        return DebuggerSubscription(token: token, context: ctx)
+        var handle: UnsafeMutableRawPointer?
+        try bridgeCall("debugger.subscribe") {
+            idax_swift_debugger_subscribe(
+                Int32(EventKind.allCases.firstIndex(of: kind)!), callbacks, &handle, $0)
+        }
+        return Registration(owning: try requireLifecycleHandle(handle, "debugger.subscribe"))
     }
-
-    /// Subscribe to process-exited events.
-    public static func onProcessExited(
-        _ handler: @escaping @IDAActor (Int32) -> Void
-    ) throws(IDAError) -> DebuggerSubscription {
-        let box = ProcessExitedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_debugger_on_process_exited(processExitedTrampoline, ctx, &token),
-                "debugger.onProcessExited"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return DebuggerSubscription(token: token, context: ctx)
+}
+private func swiftAppcallValue(_ raw: IdaxDebuggerAppcallValue) throws(IDAError) -> Debugger.AppcallValue {
+    switch raw.kind {
+    case 0: return .signedInteger(raw.signed_value)
+    case 1: return .unsignedInteger(raw.unsigned_value)
+    case 2: return .floatingPoint(raw.floating_value)
+    case 3: return .string(try borrowCString(raw.string_value, "appcall.string"))
+    case 4: return .address(raw.address_value)
+    case 5: return .boolean(raw.boolean_value != 0)
+    default: throw IDAError(category: .unsupported, message: "Unknown appcall value kind")
     }
-
-    /// Subscribe to process-suspended events.
-    public static func onProcessSuspended(
-        _ handler: @escaping @IDAActor (Address) -> Void
-    ) throws(IDAError) -> DebuggerSubscription {
-        let box = ProcessSuspendedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_debugger_on_process_suspended(processSuspendedTrampoline, ctx, &token),
-                "debugger.onProcessSuspended"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return DebuggerSubscription(token: token, context: ctx)
+}
+private func nativeAppcallValue(_ value: Debugger.AppcallValue) throws(IDAError) -> IdaxDebuggerAppcallValue {
+    var raw = IdaxDebuggerAppcallValue()
+    switch value {
+    case .signedInteger(let value):
+        raw.kind = 0
+        raw.signed_value = value
+    case .unsignedInteger(let value):
+        raw.kind = 1
+        raw.unsigned_value = value
+    case .floatingPoint(let value):
+        raw.kind = 2
+        raw.floating_value = value
+    case .string(let value):
+        raw.kind = 3
+        let text = try LifecycleStrings([value])
+        try bridgeCall("appcall.string") { idax_swift_appcall_string(&raw, text[0], $0) }
+    case .address(let value):
+        raw.kind = 4
+        raw.address_value = value
+    case .boolean(let value):
+        raw.kind = 5
+        raw.boolean_value = value ? 1 : 0
     }
-
-    /// Subscribe to breakpoint-hit events.
-    public static func onBreakpointHit(
-        _ handler: @escaping @IDAActor (Int32, Address) -> Void
-    ) throws(IDAError) -> DebuggerSubscription {
-        let box = BreakpointHitBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_debugger_on_breakpoint_hit(breakpointHitTrampoline, ctx, &token),
-                "debugger.onBreakpointHit"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return DebuggerSubscription(token: token, context: ctx)
+    return raw
+}
+private final class ExecutorCallback {
+    let execute: (Debugger.AppcallRequest) throws(IDAError) -> Debugger.AppcallResult
+    init(_ execute: @escaping (Debugger.AppcallRequest) throws(IDAError) -> Debugger.AppcallResult) {
+        self.execute = execute
     }
-
-    /// Subscribe to trace events. Return `true` from the handler to continue tracing.
-    public static func onTrace(
-        _ handler: @escaping @IDAActor (Int32, Address) -> Bool
-    ) throws(IDAError) -> DebuggerSubscription {
-        let box = TraceBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_debugger_on_trace(traceTrampoline, ctx, &token),
-                "debugger.onTrace"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return DebuggerSubscription(token: token, context: ctx)
-    }
-
-    /// Subscribe to exception events.
-    public static func onException(
-        _ handler: @escaping @IDAActor (ExceptionInfo) -> Void
-    ) throws(IDAError) -> DebuggerSubscription {
-        let box = ExceptionBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_debugger_on_exception(exceptionTrampoline, ctx, &token),
-                "debugger.onException"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return DebuggerSubscription(token: token, context: ctx)
-    }
-
-    /// Subscribe to thread-started events.
-    public static func onThreadStarted(
-        _ handler: @escaping @IDAActor (Int32, String) -> Void
-    ) throws(IDAError) -> DebuggerSubscription {
-        let box = ThreadStartedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_debugger_on_thread_started(threadStartedTrampoline, ctx, &token),
-                "debugger.onThreadStarted"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return DebuggerSubscription(token: token, context: ctx)
-    }
-
-    /// Subscribe to thread-exited events.
-    public static func onThreadExited(
-        _ handler: @escaping @IDAActor (Int32, Int32) -> Void
-    ) throws(IDAError) -> DebuggerSubscription {
-        let box = ThreadExitedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_debugger_on_thread_exited(threadExitedTrampoline, ctx, &token),
-                "debugger.onThreadExited"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return DebuggerSubscription(token: token, context: ctx)
-    }
-
-    /// Subscribe to library-loaded events.
-    public static func onLibraryLoaded(
-        _ handler: @escaping @IDAActor (ModuleInfo) -> Void
-    ) throws(IDAError) -> DebuggerSubscription {
-        let box = LibraryLoadedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_debugger_on_library_loaded(libraryLoadedTrampoline, ctx, &token),
-                "debugger.onLibraryLoaded"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return DebuggerSubscription(token: token, context: ctx)
-    }
-
-    /// Subscribe to library-unloaded events.
-    public static func onLibraryUnloaded(
-        _ handler: @escaping @IDAActor (String) -> Void
-    ) throws(IDAError) -> DebuggerSubscription {
-        let box = LibraryUnloadedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_debugger_on_library_unloaded(libraryUnloadedTrampoline, ctx, &token),
-                "debugger.onLibraryUnloaded"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return DebuggerSubscription(token: token, context: ctx)
-    }
-
-    /// Subscribe to breakpoint-changed events.
-    public static func onBreakpointChanged(
-        _ handler: @escaping @IDAActor (BreakpointChange, Address) -> Void
-    ) throws(IDAError) -> DebuggerSubscription {
-        let box = BreakpointChangedBox(handler: handler)
-        let ctx = Unmanaged.passRetained(box).toOpaque()
-        var token: UInt64 = 0
-        do {
-            try checkStatus(
-                idax_debugger_on_breakpoint_changed(breakpointChangedTrampoline, ctx, &token),
-                "debugger.onBreakpointChanged"
-            )
-        } catch {
-            Unmanaged<AnyObject>.fromOpaque(ctx).release()
-            throw error
-        }
-        return DebuggerSubscription(token: token, context: ctx)
+}
+private func executorDestroy(_ context: UnsafeMutableRawPointer?) {
+    if let context { Unmanaged<ExecutorCallback>.fromOpaque(context).release() }
+}
+private func executorInvoke(
+    _ context: UnsafeMutableRawPointer?, _ request: UnsafePointer<IdaxDebuggerAppcallRequest>?,
+    _ output: UnsafeMutablePointer<IdaxDebuggerAppcallResult>?,
+    _ failure: UnsafeMutablePointer<IdaxSwiftError>?
+) -> Int32 {
+    guard let context, let request, let output else { return -1 }
+    do {
+        let native = request.pointee
+        var copy: UnsafeMutableRawPointer?
+        try checkStatus(idax_type_clone(native.function_type, &copy), "appcall.functionType.copy")
+        let type = try TypeInfo(owning: requireLifecycleHandle(copy, "appcall.functionType.copy"))
+        let arguments = try checkedBuffer(native.arguments, count: native.argument_count, "appcall.arguments")
+            .map { try swiftAppcallValue($0) }
+        let options = Debugger.AppcallOptions(
+            threadID: native.options.has_thread_id != 0 ? native.options.thread_id : nil,
+            manual: native.options.manual != 0, includeDebugEvent: native.options.include_debug_event != 0,
+            timeoutMilliseconds: native.options.has_timeout_milliseconds != 0
+                ? native.options.timeout_milliseconds : nil)
+        let result = try Unmanaged<ExecutorCallback>.fromOpaque(context).takeUnretainedValue().execute(
+            Debugger.AppcallRequest(
+                functionAddress: native.function_address, functionType: type, arguments: arguments,
+                options: options))
+        output.pointee.return_value = try nativeAppcallValue(result.returnValue)
+        let diagnostics = try nativeAppcallValue(.string(result.diagnostics))
+        output.pointee.diagnostics = diagnostics.string_value
+        return 0
+    } catch {
+        writeCallbackError(
+            (error as? IDAError) ?? IDAError(category: .internalError, message: String(describing: error)),
+            to: failure)
+        return -1
     }
 }
