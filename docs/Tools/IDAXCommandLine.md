@@ -27,10 +27,13 @@ The tool requires IDA 9.4: the shared-cache work goes through the public
 archive compiled against the SDK matching the destination IDA runtime; nothing
 here bundles IDA or an IDA license.
 
-Caches newer than the IDA release understands may fail to open. Measured with
-IDA 9.4: macOS caches through 26.3 open normally, while 26.6 fails inside IDA's
-own `open_database` even though `idax formats` identifies its loader
-correctly.
+Caches newer than the IDA release understands may fail to open. One measured
+failure — a macOS 26.6 cache — turned out to have a likelier cause: that
+directory held a leftover, never-cleanly-closed database
+(`dyld_shared_cache_arm64e.id0` and friends) from an earlier session, while
+every cache that opened normally had none. IDA refuses an input whose unpacked
+database is still lying beside it. Clear such leftovers before concluding the
+format is unsupported.
 
 ## Build and run
 

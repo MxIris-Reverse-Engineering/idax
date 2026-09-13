@@ -228,5 +228,5 @@ tool, and both had claimed `P23.1`.
   - F18.7. 合并陷阱一则：本 fork 早先把 `bindings/rust/idax-sys/shim/idax_shim.h` 删掉改放 `bindings/c/include/`，上游没动过该文件，于是合并保留了这个删除，导致上游所有 bridge 头都找不到它。恢复上游布局后解决。
   - F18.8. `Package.swift` 去掉 `IDAXShared` 动态产品：它是上游原生 add-on 的共享镜像，fork 不构建 add-on，且产品（而非 target）无法携带预编译归档路线所需的链接参数，保留会直接链接失败。
   - F18.9. 验证：`idax formats` 正确列出 IDA 视角的加载器（fork 专属 C++ → C shim → Swift 链路全通）；`idax binary --arch arm64` 对三切片胖二进制正确选中第 2 片（`Loaded as: Fat Mach-O file, 2. ARM64`），证明 `-T` argv 路径有效；`idax dyld-cache` 对 macOS 12.6 / 15.5 / 26.0 / 26.3 的缓存均成功建库。CLI 测试 45 tests / 4 suites 全通过（原始退出码 0）。
-  - F18.10. 已知环境限制（非本次回归）：macOS 26.6 的 dyld 共享缓存 `open_database` 失败，而 26.3 及更早正常，`formats` 能正确识别其加载器（`Apple DYLD shared cache for arm64e`）。失败发生在 IDA 的 `open_database` 内部，不在本次改动触及的路径上，判断为 IDA 9.4 对该版本分片缓存格式的支持上限。
+  - F18.10. 一处失败与其更正（非本次回归）：macOS 26.6 的缓存 `open_database` 失败，26.3 及更早正常。**初判「IDA 9.4 不支持该版本分片缓存格式」是错的**——复查时间戳发现 26.6 目录留有一套未正常关闭的残留数据库（`.nam`/`.til` 06:19、`.id1` 07:37，均早于本次会话；`.id0` 19:40 是本次尝试打开时 IDA 更新的），而 12.6 / 15.5 / 26.0 / 26.3 这四个能正常打开的目录残留数为零。IDA 拒绝打开旁边摊着解包数据库的输入，与全局规则里那条警告一致。残留未清理：那是用户资料卷，可能承载未完成的分析工作。
   - F18.11. **本目录自此冻结**，fork 记录移到 `docs/fork/`。
