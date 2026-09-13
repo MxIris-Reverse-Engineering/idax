@@ -11,4 +11,4 @@
 
 | # | 标题 | 状态 |
 |---|------|------|
-| draft | [收缩为上游之上的命令行工具](draft-shrink-fork-to-cli.md) | Draft |
+| draft | [收缩为上游之上的命令行工具](draft-shrink-fork-to-cli.md) | Implemented |

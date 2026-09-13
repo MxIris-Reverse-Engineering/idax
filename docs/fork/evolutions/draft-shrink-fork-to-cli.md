@@ -1,21 +1,22 @@
 # Draft - 收缩为上游之上的命令行工具
 
-- **状态**: Accepted
+- **状态**: Implemented
 - **作者**: JH
 - **创建日期**: 2026-09-13
 - **最后更新**: 2026-09-13
 - **所属愿景**: 无
 - **关联提案**: 无
-- **实现分支 / PR**: `feat/swift-bindings`（就地收缩，收缩前打归档标签）
-- **配套文档**: 待定 —— 落地时登记
+- **实现分支 / PR**: `feat/swift-bindings`（就地收缩；收缩前状态见标签 `archive/parallel-swift-bindings-20260913`）
+- **配套文档**: 无独立文档 —— 见下方收尾判断
 
 ## 摘要
 
 放弃在这个 fork 里维护一整套与上游平行的 Swift bindings，改为跟随上游 `19h/idax` 的
-master 分支，只保留 `idax` 命令行工具和它必需的一小块 C++ 补丁。上游在 2026-09-08 关闭了
+master 分支，只保留 `idax` 命令行工具和它需要的一小块 C++ 增量。上游在 2026-09-08 关闭了
 本 fork 的 Swift PR 并按同一批能力重写了一遍，两套实现的能力面已经基本重合；继续维护平行实现
 意味着为 99% 自己用不到的 API 付出持续的对齐成本。收缩后 fork 的增量从约 17000 行降到
-CLI 的 1059 行加上两处 C++ 补丁。
+CLI 的 1059 行加一个独立的 C++ 文件对，且**对上游文件零侵入**——每个上游文件都与上游
+逐字节一致。
 
 ## 动机
 
@@ -114,8 +115,10 @@ commit `8513324`（"Classify branch conditions from itype, not from disassembly 
 ### 上游确实没有的能力
 
 `list_input_formats` —— 列出 IDA 会为某个输入文件提供哪些加载器，通用（fat）Mach-O
-每个架构切片一条。上游 `include/ida/database.hpp` 中不存在该声明。配套的
-`RuntimeOptions::input_format` 字段同样是本 fork 新增。
+每个架构切片一条。上游 `include/ida/database.hpp` 中不存在该声明。
+
+（调研时以为还需要配套的 `RuntimeOptions::input_format` 字段。实施时证明不需要，见
+「详细设计」开头。）
 
 牵连范围经查证比预想的小：
 
@@ -145,11 +148,10 @@ unsafe linker flags"列为验收条件。本 fork 走的是 XCFramework 加预�
 1. **`idax` 命令行工具**（`bindings/swift/Tools/`，1059 行）。三个子命令：`formats`
    （列出 IDA 提供的加载器）、`binary`（从二进制建库，含胖二进制选架构）、`dyld-cache`
    （从 dyld 共享缓存建库）。调用点改为上游的 Swift API 命名。
-2. **两块 C++ 补丁**，尽量隔离以减小同步冲突面：
-   - `RuntimeOptions::input_format` 字段及其在初始化路径中的消费点。**无法隔离**——该字段
-     必须加进上游既有的结构体。
-   - `InputFormat` 类型与 `list_input_formats()`。放入 fork 专属的独立头文件与源文件，
-     不侵入上游的 `database.hpp` / `database.cpp`。
+2. **C++ 补丁**，尽量隔离以减小同步冲突面：`InputFormat` 类型与 `list_input_formats()`
+   放入 fork 专属的独立头文件与源文件，不侵入上游的任何文件。
+   （原计划还有一处不可隔离的 `RuntimeOptions::input_format` 字段，实施时证明不需要——
+   见「详细设计」开头。最终 fork 对上游 C++ 文件的侵入为零。）
 3. **预编译产物与安装脚本**（`bindings/swift/scripts/`），让 CLI 不必每次都跑一遍 CMake。
 4. **fork 文档目录** `docs/fork/`，含本提案与已裁决清单。
 
@@ -200,7 +202,7 @@ namespace ida::database {
 struct InputFormat {
     /// Name IDA displays for this format, carrying its own ordinal for
     /// multi-slice inputs (for example `Fat Mach-O file, 2. ARM64e-pauth1`).
-    /// Pass it back verbatim through RuntimeOptions::input_format to select it.
+    /// Prefix it with `-T` and pass that as one initialisation argument.
     std::string name;
     /// Processor module this format wants (for example `arm`, `metapc`).
     std::string processor;
@@ -310,11 +312,33 @@ CLI 的三个子命令名、参数与输出格式全部不变。`idax formats`�
 9. 停用 `.agents/fork/` 七份账本，在 `docs/fork/README.md` 说明其冻结时点与后续记录位置。
 10. 端到端验证：对一个 dyld 共享缓存和一个胖 Mach-O 各跑一遍建库，与收缩前的输出对照。
 
-**收尾时必须判断两件事**（结果写进决策日志）：
+全部步骤已于 2026-09-13 完成。第 5 步按实施修正执行——`RuntimeOptions::input_format`
+未保留（见「详细设计」开头的说明）。
 
-- 要不要配套专题文章。候选：CLI 的使用指南（子命令、架构选择的行为）；实现说明（输入格式
-  为什么只能在初始化时传、fork 补丁为什么这样切分）。
-- 有没有引入新术语。
+### 验证结果
+
+| 项目 | 结果 |
+|---|---|
+| `swift build --product idax` | 通过 |
+| `IDAXCommandLineTests` | 45 tests / 4 suites 全通过（原始退出码 0） |
+| `idax formats`（三切片胖 Mach-O） | 正确列出 IDA 的三个加载器 |
+| `idax binary --arch arm64` | `Loaded as: Fat Mach-O file, 2. ARM64`，正确选中第 2 切片而非默认的 x86_64 |
+| `idax dyld-cache` | macOS 12.6 / 15.5 / 26.0 / 26.3 的缓存均成功建库 |
+
+**已知环境限制（非本次回归）**：macOS 26.6 的 dyld 共享缓存 `open_database` 失败，26.3 及
+更早正常。`idax formats` 能正确识别其加载器（`Apple DYLD shared cache for arm64e`），
+失败发生在 IDA 自己的 `open_database` 内部，不在本次改动触及的路径上。判断为 IDA 9.4 对
+该版本分片缓存格式的支持上限。
+
+**收尾判断一：不写独立的配套文档。** 两个候选都已有归宿——CLI 的用法（子命令、架构选择
+行为、上述缓存版本限制）写在 `README.md` 的命令行工具一节，维护者需要的构建方式写在
+`CLAUDE.md`；「输入格式为什么只能在初始化时传」这条知识写在
+`BinaryDatabaseCreator.swift` 的调用点注释里，紧挨着受它约束的代码。再开一份文档只会让
+同一件事有两个可能漂移的出处。
+
+**收尾判断二：未引入需要登记的新术语。** 本次出现的「预编译产物路线」「fork 专属路径」
+都是描述性说法而非项目专名，含义在本提案与 `CLAUDE.md` 里就地说清即可。项目目前没有
+术语表，本次也不新建。
 
 ## 决策日志
 
@@ -333,4 +357,5 @@ CLI 的三个子命令名、参数与输出格式全部不变。`idax formats`�
 | 2026-09-13 | Draft → Accepted | 用户批准，开始实施 |
 | 2026-09-13 | 放弃 `RuntimeOptions::input_format` 字段，改走运行时参数 | 实施中发现上游的 `Runtime.initialize(arguments:)` 已把参数原样转成 argv 交给 `init_library`，而输入格式就是 `-T` 参数。与「尽量隔离」的决定同向且更彻底：fork 对上游 C++ 文件的侵入从「一个字段」降到零 |
 | 2026-09-13 | 移除 XCFramework 路线，只保留预编译归档 | 批准时的选项含 `build-xcframework.sh`，但该脚本产出的 framework 基于 fork 自己的 `bindings/c/` 布局，不匹配上游的 bridge 源码结构，重新适配是独立一块工作。预编译归档路线（`build-libs.sh` + `Package.swift` 自动发现）已满足「`swift build` 开箱即用」这一决策本意。产物留在归档标签中 |
+| 2026-09-13 | Accepted → Implemented | 三个子命令端到端验证通过，CLI 测试 45 tests / 4 suites 全绿（原始退出码 0）。收尾两问的判断见「落地步骤」末尾：不写独立配套文档，不新增术语表条目 |
 | 2026-09-13 | `Package.swift` 去掉 `IDAXShared` 动态产品 | 它是上游原生 add-on 的共享镜像，fork 不构建 add-on；且产品不是 target，无法携带预编译归档路线所需的链接参数，保留会直接链接失败 |

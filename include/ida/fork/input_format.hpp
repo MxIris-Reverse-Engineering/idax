@@ -5,8 +5,11 @@
 /// belongs to this fork and is deliberately kept out of the `<ida/idax.hpp>`
 /// umbrella so upstream syncs never touch it. Include this header explicitly.
 ///
-/// The companion piece is `RuntimeOptions::input_format` in <ida/database.hpp>,
-/// which is the one field this fork adds to an upstream struct.
+/// A selected format reaches IDA as a `-T` entry on the initialisation command
+/// line, not as a structured option: `init_library` takes the IDA command line,
+/// and the format must be present on that single call. Passing it later through
+/// `open_database`'s argument string selects the right loader but corrupts
+/// teardown.
 ///
 /// Example — pick the arm64 slice of a universal Mach-O:
 /// ```cpp
@@ -14,12 +17,14 @@
 ///
 /// auto formats = ida::database::list_input_formats("/bin/ls");
 /// if (formats) {
-///     ida::database::RuntimeOptions options;
+///     std::string selected;
 ///     for (const auto& format : *formats) {
 ///         if (format.processor == "arm")
-///             options.input_format = format.name;
+///             selected = "-T" + format.name;
 ///     }
-///     ida::database::init(options);
+///     std::vector<char*> arguments{const_cast<char*>("idax"),
+///                                  selected.data()};
+///     ida::database::init(static_cast<int>(arguments.size()), arguments.data());
 /// }
 /// ```
 
@@ -42,8 +47,8 @@ namespace ida::database {
 struct InputFormat {
     /// Name IDA displays for this format, carrying its own ordinal for
     /// multi-slice inputs (for example `Fat Mach-O file, 2. ARM64e-pauth1`).
-    /// Pass it back verbatim as RuntimeOptions::input_format to select it;
-    /// no parsing or renumbering is needed or correct.
+    /// Prefix it with `-T` and pass that as one initialisation argument to
+    /// select it; no parsing or renumbering is needed or correct.
     std::string name;
     /// Processor module this format wants (for example `arm`, `metapc`).
     std::string processor;
