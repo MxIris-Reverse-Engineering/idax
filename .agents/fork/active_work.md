@@ -1,4 +1,12 @@
 <!-- Fork-local records. See .agents/fork/README.md. -->
+<!-- FROZEN 2026-09-13. Fork records continue in docs/fork/. -->
+
+> **Frozen as of 2026-09-13.** The fork was shrunk to the `idax` command-line
+> tool on top of upstream; its remaining increment is small enough that seven
+> mirrored ledgers cost more than they return. New fork records go in
+> [`docs/fork/`](../../docs/fork/). These files are kept as the history of the
+> parallel-bindings era, not updated.
+
 
 # Active Work (fork)
 

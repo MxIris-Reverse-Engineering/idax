@@ -21,8 +21,18 @@ require_command() {
 }
 
 require_command swift
-require_command ditto
+require_command cmake
 require_command install
+
+if [[ -z "${IDADIR:-}" ]]; then
+    printf 'ERROR: Set IDADIR to the IDA 9.4 directory containing libida and libidalib.\n' >&2
+    exit 1
+fi
+
+# The Swift package links one prebuilt native archive. Building it here keeps
+# `swift build` free of any pkg-config setup; see bindings/swift/scripts/.
+printf '==> Building the native archive\n'
+"$repository_root/bindings/swift/scripts/build-libs.sh"
 
 printf '==> Updating Swift package dependencies\n'
 swift package --package-path "$repository_root" update
@@ -40,22 +50,17 @@ release_products_directory="$(
         --show-bin-path
 )"
 source_executable_path="$release_products_directory/$product_name"
-source_framework_path="$release_products_directory/CIDAX.framework"
 
 if [[ ! -x "$source_executable_path" ]]; then
     printf 'ERROR: Built executable not found: %s\n' "$source_executable_path" >&2
     exit 1
 fi
 
-if [[ ! -d "$source_framework_path" ]]; then
-    printf 'ERROR: Built CIDAX framework not found: %s\n' "$source_framework_path" >&2
-    exit 1
-fi
-
+# The executable statically links the native archive and carries an rpath to
+# the IDA runtime, so the binary is the only artifact to install.
 printf '==> Installing runtime files into %s\n' "$product_installation_directory"
 mkdir -p "$product_installation_directory" "$binary_installation_directory"
 install -m 755 "$source_executable_path" "$product_installation_directory/$product_name"
-ditto "$source_framework_path" "$product_installation_directory/CIDAX.framework"
 
 escaped_installed_executable_path="$(printf '%q' "$product_installation_directory/$product_name")"
 temporary_launcher_path="$(mktemp "${TMPDIR:-/tmp}/${product_name}.launcher.XXXXXX")"

@@ -1,4 +1,0 @@
-framework module CIDAX {
-    header "idax_shim.h"
-    export *
-}

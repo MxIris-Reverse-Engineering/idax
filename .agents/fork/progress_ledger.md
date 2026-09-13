@@ -217,3 +217,16 @@ tool, and both had claimed `P23.1`.
   - F15.3.7. 绑定层尚未透出这批新字段（C shim 与 Swift/Rust/Node 都没有对应入口）。C++ 消费者与 IDA 插件已可用。登记为 roadmap F17。
   - F15.3.8. 重建 `CIDAX.xcframework`（arm64 + x86_64），否则 consumer 模式的 Swift 与 `idax` CLI 仍在用带这批缺陷的旧 `libidax.a`。构建前需清掉 `bindings/swift/.cmake-build-*` 等失效缓存——它们的 CMakeCache 指向此仓库的旧路径 `/Volumes/Code/Personal/idax`，会让脚本直接报错。
   - F15.3.9. 验证：C++ 47/47 全通过（`decompiler_semantic_metadata` 14340 个断言全绿）；Swift developer 与 consumer 两种模式各 182 tests / 49 suites 全通过。
+
+- **F18. 收缩为上游之上的命令行工具**（提案：`docs/fork/evolutions/draft-shrink-fork-to-cli.md`）
+  - F18.1. 起因：上游 2026-09-08 关闭本 fork 的 Swift PR 并按同一批能力重写（commit `9a9036d`，保留了 `Co-authored-by`），依据是它自己写的 review `docs/reviews/pr-6-swift.md`（复现了 10 个缺陷）。能力对账后确认两套实现已经重合，继续维护平行实现是为 99% 自己用不到的 API 付成本。
+  - F18.2. 能力对账结论（三项曾被认为是 fork 独有的优势，逐项证伪）：dyld 共享缓存的公开接口两边完全一致，787 vs 316 行的差距主要是 IDA 9.3 兼容层（整块在 `#if IDA_SDK_VERSION < 940` 内，对 9.4 是死代码），9.4 路径上两边实质等价；现代 image 表解析（F15.1）上游已吸收，同样按「现代表 → legacy → image_text」三级回退；`ida::microcode`（786 行）在上游 `ida::decompiler` 下有更完整的等价物，多出 `call_argument_properties`、`call_return_operands`、`nested_instruction`、`referenced_operand` 等字段。
+  - F18.3. 归档：收缩前的完整状态打标签 `archive/parallel-swift-bindings-20260913` 并推到 origin（125 个 commit）。
+  - F18.4. 删除：48 个平行 Swift 源文件中的 25 个（其余同名文件取上游版本）、CIDAX stub shim、7 个测试文件、`include/ida/microcode.hpp` 与 `src/microcode.cpp`、Rust shim 的 2178 行扩展、`bindings/c/`（fork 布局）、XCFramework 路线（`build-xcframework.sh`、`Plugins/BuildXCFramework`、5.6 MB 的 `CIDAX.xcframework`）。
+  - F18.5. **实施中发现比提案更干净的方案**：提案原计划保留一处不可隔离的侵入（`RuntimeOptions::input_format` 字段加进上游结构体）。实际上上游的 `Runtime.initialize(arguments:)` 本就把参数数组原样转成 argv 交给 `init_library`（`bindings/swift/bridge/support.cpp:236`），而输入格式就是一个 `-T` 命令行参数。改走该路径后，**fork 对上游 C++ 文件的侵入归零**——每个上游文件都与上游逐字节一致。
+  - F18.6. fork 增量的最终形态：`include/ida/fork/input_format.hpp` + `src/fork_input_format.cpp`（`InputFormat` 与 `list_input_formats`，刻意不进 `<ida/idax.hpp>` 伞头）、`bindings/swift/Sources/CIDAXFork/`（独立 C 传输模块，不动上游的 CIDAX 伞头）、`bindings/swift/Tools/`（CLI，16 个调用点适配上游 API 命名）、两个构建/安装脚本、`docs/fork/`。
+  - F18.7. 合并陷阱一则：本 fork 早先把 `bindings/rust/idax-sys/shim/idax_shim.h` 删掉改放 `bindings/c/include/`，上游没动过该文件，于是合并保留了这个删除，导致上游所有 bridge 头都找不到它。恢复上游布局后解决。
+  - F18.8. `Package.swift` 去掉 `IDAXShared` 动态产品：它是上游原生 add-on 的共享镜像，fork 不构建 add-on，且产品（而非 target）无法携带预编译归档路线所需的链接参数，保留会直接链接失败。
+  - F18.9. 验证：`idax formats` 正确列出 IDA 视角的加载器（fork 专属 C++ → C shim → Swift 链路全通）；`idax binary --arch arm64` 对三切片胖二进制正确选中第 2 片（`Loaded as: Fat Mach-O file, 2. ARM64`），证明 `-T` argv 路径有效；`idax dyld-cache` 对 macOS 12.6 / 15.5 / 26.0 / 26.3 的缓存均成功建库。CLI 测试 45 tests / 4 suites 全通过（原始退出码 0）。
+  - F18.10. 已知环境限制（非本次回归）：macOS 26.6 的 dyld 共享缓存 `open_database` 失败，而 26.3 及更早正常，`formats` 能正确识别其加载器（`Apple DYLD shared cache for arm64e`）。失败发生在 IDA 的 `open_database` 内部，不在本次改动触及的路径上，判断为 IDA 9.4 对该版本分片缓存格式的支持上限。
+  - F18.11. **本目录自此冻结**，fork 记录移到 `docs/fork/`。

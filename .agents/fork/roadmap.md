@@ -54,3 +54,13 @@ tool, and both had claimed `P23.1`.
 - [x] F15.3 Adopt upstream's microcode semantic-metadata API.
 - [ ] F16 Reject embedded NUL in the ~113 public entry points that build a C string from a `string_view`.
 - [ ] F17 Surface the microcode semantic metadata through the C shim and the Swift, Rust and Node bindings.
+
+## Fork Shrink (proposal: `docs/fork/evolutions/draft-shrink-fork-to-cli.md`)
+
+- [x] F18 Shrink the fork to the `idax` command-line tool on top of upstream, dropping the parallel Swift bindings.
+- [~] F13 Superseded by F18. The fork no longer carries `RuntimeOptions::input_format`; the input format travels as a `-T` runtime argument through upstream's existing arguments array.
+- [~] F16 Superseded by F18. The ~113 entry points belong to upstream's C++ now; this fork holds no patch over them.
+- [~] F17 Superseded by F18. `ida::microcode` is retired in favour of upstream's model under `ida::decompiler`.
+
+**These ledgers are frozen as of 2026-09-13.** Fork records continue in
+`docs/fork/`. See `.agents/fork/README.md`.

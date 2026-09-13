@@ -127,12 +127,19 @@ current ida-cdump migration checklist in
 ### The `idax` command-line tool
 
 The Swift package includes `idax`, a headless tool for creating IDA databases.
-The committed `CIDAX.xcframework` is built against IDA SDK 9.4.
+It targets IDA 9.4; set `IDADIR` to the directory holding `libida` and
+`libidalib` before installing.
 
 ```bash
+export IDADIR="/Applications/IDA Professional 9.4.app/Contents/MacOS"
 ./scripts/install_idax_command_line.sh
 idax --help
 ```
+
+The installer builds the native archive with CMake, then builds and installs the
+tool. To build without installing, run `bindings/swift/scripts/build-libs.sh`
+once and then `swift build --product idax`; the package manifest finds the
+archive on its own.
 
 The installer places a launcher in `~/.local/bin` and keeps the executable with
 its `CIDAX.framework` runtime dependency under `~/.local/libexec`. Set
@@ -175,10 +182,13 @@ current directory. See
 [`docs/Tools/IDAXCommandLine.md`](docs/Tools/IDAXCommandLine.md)
 for all options and operational details.
 
-The C++ sources continue to build against IDA SDK 9.3 through the legacy dscu
-backend. Rebuild `CIDAX.xcframework` with the SDK matching the target IDA
-runtime when distributing a custom build; cache-wide data regions require IDA
-9.4.
+The tool requires IDA 9.4: the shared-cache work goes through the public cache
+service introduced there. Rebuild the native archive with the SDK matching the
+target IDA runtime when distributing a custom build.
+
+Caches newer than the IDA release understand may fail to open. Measured with IDA
+9.4: macOS caches through 26.3 open normally, 26.6 fails inside IDA's own
+`open_database` even though `idax formats` identifies its loader correctly.
 
 ---
 

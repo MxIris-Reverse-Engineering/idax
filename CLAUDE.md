@@ -8,6 +8,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The project has four surfaces: the C++ static library (`libidax.a`), Rust bindings (`bindings/rust/`), Node.js bindings (`bindings/node/`), and Swift bindings (`bindings/swift/`).
 
+**This fork tracks upstream and adds one thing: the `idax` command-line tool.**
+Every upstream C++ file here is byte-identical to upstream. The fork's own code
+lives only in paths upstream does not have — `include/ida/fork/`,
+`src/fork_input_format.cpp`, `bindings/swift/Sources/CIDAXFork/`,
+`bindings/swift/Tools/`, and `docs/fork/`. Before adding anything else, read
+[the shrink proposal](docs/fork/evolutions/draft-shrink-fork-to-cli.md): keeping
+that intrusion at zero is what makes upstream syncs cheap.
+
 ## Build Commands
 
 ### Environment Variables
@@ -59,22 +67,28 @@ npm test                    # Unit tests
 npm run test:integration    # Integration tests (needs IDADIR)
 ```
 
-### Swift Bindings
+### Swift Bindings and the `idax` Command-Line Tool
+
+The Swift bindings are upstream's. This fork adds only the `idax` tool
+(`bindings/swift/Tools/`) and a separate C transport module for what upstream
+does not have (`bindings/swift/Sources/CIDAXFork/`).
 
 ```bash
-# Build XCFramework (arm64 + x86_64, requires IDASDK)
-bindings/swift/scripts/build-xcframework.sh
+export IDADIR="/Applications/IDA Professional 9.4.app/Contents/MacOS"
 
-# Build — consumer mode (uses XCFramework)
-swift build
+# Build the native archive once (CMake). The package manifest finds it itself.
+bindings/swift/scripts/build-libs.sh
 
-# Build — developer mode (uses pre-built .a files)
-bindings/swift/scripts/build-libs.sh   # pre-build first
-IDAX_DEV=1 swift build
+swift build --product idax
+swift test --filter IDAXCommandLineTests   # no IDA runtime needed
 
-# Test (unit only — no IDA runtime needed)
-swift test
+# Build and install the tool for the current user
+./scripts/install_idax_command_line.sh
 ```
+
+Without a prebuilt archive the manifest falls back to upstream's pkg-config
+route, which needs `PKG_CONFIG_PATH` set to the CMake-generated metadata — see
+`bindings/swift/README.md`.
 
 ## Architecture
 
@@ -106,7 +120,7 @@ All fallible operations return `ida::Result<T>` (`std::expected<T, ida::Error>`)
 
 - **Rust** (`bindings/rust/`): Cargo workspace with `idax-sys` (raw FFI via C shim + bindgen) and `idax` (safe idiomatic layer). The C shim (`idax-sys/shim/`) uses thread-local error state. `build.rs` invokes CMake to build `libidax.a`, then `cc` for the shim, then `bindgen`.
 - **Node.js** (`bindings/node/`): Native addon via `cmake-js` + `nan`. 20 C++ bind files in `src/`, JS wrapper in `lib/index.js` with TypeScript declarations. Addresses are `BigInt`, errors throw `IdaxError`.
-- **Swift** (`bindings/swift/`): SPM package (Package.swift at repo root) with two targets — `CIDAX` (raw C shim module) and `IDAX` (safe Swift wrapper). Uses Swift 6.0 typed throws (`throws(IDAError)`). 21 namespace files mirror the C++ library. Dual-mode: consumer mode uses `CIDAX.xcframework` (binaryTarget), developer mode (`IDAX_DEV=1`) links pre-built `.a` files. Developer mode resolves the IDA runtime from `IDADIR` or installed applications and links `libida`/`libidalib` with an rpath.
+- **Swift** (`bindings/swift/`): upstream's SPM package (Package.swift at repo root). `CIDAX` is a system-library target over the canonical C transport; `IDAX` is the safe wrapper using Swift 6 typed throws (`throws(IDAError)`). Upstream builds the native archive `idax_swift_native` with CMake and consumes it through pkg-config. **Fork deviations in `Package.swift`**: a prebuilt-artifact route (the manifest links `libidax_swift_native.a` directly when it finds one, so `swift build` needs no pkg-config setup), the `idax` executable and its `CIDAXFork` C module, and no `IDAXShared` dynamic product — that is the support image for upstream's native add-ons, which this fork does not build, and a product cannot carry the linker settings the prebuilt route needs.
 
 ### Testing Layers
 
@@ -145,9 +159,14 @@ here**. Appending to them is what made all seven ledgers conflict on every sync,
 let two unrelated tasks share the number `P23.1` (upstream's was an ida-trida port, this
 fork's was the Swift dyld cache tool).
 
-Fork records live in `.agents/fork/`, one mirror per upstream ledger. **New fork entries
-use an `F` prefix** (`F1`, `F2.3`, `FS1.4`) — upstream will never issue those, so a number
-stays unambiguous even if these records are merged back or offered upstream.
+**`.agents/fork/` was frozen on 2026-09-13.** Those seven mirrored ledgers belong to the
+era when this fork carried a parallel Swift bindings implementation; after the shrink the
+fork's increment is too small to justify them. Read them for history, do not append.
+
+**New fork records go in `docs/fork/`**: evolution proposals in `docs/fork/evolutions/`,
+and code-review findings ruled a false positive or not worth fixing in
+`docs/fork/adjudicated-findings.md`. Upstream will never have that path, so it stays
+conflict-free across syncs.
 
 Touch an upstream ledger only when the change is genuinely upstream's: fixing its typo, or
 preparing a pull request that has to follow its numbering. See `.agents/fork/README.md`
@@ -155,7 +174,7 @@ for the split and `docs/UpstreamSyncPlaybook.md` for the sync procedure that dep
 
 ### File map
 
-| File | Contents | When to read | Fork counterpart (write here) |
+| File | Contents | When to read | Fork counterpart (frozen 2026-09-13 — read only) |
 |---|---|---|---|
 | `agents.md` (repo root) | Upstream's rules, mission, locked decisions | Rarely — this section supersedes it for fork work | none (read-only) |
 | `.agents/knowledge_base.md` | Hierarchical findings/learnings KB (Section 12) | Checking known SDK behaviour | `.agents/fork/knowledge_base.md` |
@@ -178,9 +197,22 @@ of these run to hundreds of thousands of bytes.
 
 ### Mandatory update protocol
 
-No task is complete until the records are updated. This applies to parent TODOs, sub-TODOs,
-findings, decisions, blockers, and progress entries alike; a change that is not recorded is
+No task is complete until the records are updated. A change that is not recorded is
 treated as work that did not happen.
+
+**The seven-ledger protocol below applied until the ledgers were frozen on 2026-09-13.**
+It is kept because `.agents/fork/` still has to be read as history. For new fork work:
+
+1. Substantive changes headed for a shared branch get an evolution proposal in
+   `docs/fork/evolutions/`, updated in place from research through landing. One change is
+   one file — never split into separate design/plan/report documents.
+2. Code-review findings ruled a false positive or not worth fixing go in
+   `docs/fork/adjudicated-findings.md`, with the reasoning that makes the ruling checkable
+   next time.
+3. Everything else the repository already records — code structure, git history — is not
+   duplicated into a ledger.
+
+The frozen protocol, for reading `.agents/fork/`:
 
 1. Update the task checkbox/status in `.agents/fork/roadmap.md` as soon as it changes.
 2. Add a progress ledger entry with scope in `.agents/fork/progress_ledger.md`.
@@ -190,8 +222,7 @@ treated as work that did not happen.
 5. If blocked, add or update `.agents/fork/active_work.md` with impact, mitigation, and the
    next action.
 6. When work completes or is retired, remove it from `.agents/fork/active_work.md` in the
-   same update that records the completion. `active_work.md` holds only active, queued, or
-   blocked work; finished work belongs in the progress ledger.
+   same update that records the completion.
 
 Two transitions are only half-valid without their pair: a TODO status change requires a
 ledger entry, and a discovery requires both a knowledge base entry and a ledger entry.

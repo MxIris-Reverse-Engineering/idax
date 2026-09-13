@@ -166,26 +166,25 @@ unsafe linker flags"列为验收条件。本 fork 走的是 XCFramework 加预�
 
 ## 详细设计
 
+> **实施修正（2026-09-13）**：本节原计划保留一处无法隔离的侵入——把
+> `RuntimeOptions::input_format` 字段加进上游的结构体。实施时发现该字段并无必要：
+> 上游的 `Runtime.initialize(arguments:)` 本就把参数数组原样转成 argv 交给
+> `init_library`（`bindings/swift/bridge/support.cpp:236`），而输入格式不过是一个
+> `-T` 命令行参数。命令行工具改走该路径后，**fork 对上游 C++ 文件的侵入归零**。
+> 下面保留原设计供对照，实际实现只有「可隔离的部分」。
+
 ### 保留的 C++ 补丁
 
-无法隔离的部分，直接加在上游结构体里（一个字段）：
+~~无法隔离的部分，直接加在上游结构体里（一个字段）~~ —— 已证明不需要。输入格式由调用方
+作为运行时参数传入：
 
-```cpp
-// include/ida/database.hpp — 上游文件，仅此一处侵入
-struct RuntimeOptions {
-    bool quiet{false};
-    PluginLoadPolicy plugin_policy{};
-    /// InputFormat::name of the loader to use for files opened afterwards.
-    /// Empty lets IDA choose, which for a universal Mach-O means the first
-    /// slice in the file.
-    ///
-    /// This belongs to initialisation, not to open(), because IDA parses it
-    /// from the process command line: `idat` is a thin shell over
-    /// `init_library(argc, argv)` and the format reaches the loader that way.
-    /// Passing it later through `open_database`'s argument string selects the
-    /// right loader but corrupts teardown.
-    std::string input_format;
-};
+```swift
+// bindings/swift/Tools/CommandLineCore/BinaryDatabaseCreator.swift
+var runtimeArguments = ["idax"]
+if let selectedSlice {
+    runtimeArguments.append(SliceResolver.inputFormatArgument(for: selectedSlice))
+}
+try Database.initialize(arguments: runtimeArguments)
 ```
 
 可隔离的部分，移入 fork 专属文件：
@@ -332,3 +331,6 @@ CLI 的三个子命令名、参数与输出格式全部不变。`idax formats`�
 | 2026-09-13 | fork 文档放 `docs/fork/` | 沿用项目现有 `docs/` 小写目录习惯，上游永不存在该路径故同步零冲突；否决全局默认的 `Documentations/` 与继续用 `.agents/fork/`（该目录本次停用） |
 | 2026-09-13 | 保留 `formats` 子命令 | 它是 `binary` 的配套排障工具；否决"砍掉以求 C++ 增量归零"与"改用自己解析胖头的推测输出" |
 | 2026-09-13 | Draft → Accepted | 用户批准，开始实施 |
+| 2026-09-13 | 放弃 `RuntimeOptions::input_format` 字段，改走运行时参数 | 实施中发现上游的 `Runtime.initialize(arguments:)` 已把参数原样转成 argv 交给 `init_library`，而输入格式就是 `-T` 参数。与「尽量隔离」的决定同向且更彻底：fork 对上游 C++ 文件的侵入从「一个字段」降到零 |
+| 2026-09-13 | 移除 XCFramework 路线，只保留预编译归档 | 批准时的选项含 `build-xcframework.sh`，但该脚本产出的 framework 基于 fork 自己的 `bindings/c/` 布局，不匹配上游的 bridge 源码结构，重新适配是独立一块工作。预编译归档路线（`build-libs.sh` + `Package.swift` 自动发现）已满足「`swift build` 开箱即用」这一决策本意。产物留在归档标签中 |
+| 2026-09-13 | `Package.swift` 去掉 `IDAXShared` 动态产品 | 它是上游原生 add-on 的共享镜像，fork 不构建 add-on；且产品不是 target，无法携带预编译归档路线所需的链接参数，保留会直接链接失败 |
