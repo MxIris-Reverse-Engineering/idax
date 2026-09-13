@@ -101,8 +101,13 @@ let package = Package(
     platforms: [.macOS(.v13)],
     products: [
         .library(name: "IDAX", targets: ["IDAX"]),
-        .library(name: "IDAXShared", type: .dynamic, targets: ["IDAX"]),
         .executable(name: "idax", targets: ["IDAXCommandLine"]),
+        // Upstream also exports an `IDAXShared` dynamic library, the support
+        // image its native plugin/loader/processor add-ons link against. This
+        // fork does not build add-ons, and a dynamic product cannot carry the
+        // linker settings the prebuilt-artifact route needs — a product is not
+        // a target — so it would fail to link here. Build add-ons from
+        // upstream, or from a checkout using upstream's pkg-config route.
     ],
     dependencies: [
         .package(
@@ -136,11 +141,27 @@ let package = Package(
             linkerSettings: clientLinkerSettings
         ),
 
+        // Fork-only: C transport for additions upstream does not have.
+        // A separate module rather than an addition to upstream's CIDAX
+        // umbrella, so upstream syncs never conflict here.
+        .target(
+            name: "CIDAXFork",
+            path: "bindings/swift/Sources/CIDAXFork",
+            publicHeadersPath: "include",
+            cxxSettings: [
+                // The repository's public C++ headers, reached from this
+                // target's directory. Used by shim.cpp only; the module's own
+                // header is plain C.
+                .headerSearchPath("../../../../include"),
+            ]
+        ),
+
         // Fork-only: the idax command-line tool.
         .target(
             name: "IDAXCommandLineCore",
             dependencies: [
                 "IDAX",
+                "CIDAXFork",
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
             ],
             path: "bindings/swift/Tools/CommandLineCore"
@@ -164,5 +185,7 @@ let package = Package(
             linkerSettings: clientLinkerSettings
         ),
     ],
-    swiftLanguageModes: [.v6]
+    swiftLanguageModes: [.v6],
+    // CIDAXFork's shim.cpp includes the repository's C++23 public headers.
+    cxxLanguageStandard: .cxx2b
 )

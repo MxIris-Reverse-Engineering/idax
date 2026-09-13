@@ -43,16 +43,16 @@ public nonisolated struct InputFormatLister: ParsableCommand {
         }
 
         // Listing requires an initialised runtime, but opens no database.
-        try onIDAThread {
-            try Database.initialize()
-            let formats = try Database.listInputFormats(binaryFilePath)
-            if formats.isEmpty {
-                print("IDA offers no loader for this file.")
-            } else {
-                print("IDA loaders:")
-                for format in formats {
-                    print("  \(format.name)  [processor: \(format.processor)]")
-                }
+        // ParsableCommand.run() runs on the process main thread, which is the
+        // thread IDAX requires for every SDK call.
+        try Database.initialize(arguments: ["idax"])
+        let formats = try listInputFormats(forFileAt: binaryFilePath)
+        if formats.isEmpty {
+            print("IDA offers no loader for this file.")
+        } else {
+            print("IDA loaders:")
+            for format in formats {
+                print("  \(format.name)  [processor: \(format.processor)]")
             }
         }
 

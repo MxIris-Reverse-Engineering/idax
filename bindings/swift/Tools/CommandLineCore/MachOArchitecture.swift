@@ -122,12 +122,16 @@ public nonisolated enum SliceResolver {
         )
     }
 
-    /// The IDA input-format name that selects `slice`.
+    /// The IDA runtime argument that selects `slice`.
     ///
     /// IDA matches `-T` against a prefix of the format name it displays, and
     /// its names carry their own ordinal (`Fat Mach-O file, 2. ARM64e-pauth1`).
     /// The trailing `.` keeps slice 1 from also matching slice 10 or later.
-    public static func inputFormatName(for slice: MachOFatSlice) -> String {
-        "Fat Mach-O file, \(slice.ordinal)."
+    ///
+    /// `-T` and its value form a single argv entry. No quoting is applied:
+    /// only the command-line *string* form, which IDA splits on whitespace,
+    /// needs quotes to survive a name containing spaces and a comma.
+    public static func inputFormatArgument(for slice: MachOFatSlice) -> String {
+        "-TFat Mach-O file, \(slice.ordinal)."
     }
 }

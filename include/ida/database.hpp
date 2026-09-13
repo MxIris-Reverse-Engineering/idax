@@ -163,19 +163,6 @@ struct PluginLoadPolicy {
 struct RuntimeOptions {
     bool quiet{false};
     PluginLoadPolicy plugin_policy{};
-    /// InputFormat::name of the loader to use for files opened afterwards.
-    /// Empty lets IDA choose, which for a universal Mach-O means the first
-    /// slice in the file (x86_64, for anything Apple's toolchain builds).
-    ///
-    /// This belongs to initialisation, not to open(), because IDA parses it
-    /// from the process command line: `idat` is a thin shell over
-    /// `init_library(argc, argv)` and the format reaches the loader that way.
-    /// Passing it later through `open_database`'s argument string selects the
-    /// right loader but corrupts teardown.
-    ///
-    /// Obtain a name from `ida::database::list_input_formats()` in
-    /// <ida/fork/input_format.hpp>.
-    std::string input_format;
 };
 
 /// Normalized target-compiler metadata for the current database.

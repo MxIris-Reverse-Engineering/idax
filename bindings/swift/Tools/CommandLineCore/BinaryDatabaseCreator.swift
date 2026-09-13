@@ -107,62 +107,59 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
             requested: requestedArchitecture
         )
 
-        // ParsableCommand.run() is a nonisolated protocol requirement, so the
-        // IDA calls are wrapped rather than the whole method, and everything
-        // the closure needs is read out of `self` first.
-        let skipFinalAnalysis = self.skipFinalAnalysis
-        let overwriteExistingOutput = self.overwriteExistingOutput
-
-        try onIDAThread {
-            var runtimeOptions = RuntimeOptions()
-            if let selectedSlice {
-                runtimeOptions.inputFormat = SliceResolver.inputFormatName(for: selectedSlice)
-                print("Selecting \(selectedSlice.architecture) (slice \(selectedSlice.ordinal) of \(fatSlices?.count ?? 1))")
-            } else {
-                print("Loading with IDA's detected format")
-            }
-
-            print("Initializing IDA runtime")
-            try Database.initialize(options: runtimeOptions)
-
-            var databaseIsOpen = false
-            defer {
-                if databaseIsOpen {
-                    try? Database.close(save: false)
-                }
-            }
-
-            try Database.open(
-                creationPlan.binaryFileURL.path,
-                options: OpenOptions(mode: .skipAnalysis)
-            )
-            databaseIsOpen = true
-
-            let loadedFormatName = try Database.fileTypeName()
-            print("Loaded as: \(loadedFormatName)")
-            if let selectedSlice {
-                try Self.verifyLoadedArchitecture(
-                    loadedFormatName: loadedFormatName,
-                    expected: selectedSlice.architecture
-                )
-            }
-
-            if !skipFinalAnalysis {
-                print("Waiting for final auto-analysis")
-                try Analysis.wait()
-            }
-
-            if overwriteExistingOutput,
-               FileManager.default.fileExists(atPath: creationPlan.outputFileURL.path) {
-                try FileManager.default.removeItem(at: creationPlan.outputFileURL)
-            }
-
-            print("Saving database: \(creationPlan.outputFileURL.path)")
-            try Database.save(to: creationPlan.outputFileURL.path)
-            try Database.close(save: false)
-            databaseIsOpen = false
-            print("Created database: \(creationPlan.outputFileURL.path)")
+        // ParsableCommand.run() runs on the process main thread, which is the
+        // thread IDAX requires for every SDK call.
+        //
+        // The input format travels as a `-T` runtime argument rather than a
+        // structured option: `init_library` takes the IDA command line, and the
+        // format has to be present on that single initialisation call. Passing
+        // it later through open's argument string selects the right loader but
+        // corrupts teardown.
+        var runtimeArguments = ["idax"]
+        if let selectedSlice {
+            runtimeArguments.append(SliceResolver.inputFormatArgument(for: selectedSlice))
+            print("Selecting \(selectedSlice.architecture) (slice \(selectedSlice.ordinal) of \(fatSlices?.count ?? 1))")
+        } else {
+            print("Loading with IDA's detected format")
         }
+
+        print("Initializing IDA runtime")
+        try Database.initialize(arguments: runtimeArguments)
+
+        var databaseIsOpen = false
+        defer {
+            if databaseIsOpen {
+                try? Database.close(save: false)
+            }
+        }
+
+        try Database.open(path: creationPlan.binaryFileURL.path, mode: .skipAnalysis)
+        databaseIsOpen = true
+
+        let loadedFormatName = try Database.fileTypeName()
+        print("Loaded as: \(loadedFormatName)")
+        if let selectedSlice {
+            try Self.verifyLoadedArchitecture(
+                loadedFormatName: loadedFormatName,
+                expected: selectedSlice.architecture
+            )
+        }
+
+        if !skipFinalAnalysis {
+            print("Waiting for final auto-analysis")
+            try Analysis.wait()
+        }
+
+        if overwriteExistingOutput,
+           FileManager.default.fileExists(atPath: creationPlan.outputFileURL.path) {
+            try FileManager.default.removeItem(at: creationPlan.outputFileURL)
+        }
+
+        print("Saving database: \(creationPlan.outputFileURL.path)")
+        try Database.saveTo(outputDatabasePath: creationPlan.outputFileURL.path)
+        try Database.close(save: false)
+        databaseIsOpen = false
+        print("Created database: \(creationPlan.outputFileURL.path)")
     }
 
     /// Confirm IDA loaded the slice that was asked for.

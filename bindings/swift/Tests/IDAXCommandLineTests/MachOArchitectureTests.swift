@@ -291,12 +291,13 @@ struct SliceResolverTests {
     }
 
     /// The ordinal is what reaches IDA through `-T`. The trailing `.` keeps
-    /// slice 1 from also matching slice 10 and later.
-    @Test func theInputFormatNameCarriesTheOrdinalAndATrailingDot() {
+    /// slice 1 from also matching slice 10 and later, and the flag travels in
+    /// the same argv entry as its value.
+    @Test func theInputFormatArgumentCarriesTheOrdinalAndATrailingDot() {
         #expect(
-            SliceResolver.inputFormatName(
+            SliceResolver.inputFormatArgument(
                 for: MachOFatSlice(architecture: .arm64, ordinal: 2)
-            ) == "Fat Mach-O file, 2."
+            ) == "-TFat Mach-O file, 2."
         )
     }
 }

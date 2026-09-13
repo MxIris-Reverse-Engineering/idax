@@ -168,109 +168,102 @@ public nonisolated struct DynamicLinkerSharedCacheDatabaseCreator: ParsableComma
 
     public func run() throws {
         let creationPlan = try makeCreationPlan()
-        let loadDynamicLinkerHeader = self.loadDynamicLinkerHeader
-        let loadBranchIslands = self.loadBranchIslands
-        let loadBranchMappings = self.loadBranchMappings
-        let loadGlobalOffsetTables = self.loadGlobalOffsetTables
-        let loadGaps = self.loadGaps
-        let loadCacheData = self.loadCacheData
-        let skipFinalAnalysis = self.skipFinalAnalysis
-        let overwriteExistingOutput = self.overwriteExistingOutput
-        try onIDAThread {
-            print("Initializing IDA runtime")
-            try Database.initialize()
 
-            print("Resolving cache images")
-            let availableImagePaths = try DyldCache.listModules(
-                in: creationPlan.cacheFileURL.path
-            ).map(\.path)
-            let resolvedImagePaths = try creationPlan.resolveImagePaths(
-                availableImagePaths: availableImagePaths
-            )
+        // ParsableCommand.run() runs on the process main thread, which is the
+        // thread IDAX requires for every SDK call.
+        print("Initializing IDA runtime")
+        try Database.initialize()
 
-            let moduleEnvironmentSnapshot = EnvironmentVariableSnapshot(
-                name: "IDA_DYLD_CACHE_MODULE"
-            )
-            let depthEnvironmentSnapshot = EnvironmentVariableSnapshot(
-                name: "IDA_DYLD_CACHE_DEPTH"
-            )
-            defer {
-                moduleEnvironmentSnapshot.restore()
-                depthEnvironmentSnapshot.restore()
-            }
+        print("Resolving cache images")
+        let availableImagePaths = try DyldCache.listModules(
+            cachePath: creationPlan.cacheFileURL.path
+        ).map(\.path)
+        let resolvedImagePaths = try creationPlan.resolveImagePaths(
+            availableImagePaths: availableImagePaths
+        )
 
-            setenv("IDA_DYLD_CACHE_MODULE", resolvedImagePaths[0], 1)
-            setenv("IDA_DYLD_CACHE_DEPTH", "0", 1)
-
-            var databaseIsOpen = false
-            defer {
-                if databaseIsOpen {
-                    try? Database.close(save: false)
-                }
-            }
-
-            print("Opening cache: \(creationPlan.cacheFileURL.path)")
-            try Database.open(creationPlan.cacheFileURL.path, autoAnalysis: false)
-            databaseIsOpen = true
-
-            guard DyldCache.isAvailable() else {
-                throw ValidationError(
-                    "IDA dyld shared cache utilities are unavailable for the opened cache."
-                )
-            }
-
-            for additionalImagePath in resolvedImagePaths.dropFirst() {
-                print("Loading image: \(additionalImagePath)")
-                try DyldCache.loadModule(additionalImagePath, waitForAnalysis: false)
-            }
-
-            if loadDynamicLinkerHeader {
-                print("Waiting for initial analysis before loading the dyld header")
-                try Analysis.wait()
-                try DyldCache.loadDyldHeader(waitForAnalysis: false)
-            }
-
-            if loadBranchIslands {
-                let loadedRegionCount = try DyldCache.loadBranchIslands(waitForAnalysis: false)
-                print("Loaded branch-island regions: \(loadedRegionCount)")
-            }
-
-            if loadBranchMappings {
-                let loadedRegionCount = try DyldCache.loadBranchMappings(waitForAnalysis: false)
-                print("Loaded branch-mapping regions: \(loadedRegionCount)")
-            }
-
-            if loadGlobalOffsetTables {
-                let loadedRegionCount = try DyldCache.loadGlobalOffsetTables(waitForAnalysis: false)
-                print("Loaded global offset table regions: \(loadedRegionCount)")
-            }
-
-            if loadGaps {
-                let loadedRegionCount = try DyldCache.loadGaps(waitForAnalysis: false)
-                print("Loaded unknown regions: \(loadedRegionCount)")
-            }
-
-            if loadCacheData {
-                let loadedRegionCount = try DyldCache.loadCacheData(waitForAnalysis: false)
-                print("Loaded cache-wide data regions: \(loadedRegionCount)")
-            }
-
-            if !skipFinalAnalysis {
-                print("Waiting for final auto-analysis")
-                try Analysis.wait()
-            }
-
-            if overwriteExistingOutput,
-               FileManager.default.fileExists(atPath: creationPlan.outputFileURL.path) {
-                try FileManager.default.removeItem(at: creationPlan.outputFileURL)
-            }
-
-            print("Saving database: \(creationPlan.outputFileURL.path)")
-            try Database.save(to: creationPlan.outputFileURL.path)
-            try Database.close(save: false)
-            databaseIsOpen = false
-            print("Created database: \(creationPlan.outputFileURL.path)")
+        let moduleEnvironmentSnapshot = EnvironmentVariableSnapshot(
+            name: "IDA_DYLD_CACHE_MODULE"
+        )
+        let depthEnvironmentSnapshot = EnvironmentVariableSnapshot(
+            name: "IDA_DYLD_CACHE_DEPTH"
+        )
+        defer {
+            moduleEnvironmentSnapshot.restore()
+            depthEnvironmentSnapshot.restore()
         }
+
+        setenv("IDA_DYLD_CACHE_MODULE", resolvedImagePaths[0], 1)
+        setenv("IDA_DYLD_CACHE_DEPTH", "0", 1)
+
+        var databaseIsOpen = false
+        defer {
+            if databaseIsOpen {
+                try? Database.close(save: false)
+            }
+        }
+
+        print("Opening cache: \(creationPlan.cacheFileURL.path)")
+        try Database.open(path: creationPlan.cacheFileURL.path, mode: .skipAnalysis)
+        databaseIsOpen = true
+
+        guard try DyldCache.isAvailable() else {
+            throw ValidationError(
+                "IDA dyld shared cache utilities are unavailable for the opened cache."
+            )
+        }
+
+        for additionalImagePath in resolvedImagePaths.dropFirst() {
+            print("Loading image: \(additionalImagePath)")
+            try DyldCache.loadModule(path: additionalImagePath, waitForAnalysis: false)
+        }
+
+        if loadDynamicLinkerHeader {
+            print("Waiting for initial analysis before loading the dyld header")
+            try Analysis.wait()
+            try DyldCache.loadDyldHeader(waitForAnalysis: false)
+        }
+
+        if loadBranchIslands {
+            let loadedRegionCount = try DyldCache.loadBranchIslands(waitForAnalysis: false)
+            print("Loaded branch-island regions: \(loadedRegionCount)")
+        }
+
+        if loadBranchMappings {
+            let loadedRegionCount = try DyldCache.loadBranchMappings(waitForAnalysis: false)
+            print("Loaded branch-mapping regions: \(loadedRegionCount)")
+        }
+
+        if loadGlobalOffsetTables {
+            let loadedRegionCount = try DyldCache.loadGlobalOffsetTables(waitForAnalysis: false)
+            print("Loaded global offset table regions: \(loadedRegionCount)")
+        }
+
+        if loadGaps {
+            let loadedRegionCount = try DyldCache.loadGaps(waitForAnalysis: false)
+            print("Loaded unknown regions: \(loadedRegionCount)")
+        }
+
+        if loadCacheData {
+            let loadedRegionCount = try DyldCache.loadCacheData(waitForAnalysis: false)
+            print("Loaded cache-wide data regions: \(loadedRegionCount)")
+        }
+
+        if !skipFinalAnalysis {
+            print("Waiting for final auto-analysis")
+            try Analysis.wait()
+        }
+
+        if overwriteExistingOutput,
+           FileManager.default.fileExists(atPath: creationPlan.outputFileURL.path) {
+            try FileManager.default.removeItem(at: creationPlan.outputFileURL)
+        }
+
+        print("Saving database: \(creationPlan.outputFileURL.path)")
+        try Database.saveTo(outputDatabasePath: creationPlan.outputFileURL.path)
+        try Database.close(save: false)
+        databaseIsOpen = false
+        print("Created database: \(creationPlan.outputFileURL.path)")
     }
 
     func makeCreationPlan() throws -> DynamicLinkerSharedCacheDatabaseCreationPlan {

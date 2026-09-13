@@ -134,10 +134,6 @@ Result<std::vector<Descriptor>> in_range(Address start, Address end) {
 
 // ── Traversal ───────────────────────────────────────────────────────────
 
-// Exhaustion is a successful result carrying the documented BadAddress
-// sentinel, not an error. Reporting NotFound here contradicted both the header
-// contract and all()/FixupIterator, which already treat BADADDR as the stop
-// condition.
 Result<Address> first() {
     ea_t ea = ::get_first_fixup_ea();
     return static_cast<Address>(ea);
