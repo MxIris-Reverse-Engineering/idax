@@ -3,7 +3,7 @@
 set -euo pipefail
 
 script_directory="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-repository_root="$(cd "$script_directory/.." && pwd)"
+repository_root="$(cd "$script_directory/../../.." && pwd)"
 product_name="idax"
 installation_prefix="${IDAX_INSTALLATION_PREFIX:-$HOME/.local}"
 binary_installation_directory="$installation_prefix/bin"
@@ -30,9 +30,9 @@ if [[ -z "${IDADIR:-}" ]]; then
 fi
 
 # The Swift package links one prebuilt native archive. Building it here keeps
-# `swift build` free of any pkg-config setup; see bindings/swift/scripts/.
+# `swift build` free of any pkg-config setup; see build-libs.sh.
 printf '==> Building the native archive\n'
-"$repository_root/bindings/swift/scripts/build-libs.sh"
+"$script_directory/build-libs.sh"
 
 printf '==> Updating Swift package dependencies\n'
 swift package --package-path "$repository_root" update

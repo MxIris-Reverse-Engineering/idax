@@ -83,8 +83,17 @@ swift build --product idax
 swift test --filter IDAXCommandLineTests   # no IDA runtime needed
 
 # Build and install the tool for the current user
-./scripts/install_idax_command_line.sh
+bindings/swift/scripts/install_idax_command_line.sh
 ```
+
+Double-clicking `bindings/swift/Install idax.command` in Finder runs that same
+installer in a Terminal window, discovering `cmake` and the IDA runtime for
+itself. Installation is deliberately **not** a SwiftPM command plugin: SwiftPM
+runs command plugins under `sandbox-exec`, and the only writable locations are
+the plugin output directory, the package directory, and whatever
+`--allow-writing-to-directory` names. Writing to `~/.local` is therefore
+denied, and Xcode's plugin dialog can pass neither that option nor
+`--disable-sandbox`.
 
 From Xcode, the archive build is also a command plugin: right-click the package
 in the navigator and choose **build-libs**. It locates `cmake` and the IDA

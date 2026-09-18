@@ -130,9 +130,12 @@ The Swift package includes `idax`, a headless tool for creating IDA databases.
 It targets IDA 9.4; set `IDADIR` to the directory holding `libida` and
 `libidalib` before installing.
 
+Double-click `bindings/swift/Install idax.command` in Finder, which locates
+`cmake` and the IDA runtime for itself, or install from a terminal:
+
 ```bash
 export IDADIR="/Applications/IDA Professional 9.4.app/Contents/MacOS"
-./scripts/install_idax_command_line.sh
+bindings/swift/scripts/install_idax_command_line.sh
 idax --help
 ```
 

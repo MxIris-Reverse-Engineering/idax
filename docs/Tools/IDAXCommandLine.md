@@ -42,12 +42,19 @@ anything else that opened the cache may have.
 The executable is a Swift Package product and uses
 [`swift-argument-parser`](https://github.com/apple/swift-argument-parser).
 
-To build and install it for the current user:
+To build and install it for the current user, double-click
+`bindings/swift/Install idax.command` in Finder — it locates `cmake` and the
+IDA runtime for itself — or run the installer directly:
 
 ```bash
-./scripts/install_idax_command_line.sh
+bindings/swift/scripts/install_idax_command_line.sh
 idax --help
 ```
+
+A copy of the `.command` file extracted from a downloaded archive carries the
+`com.apple.quarantine` attribute and Gatekeeper refuses to run it; clear it
+with `xattr -d com.apple.quarantine "Install idax.command"`. A checkout made
+with `git` carries no such attribute.
 
 By default, the installer places the launcher in `~/.local/bin` and the
 executable plus `CIDAX.framework` in
