@@ -184,6 +184,34 @@ let package = Package(
             path: "bindings/swift/Tests/IDAXCommandLineTests",
             linkerSettings: clientLinkerSettings
         ),
+
+        // Fork-only: runs bindings/swift/scripts/build-libs.sh from Xcode's
+        // package context menu, so the prebuilt archive can be produced without
+        // leaving for a terminal. The script stays the single source of truth;
+        // the plugin only supplies the IDA runtime path and a PATH holding
+        // cmake, neither of which a process launched by Xcode inherits.
+        //
+        // Network access is requested because CMake fetches the IDA SDK when
+        // IDASDK is unset.
+        .plugin(
+            name: "BuildNativeLibrary",
+            capability: .command(
+                intent: .custom(
+                    verb: "build-libs",
+                    description: "Build libidax_swift_native.a for the Swift package"
+                ),
+                permissions: [
+                    .writeToPackageDirectory(
+                        reason: "Writes the CMake build tree and the built archive under bindings/swift/"
+                    ),
+                    .allowNetworkConnections(
+                        scope: .all(ports: []),
+                        reason: "CMake fetches the pinned IDA SDK when IDASDK is unset"
+                    ),
+                ]
+            ),
+            path: "bindings/swift/Plugins/BuildNativeLibrary"
+        ),
     ],
     swiftLanguageModes: [.v6],
     // CIDAXFork's shim.cpp includes the repository's C++23 public headers.

@@ -12,3 +12,4 @@
 | # | 标题 | 状态 |
 |---|------|------|
 | draft | [收缩为上游之上的命令行工具](draft-shrink-fork-to-cli.md) | Implemented |
+| draft | [在 Xcode GUI 里构建原生归档的 SwiftPM command plugin](draft-xcode-gui-build-libs-plugin.md) | Implemented |

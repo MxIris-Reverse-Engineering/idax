@@ -86,9 +86,29 @@ swift test --filter IDAXCommandLineTests   # no IDA runtime needed
 ./scripts/install_idax_command_line.sh
 ```
 
+From Xcode, the archive build is also a command plugin: right-click the package
+in the navigator and choose **build-libs**. It locates `cmake` and the IDA
+runtime itself, because a process launched by Xcode inherits neither `IDADIR`
+nor a PATH containing Homebrew. The command-line equivalent, which also accepts
+the script's own options:
+
+```bash
+swift package plugin --allow-writing-to-package-directory \
+    --allow-network-connections "all(ports: [])" build-libs
+```
+
+**The manifest must be evaluated again after the archive appears.** Whether a
+prebuilt archive exists is decided during manifest evaluation, and that result
+is cached, so a freshly built archive is invisible until the cache is dropped —
+`File > Packages > Reset Package Caches` in Xcode, `swift package purge-cache`
+on the command line. `swift package reset` does **not** do it: the cache
+SwiftPM consults is the shared one under `~/Library/Caches`.
+
 Without a prebuilt archive the manifest falls back to upstream's pkg-config
 route, which needs `PKG_CONFIG_PATH` set to the CMake-generated metadata — see
-`bindings/swift/README.md`.
+`bindings/swift/README.md`. That fallback is what produces the
+`couldn't find pc file for idax-swift` warning when Xcode resolves the package;
+the link then fails with `library 'idax_swift_native' not found`.
 
 ## Architecture
 
