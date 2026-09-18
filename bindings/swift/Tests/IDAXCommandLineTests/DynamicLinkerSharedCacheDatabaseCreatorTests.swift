@@ -250,11 +250,18 @@ struct DynamicLinkerSharedCacheDatabaseCreatorTests {
         )
         #expect(FileManager.default.createFile(atPath: cacheFileURL.path, contents: Data()))
 
-        var command = DynamicLinkerSharedCacheDatabaseCreator()
-        command.cachePath = cacheFileURL.path
-        command.explicitImagePaths = ["/usr/lib/libobjc.A.dylib"]
+        // Parsed rather than constructed and assigned: a command built with
+        // its memberwise initializer leaves every option it was not given
+        // without storage, and reading one of those traps. Parsing accepts a
+        // sound output path first, because parse() validates; the directory
+        // under test is put in place afterwards.
+        var command = try DynamicLinkerSharedCacheDatabaseCreator.parse([
+            "--cache", cacheFileURL.path,
+            "--image-path", "/usr/lib/libobjc.A.dylib",
+            "--output", temporaryDirectoryURL.appendingPathComponent("Database.i64").path,
+            "--overwrite",
+        ])
         command.outputDatabasePath = temporaryDirectoryURL.path
-        command.overwriteExistingOutput = true
 
         #expect(throws: ValidationError.self) {
             try command.validate()

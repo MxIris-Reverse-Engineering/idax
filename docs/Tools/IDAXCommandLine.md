@@ -6,7 +6,7 @@ explicit output-path saving.
 
 | Subcommand | Purpose |
 |---|---|
-| `idax binary` | Create a database from a single binary, selecting the architecture slice |
+| `idax binary` | Create a database from one or more binaries, selecting the architecture slice |
 | `idax dyld-cache` | Create a database from selected dyld shared cache images |
 | `idax formats` | List the slices and loaders IDA offers for a file |
 
@@ -33,7 +33,9 @@ directory held a leftover, never-cleanly-closed database
 (`dyld_shared_cache_arm64e.id0` and friends) from an earlier session, while
 every cache that opened normally had none. IDA refuses an input whose unpacked
 database is still lying beside it. Clear such leftovers before concluding the
-format is unsupported.
+format is unsupported. This tool no longer produces them — see
+[Where IDA's working database goes](#where-idas-working-database-goes) — but
+anything else that opened the cache may have.
 
 ## Build and run
 
@@ -62,7 +64,7 @@ swift build --product idax
 swift run idax --help
 ```
 
-## `idax binary` — a single binary
+## `idax binary` — one binary or many
 
 ```bash
 idax binary /path/to/UniversalApp
@@ -98,17 +100,59 @@ fails without saving if it is not the architecture that was selected. Non-fat
 inputs — a thin Mach-O, an ELF, a PE — are opened with IDA's own detection
 untouched.
 
+### Several binaries at once
+
+```bash
+idax binary AppA AppB AppC --output-dir /tmp/databases
+idax binary /Applications/*.app/Contents/MacOS/* --output-dir /tmp/databases --jobs 4
+```
+
+Each database is named after its input, in `--output-dir` (the current
+directory if that is omitted). `--output` names one file and is therefore
+rejected with several inputs. `--arch`, `--overwrite` and
+`--skip-final-analysis` apply to every input.
+
+Everything knowable before the work starts is checked before any of it starts:
+a missing input, a missing output directory, an output that already exists
+without `--overwrite`, and two inputs deriving the same output name. That last
+one is common rather than contrived — every application bundle names its
+executable after the bundle, so two `Contents/MacOS/App` paths both derive
+`App.i64`. It is an error, never an automatic rename, because a renamed
+database is one nobody can trace back to its input.
+
+Each binary is built in its own process. That is not for parallelism: the
+architecture selection is fixed when IDA initialises, once per process, so one
+process cannot serve two different slices. It also means a malformed input that
+kills IDA kills one job rather than the batch.
+
+A failed job does not stop the rest. The run ends with a summary and a non-zero
+exit status if anything failed:
+
+```
+==> 3 binaries: 2 succeeded, 1 failed
+    failed: /path/to/Thin (exit status 64)
+      rerun: idax binary /path/to/Thin --output /tmp/databases/Thin.i64 --arch x86_64
+```
+
+`--jobs` runs more than one at a time. It defaults to 1, which keeps output
+live and ordered; above 1, each job's output is held back and printed in one
+piece when it finishes, since several IDA runs writing to one terminal at once
+produce something nobody can read.
+
 ### Options
 
 | Option | Effect |
 |---|---|
 | `--arch <name>` | Architecture to load: `arm64`, `arm64e`, `x86_64`. Defaults to the host's |
-| `--output <path>` | Output database path; a missing extension is completed with `.i64` |
+| `--output <path>` | Output database path, for a single input; a missing extension is completed with `.i64` |
+| `--output-dir <path>` | Directory to write the databases into, each named after its input. Defaults to the current directory |
+| `--jobs <count>` | How many binaries to build at the same time. Defaults to 1 |
+| `--work-dir <path>` | Where to keep IDA's working database. Must be on the input's volume |
 | `--overwrite` | Replace an existing output database |
 | `--skip-final-analysis` | Save without draining the final auto-analysis queue |
 
-Without `--output`, the database is named after the input file with `.i64` in
-the current directory.
+Without `--output` or `--output-dir`, each database is named after its input
+file with `.i64` in the current directory.
 
 ## `idax formats` — what IDA sees
 
@@ -153,6 +197,10 @@ swift run idax dyld-cache \
     /System/Library/Frameworks/AppKit.framework/Versions/C/AppKit \
     /System/Library/PrivateFrameworks/UIKitMacHelper.framework/Versions/A/UIKitMacHelper
 ```
+
+Several `idax dyld-cache` runs can work on one cache at the same time; see
+[Where IDA's working database goes](#where-idas-working-database-goes) for what
+makes that safe.
 
 Both selectors accept lists and can be combined. Name selections are resolved
 first, followed by explicit path selections. If multiple paths have the same
@@ -203,6 +251,47 @@ each call. By default the tool drains the queue once before saving. Use
 `--skip-final-analysis` for a faster database creation pass when downstream work
 does not require a quiescent analysis state.
 
+## Where IDA's working database goes
+
+IDA unpacks a working database — `.id0`, `.id1`, `.nam`, `.til` — next to the
+file it opens, and deletes it again on a clean close. Two runs opening the same
+input therefore write two of those into one directory and spoil each other's
+work, and a set left behind by an interrupted run makes every later open of
+that input fail outright. A shared cache is where this bites: it is one file
+that several runs want at once.
+
+So neither subcommand hands IDA the input path. Each run creates a directory of
+its own, hard-links the input into it under the same name, and opens the link.
+Everything IDA writes lands in that directory, which is removed when the run
+ends. The chosen directory is printed:
+
+```
+Working database directory: /var/folders/.../idax-work-57375-DB0F0841
+```
+
+A dyld shared cache is split across several files — `.01`, `.atlas`, `.map`,
+sometimes `.symbols` — and IDA finds them by appending to the path it was
+given, so they are linked in beside it. Leftover IDA databases sharing that
+name prefix are deliberately not linked in: bringing one along would recreate
+the failure this whole arrangement prevents.
+
+Two constraints follow from hard links:
+
+- **A hard link cannot cross volumes.** The directory goes in the temporary
+  directory when that is on the input's volume, and beside the input when it is
+  not — which is what happens for a cache on an external volume. Concurrent
+  runs stay safe either way, because each has its own directory. `--work-dir`
+  overrides the choice and must name a directory on the input's volume.
+- **The sealed system volume refuses hard links entirely.** Inputs under
+  `/bin`, `/usr` or `/System` are copied instead, with a line saying so. Those
+  inputs could not be opened at all before, since IDA cannot write its working
+  database into a read-only directory either.
+
+A run that is killed outright leaves its `idax-work-…` directory behind. They
+are not cleaned up automatically — deleting directories belonging to a run that
+may still be going is worse than leaving them — so remove them by hand if one
+turns up.
+
 ## Lifecycle behavior
 
 ### Why the architecture is chosen before IDA starts
@@ -228,9 +317,10 @@ The tool first enumerates the cache directly with `DyldCache.listModules(in:)`
 so image names can be resolved before a database exists. It temporarily sets
 `IDA_DYLD_CACHE_MODULE` to the first resolved path and
 `IDA_DYLD_CACHE_DEPTH` to `0`, then restores both variables to their original
-values before exiting. It opens the raw cache without an immediate analysis
-wait, loads the requested content, saves through `Database.save(to:)`, and
-closes without a second implicit save.
+values before exiting. It opens the raw cache — through the hard link described
+under [Where IDA's working database goes](#where-idas-working-database-goes) —
+without an immediate analysis wait, loads the requested content, saves through
+`Database.save(to:)`, and closes without a second implicit save.
 
 The underlying C++ API is `ida::database::save_to`; the same operation is
 available as `Database.save(to:)` in Swift, `database.saveTo` in Node, and

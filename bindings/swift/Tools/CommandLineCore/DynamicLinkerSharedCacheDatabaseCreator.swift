@@ -49,6 +49,15 @@ public nonisolated struct DynamicLinkerSharedCacheDatabaseCreator: ParsableComma
     )
     var outputDatabasePath: String?
 
+    @Option(
+        name: .customLong("work-dir"),
+        help: ArgumentHelp(
+            "Where to keep IDA's working database. Must be on the same volume as the cache.",
+            valueName: "path"
+        )
+    )
+    var workingDirectoryParentPath: String?
+
     @Flag(
         name: .customLong("load-dyld-header"),
         help: "Load and format the dyld cache header."
@@ -108,6 +117,18 @@ public nonisolated struct DynamicLinkerSharedCacheDatabaseCreator: ParsableComma
     public init() {}
 
     public func validate() throws {
+        if let workingDirectoryParentPath {
+            var workingDirectoryIsDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(
+                atPath: workingDirectoryParentPath,
+                isDirectory: &workingDirectoryIsDirectory
+            ), workingDirectoryIsDirectory.boolValue else {
+                throw ValidationError(
+                    "The working directory does not exist: \(workingDirectoryParentPath)"
+                )
+            }
+        }
+
         if let outputDatabasePath {
             let explicitOutputURL = DynamicLinkerSharedCacheDatabaseCreationPlan.absoluteFileURL(
                 path: outputDatabasePath,
@@ -169,6 +190,20 @@ public nonisolated struct DynamicLinkerSharedCacheDatabaseCreator: ParsableComma
     public func run() throws {
         let creationPlan = try makeCreationPlan()
 
+        // IDA unpacks its working database beside the file it opens, and a
+        // shared cache is the input most likely to be opened by two runs at
+        // once — both would write that database into the cache's own
+        // directory and corrupt each other. So IDA is handed a hard link in a
+        // directory of this run's own, together with the cache's other parts.
+        // See WorkingDatabaseDirectory.
+        let workingDirectory = try WorkingDatabaseDirectory.make(
+            forInputAt: creationPlan.cacheFileURL,
+            preferredParentDirectory: workingDirectoryParentURL,
+            linkingSiblingParts: true
+        )
+        defer { workingDirectory.remove() }
+        print("Working database directory: \(workingDirectory.directoryURL.path)")
+
         // ParsableCommand.run() runs on the process main thread, which is the
         // thread IDAX requires for every SDK call.
         print("Initializing IDA runtime")
@@ -176,7 +211,7 @@ public nonisolated struct DynamicLinkerSharedCacheDatabaseCreator: ParsableComma
 
         print("Resolving cache images")
         let availableImagePaths = try DyldCache.listModules(
-            cachePath: creationPlan.cacheFileURL.path
+            cachePath: workingDirectory.inputFileURL.path
         ).map(\.path)
         let resolvedImagePaths = try creationPlan.resolveImagePaths(
             availableImagePaths: availableImagePaths
@@ -204,7 +239,7 @@ public nonisolated struct DynamicLinkerSharedCacheDatabaseCreator: ParsableComma
         }
 
         print("Opening cache: \(creationPlan.cacheFileURL.path)")
-        try Database.open(path: creationPlan.cacheFileURL.path, mode: .skipAnalysis)
+        try Database.open(path: workingDirectory.inputFileURL.path, mode: .skipAnalysis)
         databaseIsOpen = true
 
         guard try DyldCache.isAvailable() else {
@@ -264,6 +299,15 @@ public nonisolated struct DynamicLinkerSharedCacheDatabaseCreator: ParsableComma
         try Database.close(save: false)
         databaseIsOpen = false
         print("Created database: \(creationPlan.outputFileURL.path)")
+    }
+
+    var workingDirectoryParentURL: URL? {
+        workingDirectoryParentPath.map {
+            DynamicLinkerSharedCacheDatabaseCreationPlan.absoluteFileURL(
+                path: $0,
+                currentDirectoryPath: FileManager.default.currentDirectoryPath
+            )
+        }
     }
 
     func makeCreationPlan() throws -> DynamicLinkerSharedCacheDatabaseCreationPlan {

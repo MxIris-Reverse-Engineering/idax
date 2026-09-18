@@ -5,7 +5,7 @@ import IDAX
 public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
     public static let configuration = CommandConfiguration(
         commandName: "binary",
-        abstract: "Create an IDA database from a single binary.",
+        abstract: "Create IDA databases from one or more binaries.",
         discussion: """
         For a universal ("fat") Mach-O the architecture matching this host is
         selected, preferring arm64 over arm64e when the file offers both.
@@ -13,11 +13,17 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
         host architecture is an error rather than a silent substitution: IDA
         left to itself takes the first slice, which for Apple's toolchain is
         x86_64.
+
+        Several binaries can be given at once; --output-dir then receives one
+        database per input, named after it. Each runs in its own process,
+        because the architecture selection is fixed when IDA initialises and
+        one process therefore cannot serve two different slices. --jobs runs
+        more than one of those processes at a time.
         """
     )
 
-    @Argument(help: ArgumentHelp("Path to the binary to load.", valueName: "path"))
-    var binaryPath: String
+    @Argument(help: ArgumentHelp("Paths to the binaries to load.", valueName: "path"))
+    var binaryPaths: [String]
 
     @Option(
         name: .customLong("arch"),
@@ -31,11 +37,38 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
     @Option(
         name: .customLong("output"),
         help: ArgumentHelp(
-            "Output database path. A missing extension is completed with .i64.",
+            "Output database path, for a single binary. A missing extension is completed with .i64.",
             valueName: "path"
         )
     )
     var outputDatabasePath: String?
+
+    @Option(
+        name: .customLong("output-dir"),
+        help: ArgumentHelp(
+            "Directory to write the databases into, each named after its input. Defaults to the current directory.",
+            valueName: "path"
+        )
+    )
+    var outputDirectoryPath: String?
+
+    @Option(
+        name: .customLong("jobs"),
+        help: ArgumentHelp(
+            "How many binaries to build at the same time.",
+            valueName: "count"
+        )
+    )
+    var maximumConcurrentJobs: Int = 1
+
+    @Option(
+        name: .customLong("work-dir"),
+        help: ArgumentHelp(
+            "Where to keep IDA's working database. Must be on the same volume as the input.",
+            valueName: "path"
+        )
+    )
+    var workingDirectoryParentPath: String?
 
     @Flag(
         name: .customLong("skip-final-analysis"),
@@ -52,8 +85,30 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
     public init() {}
 
     public mutating func validate() throws {
-        let creationPlan = try makeCreationPlan()
+        guard maximumConcurrentJobs >= 1 else {
+            throw ValidationError("--jobs must be at least 1.")
+        }
+        if let workingDirectoryParentPath {
+            var workingDirectoryIsDirectory = ObjCBool(false)
+            guard FileManager.default.fileExists(
+                atPath: workingDirectoryParentPath,
+                isDirectory: &workingDirectoryIsDirectory
+            ), workingDirectoryIsDirectory.boolValue else {
+                throw ValidationError(
+                    "The working directory does not exist: \(workingDirectoryParentPath)"
+                )
+            }
+        }
 
+        // The whole batch is checked before any of it starts. One database is
+        // minutes to an hour of work, so a name collision that was knowable up
+        // front must not surface after the first one finishes.
+        for creationPlan in try makeBatchPlan().jobs {
+            try validate(creationPlan: creationPlan)
+        }
+    }
+
+    private func validate(creationPlan: BinaryDatabaseCreationPlan) throws {
         var binaryPathIsDirectory = ObjCBool(false)
         guard FileManager.default.fileExists(
             atPath: creationPlan.binaryFileURL.path,
@@ -95,8 +150,32 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
     }
 
     public mutating func run() throws {
-        let creationPlan = try makeCreationPlan()
+        let batchPlan = try makeBatchPlan()
+        if batchPlan.jobs.count == 1 {
+            try createDatabase(creationPlan: batchPlan.jobs[0])
+            return
+        }
 
+        guard let executableURL = Bundle.main.executableURL else {
+            throw ValidationError(
+                "Could not locate the running idax executable, which is what builds each binary."
+            )
+        }
+        let jobRunner = DatabaseJobRunner(
+            executableURL: executableURL,
+            maximumConcurrentJobs: maximumConcurrentJobs
+        )
+        let results = jobRunner.run(jobs: batchPlan.jobs.map(job(forCreationPlan:)))
+        jobRunner.printSummary(results: results)
+
+        guard results.allSatisfy(\.succeeded) else { throw ExitCode.failure }
+    }
+
+    /// One input's database, built in this process.
+    ///
+    /// This is also what each child process of a multi-input run ends up
+    /// doing, so the two paths cannot drift apart.
+    private func createDatabase(creationPlan: BinaryDatabaseCreationPlan) throws {
         // The slice has to be chosen before IDA starts: IDA only accepts an
         // input format on the initialisation call, and its own loader list
         // cannot be built before that call. The choice is verified against IDA
@@ -106,6 +185,17 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
             slices: fatSlices,
             requested: requestedArchitecture
         )
+
+        // IDA unpacks its working database beside the file it opens, so it is
+        // handed a hard link in a directory of this run's own instead of the
+        // original path. See WorkingDatabaseDirectory.
+        let workingDirectory = try WorkingDatabaseDirectory.make(
+            forInputAt: creationPlan.binaryFileURL,
+            preferredParentDirectory: workingDirectoryParentURL,
+            linkingSiblingParts: false
+        )
+        defer { workingDirectory.remove() }
+        print("Working database directory: \(workingDirectory.directoryURL.path)")
 
         // ParsableCommand.run() runs on the process main thread, which is the
         // thread IDAX requires for every SDK call.
@@ -133,7 +223,7 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
             }
         }
 
-        try Database.open(path: creationPlan.binaryFileURL.path, mode: .skipAnalysis)
+        try Database.open(path: workingDirectory.inputFileURL.path, mode: .skipAnalysis)
         databaseIsOpen = true
 
         let loadedFormatName = try Database.fileTypeName()
@@ -162,6 +252,31 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
         print("Created database: \(creationPlan.outputFileURL.path)")
     }
 
+    /// The child invocation for one input.
+    ///
+    /// Every choice is spelled out rather than inherited, so the command in the
+    /// failure summary is the command that ran.
+    private func job(forCreationPlan creationPlan: BinaryDatabaseCreationPlan) -> DatabaseJob {
+        var arguments = [
+            Self.configuration.commandName ?? "binary",
+            creationPlan.binaryFileURL.path,
+            "--output", creationPlan.outputFileURL.path,
+        ]
+        if let requestedArchitecture {
+            arguments += ["--arch", requestedArchitecture.rawValue]
+        }
+        if let workingDirectoryParentPath {
+            arguments += ["--work-dir", workingDirectoryParentPath]
+        }
+        if skipFinalAnalysis {
+            arguments.append("--skip-final-analysis")
+        }
+        if overwriteExistingOutput {
+            arguments.append("--overwrite")
+        }
+        return DatabaseJob(inputFileURL: creationPlan.binaryFileURL, arguments: arguments)
+    }
+
     /// Confirm IDA loaded the slice that was asked for.
     ///
     /// The ordinal handed to IDA is derived from the fat header, on the
@@ -188,10 +303,20 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
         }
     }
 
-    func makeCreationPlan() throws -> BinaryDatabaseCreationPlan {
-        try BinaryDatabaseCreationPlan(
-            binaryPath: binaryPath,
+    var workingDirectoryParentURL: URL? {
+        workingDirectoryParentPath.map {
+            BinaryDatabaseCreationPlan.absoluteFileURL(
+                path: $0,
+                currentDirectoryPath: FileManager.default.currentDirectoryPath
+            )
+        }
+    }
+
+    func makeBatchPlan() throws -> BinaryDatabaseBatchPlan {
+        try BinaryDatabaseBatchPlan(
+            binaryPaths: binaryPaths,
             outputDatabasePath: outputDatabasePath,
+            outputDirectoryPath: outputDirectoryPath,
             currentDirectoryPath: FileManager.default.currentDirectoryPath
         )
     }
