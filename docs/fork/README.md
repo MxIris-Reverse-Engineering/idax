@@ -23,6 +23,7 @@ C++ 补丁，维护七份账本的写入成本远超收益。
 
 ## 目录
 
+- [microcode-operand-pairs.md](microcode-operand-pairs.md) —— 独立 worktree 中的成对操作数上游修复准备、往返测试与二进制重建要求
 - [evolutions/](evolutions/) —— fork 演进提案，含索引与项目类型声明
 - [adjudicated-findings.md](adjudicated-findings.md) —— code-review 中判定为误报或不值得修的
   发现及其理由。每次 review 前先对照，已裁决且理由仍成立的直接跳过

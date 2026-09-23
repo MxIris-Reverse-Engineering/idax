@@ -2636,6 +2636,8 @@ typedef struct IdaxMicrocodeOperand {
     size_t switch_case_count;
     int has_switch_default_target;
     int switch_default_target;
+    struct IdaxMicrocodeOperand* pair_low_operand;
+    struct IdaxMicrocodeOperand* pair_high_operand;
 } IdaxMicrocodeOperand;
 
 typedef struct IdaxMicrocodeInstruction {

@@ -335,6 +335,8 @@ template <> MicrocodeOperandKind enum_value<MicrocodeOperandKind>(int value) {
         return MicrocodeOperandKind::Other;
     case static_cast<int>(MicrocodeOperandKind::SwitchCases):
         return MicrocodeOperandKind::SwitchCases;
+    case static_cast<int>(MicrocodeOperandKind::OperandPair):
+        return MicrocodeOperandKind::OperandPair;
     default:
         throw ida::Error::validation("Invalid microcode enumeration");
     }
@@ -495,6 +497,12 @@ MicrocodeOperand decode(const IdaxMicrocodeOperand &value, Budget &budget, unsig
     if (value.referenced_operand)
         out.referenced_operand = std::make_shared<MicrocodeOperand>(
             decode(*value.referenced_operand, budget, depth + 1));
+    if (value.pair_low_operand)
+        out.pair_low_operand = std::make_shared<MicrocodeOperand>(
+            decode(*value.pair_low_operand, budget, depth + 1));
+    if (value.pair_high_operand)
+        out.pair_high_operand = std::make_shared<MicrocodeOperand>(
+            decode(*value.pair_high_operand, budget, depth + 1));
     check_array(value.call_arguments, value.call_argument_count);
     out.call_arguments.reserve(value.call_argument_count);
     for (size_t i = 0; i < value.call_argument_count; ++i)

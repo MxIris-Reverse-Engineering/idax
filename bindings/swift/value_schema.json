@@ -592,6 +592,8 @@
     "IdaxMicrocodeOperand.call_return_registers": "[]",
     "IdaxMicrocodeOperand.switch_cases": "[]",
     "IdaxMicrocodeOperand.switch_default_target": "nil",
+    "IdaxMicrocodeOperand.pair_low_operand": "nil",
+    "IdaxMicrocodeOperand.pair_high_operand": "nil",
     "IdaxMicrocodeInstruction.opcode": ".noOperation",
     "IdaxMicrocodeInstruction.left": ".init()",
     "IdaxMicrocodeInstruction.right": ".init()",

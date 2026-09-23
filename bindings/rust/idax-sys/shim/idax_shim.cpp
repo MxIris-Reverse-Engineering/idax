@@ -10640,6 +10640,14 @@ void free_microcode_operand(IdaxMicrocodeOperand* operand) {
         operand->referenced_operand = nullptr;
     }
 
+    for (auto** member : {&operand->pair_low_operand, &operand->pair_high_operand}) {
+        if (*member != nullptr) {
+            free_microcode_operand(*member);
+            std::free(*member);
+            *member = nullptr;
+        }
+    }
+
     if (operand->call_arguments != nullptr) {
         for (std::size_t index = 0; index < operand->call_argument_count; ++index)
             free_microcode_operand(&operand->call_arguments[index]);
@@ -10737,6 +10745,23 @@ ida::Status fill_microcode_operand(IdaxMicrocodeOperand* out,
 
         auto status = fill_microcode_operand(out->referenced_operand,
                                              *operand.referenced_operand);
+        if (!status) {
+            free_microcode_operand(out);
+            return status;
+        }
+    }
+
+    for (const auto& member : {
+             std::pair{&out->pair_low_operand, operand.pair_low_operand.get()},
+             std::pair{&out->pair_high_operand, operand.pair_high_operand.get()}}) {
+        if (member.second == nullptr) continue;
+        *member.first = static_cast<IdaxMicrocodeOperand*>(
+            std::calloc(1, sizeof(IdaxMicrocodeOperand)));
+        if (*member.first == nullptr) {
+            free_microcode_operand(out);
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        }
+        auto status = fill_microcode_operand(*member.first, *member.second);
         if (!status) {
             free_microcode_operand(out);
             return status;

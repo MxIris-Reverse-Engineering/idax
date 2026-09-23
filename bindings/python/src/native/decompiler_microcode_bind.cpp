@@ -231,6 +231,7 @@ void bind_decompiler_microcode(py::module_& decompiler) {
         .value("FLOATING_POINT_CONSTANT", ida::decompiler::MicrocodeOperandKind::FloatingPointConstant)
         .value("OTHER", ida::decompiler::MicrocodeOperandKind::Other)
         .value("SWITCH_CASES", ida::decompiler::MicrocodeOperandKind::SwitchCases)
+        .value("OPERAND_PAIR", ida::decompiler::MicrocodeOperandKind::OperandPair)
         .finalize();
     py::native_enum<ida::decompiler::MicrocodeMaturity>(
         decompiler, "MicrocodeMaturity", "enum.Enum")
@@ -382,6 +383,8 @@ void bind_decompiler_microcode(py::module_& decompiler) {
         .def_readwrite("byte_width", &ida::decompiler::MicrocodeOperand::byte_width)
         .def_readwrite("mark_user_defined_type", &ida::decompiler::MicrocodeOperand::mark_user_defined_type)
         .def_readwrite("referenced_operand", &ida::decompiler::MicrocodeOperand::referenced_operand)
+        .def_readwrite("pair_low_operand", &ida::decompiler::MicrocodeOperand::pair_low_operand)
+        .def_readwrite("pair_high_operand", &ida::decompiler::MicrocodeOperand::pair_high_operand)
         .def_readwrite("call_arguments", &ida::decompiler::MicrocodeOperand::call_arguments)
         .def_readwrite("call_target", &ida::decompiler::MicrocodeOperand::call_target)
         .def_readwrite("text", &ida::decompiler::MicrocodeOperand::text)

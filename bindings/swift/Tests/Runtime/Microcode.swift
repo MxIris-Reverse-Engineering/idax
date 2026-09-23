@@ -15,6 +15,8 @@ private final class MicrocodeState {
     var failure: IDAError?
     var step = "start"
     var emitted: Decompiler.MicrocodeInstruction?
+    var emittedPair: Decompiler.MicrocodeOperand?
+    var invalidPairs = 0
 }
 private final class ProbingMicrocodeFilter: Decompiler.MicrocodeFilter {
     let state: MicrocodeState
@@ -76,6 +78,35 @@ private final class ProbingMicrocodeFilter: Decompiler.MicrocodeFilter {
             state.step = "snapshot nested instruction"
             state.emitted = try context.lastEmittedInstruction()
             try context.removeLastEmittedInstruction()
+            state.step = "mixed operand pair round trip"
+            let pairInstruction = Decompiler.MicrocodeInstruction(
+                opcode: .move,
+                left: .init(
+                    kind: .operandPair, byteWidth: 8,
+                    pairLowOperand: .init(kind: .unsignedImmediate, unsignedImmediate: 0x11223344, byteWidth: 4),
+                    pairHighOperand: .init(kind: .register, registerId: temporary, byteWidth: 4)),
+                destination: .init(
+                    kind: .register, registerId: try context.allocateTemporaryRegister(byteWidth: 8), byteWidth: 8))
+            try context.emitInstruction(pairInstruction)
+            state.emittedPair = try context.lastEmittedInstruction().left
+            try context.removeLastEmittedInstruction()
+            state.step = "invalid operand pairs"
+            var missingPairMember = pairInstruction
+            missingPairMember.left.pairHighOperand = nil
+            var mismatchedPairWidth = pairInstruction
+            mismatchedPairWidth.left.byteWidth = 7
+            for malformedPair in [missingPairMember, mismatchedPairWidth] {
+                do throws(IDAError) {
+                    try context.emitInstruction(malformedPair)
+                    throw IDAError(category: .internalError, message: "Malformed operand pair unexpectedly emitted")
+                } catch {
+                    guard error.category == .validation else { throw error }
+                    state.invalidPairs += 1
+                }
+            }
+            guard try context.blockInstructionCount == before else {
+                throw IDAError(category: .internalError, message: "Rejected operand pair changed the block")
+            }
             state.step = "invalid nested widths"
             var missingWidth = instruction
             missingWidth.left.byteWidth = 0
@@ -173,6 +204,16 @@ func runMicrocodeChecks() throws {
     }
     try expect(state.matches > 0 && state.applies == 1, "Microcode callbacks did not execute")
     try expect(state.invalidWidths == 4, "Nested instruction width/opcode validation did not execute")
+    try expect(state.invalidPairs == 2, "Operand pair validation did not execute")
+    try expect(
+        state.emittedPair?.kind == .operandPair && state.emittedPair?.byteWidth == 8
+            && state.emittedPair?.pairLowOperand?.kind == .unsignedImmediate
+            && state.emittedPair?.pairLowOperand?.unsignedImmediate == 0x11223344
+            && state.emittedPair?.pairLowOperand?.byteWidth == 4
+            && state.emittedPair?.pairHighOperand?.kind == .register
+            && state.emittedPair?.pairHighOperand?.registerId == state.emitted?.destination.registerId
+            && state.emittedPair?.pairHighOperand?.byteWidth == 4,
+        "Mixed operand pair lost its owned members across native emission and snapshot copying")
     try expect(
         state.closePrevented && state.mutationPrevented && state.databaseClosePrevented,
         "Microcode callback permitted self-close, match mutation, or database close")

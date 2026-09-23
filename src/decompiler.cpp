@@ -707,12 +707,23 @@ Result<MicrocodeOperand> parse_sdk_operand(const mop_t& mop) {
             }
             break;
         case mop_p:
-            result.kind = MicrocodeOperandKind::RegisterPair;
-            if (mop.pair != nullptr && mop.pair->lop.t == mop_r && mop.pair->hop.t == mop_r) {
+            if (mop.pair == nullptr) {
+                return std::unexpected(Error::validation("Missing operand pair"));
+            }
+            if (mop.pair->lop.t == mop_r && mop.pair->hop.t == mop_r) {
+                result.kind = MicrocodeOperandKind::RegisterPair;
                 result.register_id = mop.pair->lop.r;
                 result.second_register_id = mop.pair->hop.r;
             } else {
-                return std::unexpected(Error::unsupported("Unsupported register pair format"));
+                auto low_operand = parse_sdk_operand(mop.pair->lop);
+                if (!low_operand) return std::unexpected(low_operand.error());
+                auto high_operand = parse_sdk_operand(mop.pair->hop);
+                if (!high_operand) return std::unexpected(high_operand.error());
+                result.kind = MicrocodeOperandKind::OperandPair;
+                result.pair_low_operand =
+                    std::make_shared<MicrocodeOperand>(std::move(*low_operand));
+                result.pair_high_operand =
+                    std::make_shared<MicrocodeOperand>(std::move(*high_operand));
             }
             break;
         case mop_a:
@@ -1078,6 +1089,34 @@ Result<mop_t> build_typed_instruction_operand(const MicrocodeOperand& operand,
                                  operand.second_register_id,
                                  operand.byte_width / 2);
             break;
+
+        case MicrocodeOperandKind::OperandPair: {
+            if (!operand.pair_low_operand || !operand.pair_high_operand) {
+                return std::unexpected(Error::validation(
+                    "Operand pair requires both low and high members", std::string(role)));
+            }
+            const auto low_width = operand.pair_low_operand->byte_width;
+            const auto high_width = operand.pair_high_operand->byte_width;
+            if (low_width <= 0 || high_width <= 0 || operand.byte_width <= low_width
+                || operand.byte_width - low_width != high_width) {
+                return std::unexpected(Error::validation(
+                    "Operand pair member widths must sum to its byte width", std::string(role)));
+            }
+            auto low_operand = build_typed_instruction_operand(
+                *operand.pair_low_operand, mba, instruction_address,
+                std::string(role) + ":low", depth + 1);
+            if (!low_operand) return std::unexpected(low_operand.error());
+            auto high_operand = build_typed_instruction_operand(
+                *operand.pair_high_operand, mba, instruction_address,
+                std::string(role) + ":high", depth + 1);
+            if (!high_operand) return std::unexpected(high_operand.error());
+            auto pair = std::make_unique<mop_pair_t>();
+            pair->lop = std::move(*low_operand);
+            pair->hop = std::move(*high_operand);
+            result._make_pair(pair.release());
+            result.size = operand.byte_width;
+            break;
+        }
 
         case MicrocodeOperandKind::GlobalAddress:
             if (operand.global_address == BadAddress) {

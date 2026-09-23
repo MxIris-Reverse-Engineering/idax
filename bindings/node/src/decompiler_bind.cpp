@@ -503,6 +503,7 @@ static const char* MicrocodeOperandKindToString(ida::decompiler::MicrocodeOperan
             return "floatingPointConstant";
         case ida::decompiler::MicrocodeOperandKind::Other:              return "other";
         case ida::decompiler::MicrocodeOperandKind::SwitchCases: return "switchCases";
+        case ida::decompiler::MicrocodeOperandKind::OperandPair: return "operandPair";
     }
     return "unknown";
 }
@@ -546,6 +547,15 @@ static v8::Local<v8::Object> MicrocodeOperandToJS(const ida::decompiler::Microco
         object.set("referencedOperand", MicrocodeOperandToJS(*operand.referenced_operand));
     else
         object.setNull("referencedOperand");
+
+    if (operand.pair_low_operand)
+        object.set("pairLowOperand", MicrocodeOperandToJS(*operand.pair_low_operand));
+    else
+        object.setNull("pairLowOperand");
+    if (operand.pair_high_operand)
+        object.set("pairHighOperand", MicrocodeOperandToJS(*operand.pair_high_operand));
+    else
+        object.setNull("pairHighOperand");
 
     auto call_arguments = Nan::New<v8::Array>(
         static_cast<int>(operand.call_arguments.size()));
