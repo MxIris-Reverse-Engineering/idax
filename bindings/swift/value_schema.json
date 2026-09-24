@@ -565,6 +565,8 @@
     "IdaxMicrocodeCallArgumentProperties.unused": "false",
     "IdaxMicrocodeCallArgumentProperties.swift_self": "false",
     "IdaxMicrocodeOperand.kind": ".empty",
+    "IdaxMicrocodeOperand.pair_low": "nil",
+    "IdaxMicrocodeOperand.pair_high": "nil",
     "IdaxMicrocodeOperand.register_id": "0",
     "IdaxMicrocodeOperand.processor_register_id": "-1",
     "IdaxMicrocodeOperand.local_variable_index": "0",

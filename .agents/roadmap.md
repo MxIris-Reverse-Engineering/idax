@@ -602,3 +602,5 @@ Current overall phase status:
 - [x] P72.9 Investigate the reported PR CI failure and verify the current push/PR checks without weakening build-log upload gates.
 
 - [x] P72.10 Add the requested Mx-Iris co-author trailer and re-sign the inclusive Swift rewrite commit range on master, verifying content preservation and signatures before a lease-protected push.
+
+- [x] P72.11 Preserve non-register microcode operand pairs through owned snapshots and language bindings; verify the consumer's failing system functions, post-closure ownership and full output comparison.

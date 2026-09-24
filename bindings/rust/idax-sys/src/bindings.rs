@@ -8082,10 +8082,12 @@ pub struct IdaxMicrocodeOperand {
     pub switch_case_count: usize,
     pub has_switch_default_target: ::std::os::raw::c_int,
     pub switch_default_target: ::std::os::raw::c_int,
+    pub pair_low: *mut IdaxMicrocodeOperand,
+    pub pair_high: *mut IdaxMicrocodeOperand,
 }
 #[allow(clippy::unnecessary_operation, clippy::identity_op)]
 const _: () = {
-    ["Size of IdaxMicrocodeOperand"][::std::mem::size_of::<IdaxMicrocodeOperand>() - 248usize];
+    ["Size of IdaxMicrocodeOperand"][::std::mem::size_of::<IdaxMicrocodeOperand>() - 264usize];
     ["Alignment of IdaxMicrocodeOperand"][::std::mem::align_of::<IdaxMicrocodeOperand>() - 8usize];
     ["Offset of field: IdaxMicrocodeOperand::kind"]
         [::std::mem::offset_of!(IdaxMicrocodeOperand, kind) - 0usize];
@@ -8159,6 +8161,10 @@ const _: () = {
         [::std::mem::offset_of!(IdaxMicrocodeOperand, has_switch_default_target) - 240usize];
     ["Offset of field: IdaxMicrocodeOperand::switch_default_target"]
         [::std::mem::offset_of!(IdaxMicrocodeOperand, switch_default_target) - 244usize];
+    ["Offset of field: IdaxMicrocodeOperand::pair_low"]
+        [::std::mem::offset_of!(IdaxMicrocodeOperand, pair_low) - 248usize];
+    ["Offset of field: IdaxMicrocodeOperand::pair_high"]
+        [::std::mem::offset_of!(IdaxMicrocodeOperand, pair_high) - 256usize];
 };
 impl Default for IdaxMicrocodeOperand {
     fn default() -> Self {

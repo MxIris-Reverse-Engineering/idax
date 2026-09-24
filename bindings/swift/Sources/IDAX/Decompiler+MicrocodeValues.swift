@@ -289,7 +289,17 @@ extension Decompiler.MicrocodeOperand {
             let pointer = arena.array([
                 try value.native(in: arena, operation, budget: budget, depth: depth + 1)
             ])
-            native.referenced_operand = UnsafeMutablePointer(mutating: pointer)
+        native.referenced_operand = UnsafeMutablePointer(mutating: pointer)
+        }
+        if let pairLow {
+            native.pair_low = UnsafeMutablePointer(mutating: arena.array([
+                try pairLow.native(in: arena, operation, budget: budget, depth: depth + 1)
+            ]))
+        }
+        if let pairHigh {
+            native.pair_high = UnsafeMutablePointer(mutating: arena.array([
+                try pairHigh.native(in: arena, operation, budget: budget, depth: depth + 1)
+            ]))
         }
         var callArgumentsValues: [IdaxMicrocodeOperand] = []
         guard callArguments.count <= 65536 else {

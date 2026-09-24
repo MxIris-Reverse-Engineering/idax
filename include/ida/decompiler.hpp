@@ -351,6 +351,7 @@ enum class MicrocodeOperandKind : int {
     FloatingPointConstant,
     Other,
     SwitchCases,
+    OperandPair,
 };
 
 /// One typed microcode operand.
@@ -389,6 +390,10 @@ struct MicrocodeOperand {
     std::vector<MicrocodeRegisterRange> call_return_registers{};
     std::vector<MicrocodeSwitchCase> switch_cases{};
     std::optional<int> switch_default_target{};
+    /// General low/high halves of an operand pair. RegisterPair retains its
+    /// compact register-id representation for compatibility.
+    std::shared_ptr<MicrocodeOperand> pair_low{};
+    std::shared_ptr<MicrocodeOperand> pair_high{};
 };
 
 /// Generic typed microcode instruction model.

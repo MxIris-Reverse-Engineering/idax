@@ -118,6 +118,7 @@ class MicrocodeOperandKind(Enum):
     FLOATING_POINT_CONSTANT = ...
     OTHER = ...
     SWITCH_CASES = 16
+    OPERAND_PAIR = 17
 
 class MicrocodeMaturity(Enum):
     GENERATED = ...
@@ -437,6 +438,8 @@ class MicrocodeOperand:
     value_number: int | None
     call_argument_properties: list[MicrocodeCallArgumentProperties]
     call_return_operands: list[MicrocodeOperand]
+    pair_low: MicrocodeOperand | None
+    pair_high: MicrocodeOperand | None
     call_return_registers: list[MicrocodeRegisterRange]
     switch_cases: list[MicrocodeSwitchCase]
     switch_default_target: int | None

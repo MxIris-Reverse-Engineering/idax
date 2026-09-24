@@ -404,6 +404,7 @@ pub enum MicrocodeOperandKind {
     FloatingPointConstant = 14,
     Other = 15,
     SwitchCases = 16,
+    OperandPair = 17,
 }
 
 impl MicrocodeOperandKind {
@@ -425,6 +426,7 @@ impl MicrocodeOperandKind {
             13 => Self::StringConstant,
             14 => Self::FloatingPointConstant,
             16 => Self::SwitchCases,
+            17 => Self::OperandPair,
             _ => Self::Other,
         }
     }
@@ -479,6 +481,8 @@ pub struct MicrocodeOperand {
     pub value_number: Option<u16>,
     pub call_argument_properties: Vec<MicrocodeCallArgumentProperties>,
     pub call_return_operands: Vec<MicrocodeOperand>,
+    pub pair_low: Option<Box<MicrocodeOperand>>,
+    pub pair_high: Option<Box<MicrocodeOperand>>,
     pub call_return_registers: Vec<MicrocodeRegisterRange>,
     pub switch_cases: Vec<MicrocodeSwitchCase>,
     pub switch_default_target: Option<i32>,
@@ -2399,6 +2403,16 @@ unsafe fn microcode_operand_from_ffi(
         value_number: (raw.has_value_number != 0).then_some(raw.value_number),
         call_argument_properties,
         call_return_operands,
+        pair_low: if raw.pair_low.is_null() {
+            None
+        } else {
+            Some(Box::new(unsafe { microcode_operand_from_ffi(&*raw.pair_low)? }))
+        },
+        pair_high: if raw.pair_high.is_null() {
+            None
+        } else {
+            Some(Box::new(unsafe { microcode_operand_from_ffi(&*raw.pair_high)? }))
+        },
         call_return_registers,
         switch_cases,
         switch_default_target: (raw.has_switch_default_target != 0)

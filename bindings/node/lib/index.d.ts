@@ -3378,7 +3378,7 @@ export namespace decompiler {
         | 'empty' | 'register' | 'localVariable' | 'registerPair' | 'globalAddress'
         | 'stackVariable' | 'helperReference' | 'blockReference' | 'nestedInstruction'
         | 'unsignedImmediate' | 'signedImmediate' | 'addressReference' | 'callArguments'
-        | 'stringConstant' | 'floatingPointConstant' | 'other' | 'switchCases';
+        | 'stringConstant' | 'floatingPointConstant' | 'other' | 'switchCases' | 'operandPair';
 
     type MicrocodeBlockKind =
         | 'unknown'
@@ -3439,6 +3439,8 @@ export namespace decompiler {
         valueNumber: number | null;
         callArgumentProperties: MicrocodeCallArgumentProperties[];
         callReturnOperands: MicrocodeOperand[];
+        pairLow?: MicrocodeOperand;
+        pairHigh?: MicrocodeOperand;
         callReturnRegisters: MicrocodeRegisterRange[];
         switchCases: MicrocodeSwitchCase[];
         switchDefaultTarget: number | null;

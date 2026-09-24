@@ -116,6 +116,7 @@ public enum Decompiler {
         case floatingPointConstant = 14
         case other = 15
         case switchCases = 16
+        case operandPair = 17
     }
 
     public enum MicrocodeMaturity: Int32, CaseIterable, Sendable {
@@ -560,6 +561,8 @@ public enum Decompiler {
         var callReturnRegisters: [Decompiler.MicrocodeRegisterRange]
         var switchCases: [Decompiler.MicrocodeSwitchCase]
         var switchDefaultTarget: Int32?
+        var pairLow: Decompiler.MicrocodeOperand?
+        var pairHigh: Decompiler.MicrocodeOperand?
         }
         private indirect enum Storage: Equatable, Sendable { case value(Fields) }
         private var storage: Storage
@@ -676,7 +679,15 @@ public enum Decompiler {
             get { fields.switchDefaultTarget }
             set { var value = fields; value.switchDefaultTarget = newValue; storage = .value(value) }
         }
-        public init(kind: Decompiler.MicrocodeOperandKind = .empty, registerId: Int32 = 0, localVariableIndex: Int32 = 0, localVariableOffset: Int64 = 0, secondRegisterId: Int32 = 0, globalAddress: UInt64 = badAddress, stackOffset: Int64 = 0, helperName: String = "", blockIndex: Int32 = 0, processorRegisterId: Int32 = -1, nestedInstruction: Decompiler.MicrocodeInstruction? = nil, unsignedImmediate: UInt64 = 0, signedImmediate: Int64 = 0, byteWidth: Int32 = 0, markUserDefinedType: Bool = false, referencedOperand: Decompiler.MicrocodeOperand? = nil, callArguments: [Decompiler.MicrocodeOperand] = [], callTarget: UInt64 = badAddress, text: String = "", stringConstant: String = "", floatingPointConstant: Double? = nil, globalName: String = "", valueNumber: UInt16? = nil, callArgumentProperties: [Decompiler.MicrocodeCallArgumentProperties] = [], callReturnOperands: [Decompiler.MicrocodeOperand] = [], callReturnRegisters: [Decompiler.MicrocodeRegisterRange] = [], switchCases: [Decompiler.MicrocodeSwitchCase] = [], switchDefaultTarget: Int32? = nil) { storage = .value(Fields(kind: kind, registerId: registerId, localVariableIndex: localVariableIndex, localVariableOffset: localVariableOffset, secondRegisterId: secondRegisterId, globalAddress: globalAddress, stackOffset: stackOffset, helperName: helperName, blockIndex: blockIndex, processorRegisterId: processorRegisterId, nestedInstruction: nestedInstruction, unsignedImmediate: unsignedImmediate, signedImmediate: signedImmediate, byteWidth: byteWidth, markUserDefinedType: markUserDefinedType, referencedOperand: referencedOperand, callArguments: callArguments, callTarget: callTarget, text: text, stringConstant: stringConstant, floatingPointConstant: floatingPointConstant, globalName: globalName, valueNumber: valueNumber, callArgumentProperties: callArgumentProperties, callReturnOperands: callReturnOperands, callReturnRegisters: callReturnRegisters, switchCases: switchCases, switchDefaultTarget: switchDefaultTarget)) }
+        public var pairLow: Decompiler.MicrocodeOperand? {
+            get { fields.pairLow }
+            set { var value = fields; value.pairLow = newValue; storage = .value(value) }
+        }
+        public var pairHigh: Decompiler.MicrocodeOperand? {
+            get { fields.pairHigh }
+            set { var value = fields; value.pairHigh = newValue; storage = .value(value) }
+        }
+        public init(kind: Decompiler.MicrocodeOperandKind = .empty, registerId: Int32 = 0, localVariableIndex: Int32 = 0, localVariableOffset: Int64 = 0, secondRegisterId: Int32 = 0, globalAddress: UInt64 = badAddress, stackOffset: Int64 = 0, helperName: String = "", blockIndex: Int32 = 0, processorRegisterId: Int32 = -1, nestedInstruction: Decompiler.MicrocodeInstruction? = nil, unsignedImmediate: UInt64 = 0, signedImmediate: Int64 = 0, byteWidth: Int32 = 0, markUserDefinedType: Bool = false, referencedOperand: Decompiler.MicrocodeOperand? = nil, callArguments: [Decompiler.MicrocodeOperand] = [], callTarget: UInt64 = badAddress, text: String = "", stringConstant: String = "", floatingPointConstant: Double? = nil, globalName: String = "", valueNumber: UInt16? = nil, callArgumentProperties: [Decompiler.MicrocodeCallArgumentProperties] = [], callReturnOperands: [Decompiler.MicrocodeOperand] = [], callReturnRegisters: [Decompiler.MicrocodeRegisterRange] = [], switchCases: [Decompiler.MicrocodeSwitchCase] = [], switchDefaultTarget: Int32? = nil, pairLow: Decompiler.MicrocodeOperand? = nil, pairHigh: Decompiler.MicrocodeOperand? = nil) { storage = .value(Fields(kind: kind, registerId: registerId, localVariableIndex: localVariableIndex, localVariableOffset: localVariableOffset, secondRegisterId: secondRegisterId, globalAddress: globalAddress, stackOffset: stackOffset, helperName: helperName, blockIndex: blockIndex, processorRegisterId: processorRegisterId, nestedInstruction: nestedInstruction, unsignedImmediate: unsignedImmediate, signedImmediate: signedImmediate, byteWidth: byteWidth, markUserDefinedType: markUserDefinedType, referencedOperand: referencedOperand, callArguments: callArguments, callTarget: callTarget, text: text, stringConstant: stringConstant, floatingPointConstant: floatingPointConstant, globalName: globalName, valueNumber: valueNumber, callArgumentProperties: callArgumentProperties, callReturnOperands: callReturnOperands, callReturnRegisters: callReturnRegisters, switchCases: switchCases, switchDefaultTarget: switchDefaultTarget, pairLow: pairLow, pairHigh: pairHigh)) }
         internal init(copying native: IdaxMicrocodeOperand, _ operation: String) throws(IDAError) {
             storage = .value(Fields(
                 kind: try checkedNativeEnum(Decompiler.MicrocodeOperandKind.self, native.kind, operation),
@@ -706,7 +717,9 @@ public enum Decompiler {
                 callReturnOperands: try copyNativeValues(native.call_return_operands, count: Int(native.call_return_operand_count), operation) { (value) throws(IDAError) -> Decompiler.MicrocodeOperand in try Decompiler.MicrocodeOperand(copying: value, operation) },
                 callReturnRegisters: try copyNativeValues(native.call_return_registers, count: Int(native.call_return_register_count), operation) { (value) throws(IDAError) -> Decompiler.MicrocodeRegisterRange in try Decompiler.MicrocodeRegisterRange(copying: value, operation) },
                 switchCases: try copyNativeValues(native.switch_cases, count: Int(native.switch_case_count), operation) { (value) throws(IDAError) -> Decompiler.MicrocodeSwitchCase in try Decompiler.MicrocodeSwitchCase(copying: value, operation) },
-                switchDefaultTarget: native.has_switch_default_target != 0 ? (native.switch_default_target) : nil))
+                switchDefaultTarget: native.has_switch_default_target != 0 ? (native.switch_default_target) : nil,
+                pairLow: try copyNativeOptional(native.pair_low, operation) { (value) throws(IDAError) -> Decompiler.MicrocodeOperand in try Decompiler.MicrocodeOperand(copying: value, operation) },
+                pairHigh: try copyNativeOptional(native.pair_high, operation) { (value) throws(IDAError) -> Decompiler.MicrocodeOperand in try Decompiler.MicrocodeOperand(copying: value, operation) }))
         }
     }
 

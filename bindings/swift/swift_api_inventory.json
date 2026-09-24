@@ -30851,10 +30851,10 @@
       "path": [
         "Decompiler",
         "MicrocodeOperand",
-        "init(kind:registerId:localVariableIndex:localVariableOffset:secondRegisterId:globalAddress:stackOffset:helperName:blockIndex:processorRegisterId:nestedInstruction:unsignedImmediate:signedImmediate:byteWidth:markUserDefinedType:referencedOperand:callArguments:callTarget:text:stringConstant:floatingPointConstant:globalName:valueNumber:callArgumentProperties:callReturnOperands:callReturnRegisters:switchCases:switchDefaultTarget:)"
+        "init(kind:registerId:localVariableIndex:localVariableOffset:secondRegisterId:globalAddress:stackOffset:helperName:blockIndex:processorRegisterId:nestedInstruction:unsignedImmediate:signedImmediate:byteWidth:markUserDefinedType:referencedOperand:callArguments:callTarget:text:stringConstant:floatingPointConstant:globalName:valueNumber:callArgumentProperties:callReturnOperands:callReturnRegisters:switchCases:switchDefaultTarget:pairLow:pairHigh:)"
       ],
       "kind": "swift.init",
-      "declaration": "init(kind: Decompiler.MicrocodeOperandKind = .empty, registerId: Int32 = 0, localVariableIndex: Int32 = 0, localVariableOffset: Int64 = 0, secondRegisterId: Int32 = 0, globalAddress: UInt64 = badAddress, stackOffset: Int64 = 0, helperName: String = \"\", blockIndex: Int32 = 0, processorRegisterId: Int32 = -1, nestedInstruction: Decompiler.MicrocodeInstruction? = nil, unsignedImmediate: UInt64 = 0, signedImmediate: Int64 = 0, byteWidth: Int32 = 0, markUserDefinedType: Bool = false, referencedOperand: Decompiler.MicrocodeOperand? = nil, callArguments: [Decompiler.MicrocodeOperand] = [], callTarget: UInt64 = badAddress, text: String = \"\", stringConstant: String = \"\", floatingPointConstant: Double? = nil, globalName: String = \"\", valueNumber: UInt16? = nil, callArgumentProperties: [Decompiler.MicrocodeCallArgumentProperties] = [], callReturnOperands: [Decompiler.MicrocodeOperand] = [], callReturnRegisters: [Decompiler.MicrocodeRegisterRange] = [], switchCases: [Decompiler.MicrocodeSwitchCase] = [], switchDefaultTarget: Int32? = nil)",
+      "declaration": "init(kind: Decompiler.MicrocodeOperandKind = .empty, registerId: Int32 = 0, localVariableIndex: Int32 = 0, localVariableOffset: Int64 = 0, secondRegisterId: Int32 = 0, globalAddress: UInt64 = badAddress, stackOffset: Int64 = 0, helperName: String = \"\", blockIndex: Int32 = 0, processorRegisterId: Int32 = -1, nestedInstruction: Decompiler.MicrocodeInstruction? = nil, unsignedImmediate: UInt64 = 0, signedImmediate: Int64 = 0, byteWidth: Int32 = 0, markUserDefinedType: Bool = false, referencedOperand: Decompiler.MicrocodeOperand? = nil, callArguments: [Decompiler.MicrocodeOperand] = [], callTarget: UInt64 = badAddress, text: String = \"\", stringConstant: String = \"\", floatingPointConstant: Double? = nil, globalName: String = \"\", valueNumber: UInt16? = nil, callArgumentProperties: [Decompiler.MicrocodeCallArgumentProperties] = [], callReturnOperands: [Decompiler.MicrocodeOperand] = [], callReturnRegisters: [Decompiler.MicrocodeRegisterRange] = [], switchCases: [Decompiler.MicrocodeSwitchCase] = [], switchDefaultTarget: Int32? = nil, pairLow: Decompiler.MicrocodeOperand? = nil, pairHigh: Decompiler.MicrocodeOperand? = nil)",
       "source": "bindings/swift/Sources/IDAX/Decompiler+Values.swift",
       "functionSignature": {
         "parameters": [
@@ -31473,10 +31473,72 @@
                 "spelling": "?"
               }
             ]
+          },
+          {
+            "name": "pairLow",
+            "declarationFragments": [
+              {
+                "kind": "identifier",
+                "spelling": "pairLow"
+              },
+              {
+                "kind": "text",
+                "spelling": ": "
+              },
+              {
+                "kind": "typeIdentifier",
+                "spelling": "Decompiler",
+                "preciseIdentifier": "s:4IDAX10DecompilerO"
+              },
+              {
+                "kind": "text",
+                "spelling": "."
+              },
+              {
+                "kind": "typeIdentifier",
+                "spelling": "MicrocodeOperand",
+                "preciseIdentifier": "s:4IDAX10DecompilerO16MicrocodeOperandV"
+              },
+              {
+                "kind": "text",
+                "spelling": "?"
+              }
+            ]
+          },
+          {
+            "name": "pairHigh",
+            "declarationFragments": [
+              {
+                "kind": "identifier",
+                "spelling": "pairHigh"
+              },
+              {
+                "kind": "text",
+                "spelling": ": "
+              },
+              {
+                "kind": "typeIdentifier",
+                "spelling": "Decompiler",
+                "preciseIdentifier": "s:4IDAX10DecompilerO"
+              },
+              {
+                "kind": "text",
+                "spelling": "."
+              },
+              {
+                "kind": "typeIdentifier",
+                "spelling": "MicrocodeOperand",
+                "preciseIdentifier": "s:4IDAX10DecompilerO16MicrocodeOperandV"
+              },
+              {
+                "kind": "text",
+                "spelling": "?"
+              }
+            ]
           }
         ]
       },
-      "id": "a55472d0676c5857f3de"
+      "id": "3900212308727226dcc2"
     },
     {
       "path": [
@@ -31532,6 +31594,28 @@
       "declaration": "var nestedInstruction: Decompiler.MicrocodeInstruction? { get set }",
       "source": "bindings/swift/Sources/IDAX/Decompiler+Values.swift",
       "id": "d1fbb380d16de8b893a8"
+    },
+    {
+      "path": [
+        "Decompiler",
+        "MicrocodeOperand",
+        "pairHigh"
+      ],
+      "kind": "swift.property",
+      "declaration": "var pairHigh: Decompiler.MicrocodeOperand? { get set }",
+      "source": "bindings/swift/Sources/IDAX/Decompiler+Values.swift",
+      "id": "cd54e497d7de81b4bf73"
+    },
+    {
+      "path": [
+        "Decompiler",
+        "MicrocodeOperand",
+        "pairLow"
+      ],
+      "kind": "swift.property",
+      "declaration": "var pairLow: Decompiler.MicrocodeOperand? { get set }",
+      "source": "bindings/swift/Sources/IDAX/Decompiler+Values.swift",
+      "id": "67584a33698a03af559e"
     },
     {
       "path": [
@@ -31773,6 +31857,17 @@
       "declaration": "case nestedInstruction",
       "source": "bindings/swift/Sources/IDAX/Decompiler+Values.swift",
       "id": "a4c4ae1f5806a561e3e6"
+    },
+    {
+      "path": [
+        "Decompiler",
+        "MicrocodeOperandKind",
+        "operandPair"
+      ],
+      "kind": "swift.enum.case",
+      "declaration": "case operandPair",
+      "source": "bindings/swift/Sources/IDAX/Decompiler+Values.swift",
+      "id": "d688cc672effdcab7f41"
     },
     {
       "path": [

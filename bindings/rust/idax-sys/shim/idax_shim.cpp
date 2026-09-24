@@ -10623,6 +10623,13 @@ void free_microcode_operand(IdaxMicrocodeOperand* operand) {
     if (operand == nullptr)
         return;
 
+    for (auto* half : {operand->pair_low, operand->pair_high}) {
+        free_microcode_operand(half);
+        std::free(half);
+    }
+    operand->pair_low = nullptr;
+    operand->pair_high = nullptr;
+
     std::free(operand->helper_name);
     operand->helper_name = nullptr;
     std::free(operand->text);
@@ -10741,6 +10748,25 @@ ida::Status fill_microcode_operand(IdaxMicrocodeOperand* out,
             free_microcode_operand(out);
             return status;
         }
+    }
+
+    auto copy_pair_half = [&](IdaxMicrocodeOperand*& destination,
+                              const std::shared_ptr<ida::decompiler::MicrocodeOperand>& source) -> ida::Status {
+        if (!source) return {};
+        destination = static_cast<IdaxMicrocodeOperand*>(std::calloc(1, sizeof(IdaxMicrocodeOperand)));
+        if (destination == nullptr)
+            return std::unexpected(ida::Error::internal("malloc failed"));
+        return fill_microcode_operand(destination, *source);
+    };
+    auto lower_status = copy_pair_half(out->pair_low, operand.pair_low);
+    if (!lower_status) {
+        free_microcode_operand(out);
+        return lower_status;
+    }
+    auto upper_status = copy_pair_half(out->pair_high, operand.pair_high);
+    if (!upper_status) {
+        free_microcode_operand(out);
+        return upper_status;
     }
 
     if (!operand.call_arguments.empty()) {

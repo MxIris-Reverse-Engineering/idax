@@ -1488,3 +1488,8 @@
 ### D19.93 Documented Form Cancellation and Shared Validation
 - Preserve the SDK's documented -1 cancellation as successful false when BUTTON NO is present. Zero also remains false, retaining the SDK's ambiguity between No/cancellation/allocation/syntax outcomes; only positive results commit prepared bindings. Unexpected results below -1 remain SDK failures.
 - Unbound and typed native form paths share empty/NUL markup validation. Swift custom and generated forms share checked storage and convert all returned values before mutating any caller binding.
+
+### D19.94 Owned General Microcode Operand Pairs
+- Keep RegisterPair and all existing numeric discriminants unchanged. Append OperandPair with recursively owned low/high operands for SDK pairs that are not register/register. Preserve each half's kind and width; never interpret another union kind as a register or invent register IDs.
+- Carry the new fields through the canonical C transport and all language bindings, including Rust's pregenerated docs.rs layout. Rebuild consumers with the matching native archive because the C structure size changes. Validate equal positive half widths against the total width when rebuilding native operands.
+- Use the consumer's real database export regression as evidence for the failing snapshot boundary: synthetic emitted pairs can be normalized away by SDK code generation. Consumer-side 128-bit composition remains explicit while its constant propagation is limited to 64 bits; successful export does not imply full wide-arithmetic recovery.

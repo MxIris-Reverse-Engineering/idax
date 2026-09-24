@@ -10971,22 +10971,55 @@
       ]
     },
     {
-      "cpp_id": "f9c9e78fbac2dc483f1a",
+      "cpp_id": "7f7ccb63800e38ef19c5",
       "cpp_name": "ida::decompiler::MicrocodeOperandKind",
       "cpp_kind": "enum",
-      "cpp_signature": "enum class MicrocodeOperandKind : int { Empty, Register, LocalVariable, RegisterPair, GlobalAddress, StackVariable, HelperReference, BlockReference, NestedInstruction, UnsignedImmediate, SignedImmediate, AddressReference, CallArguments, StringConstant, FloatingPointConstant, Other, SwitchCases, }",
+      "cpp_signature": "enum class MicrocodeOperandKind : int { Empty, Register, LocalVariable, RegisterPair, GlobalAddress, StackVariable, HelperReference, BlockReference, NestedInstruction, UnsignedImmediate, SignedImmediate, AddressReference, CallArguments, StringConstant, FloatingPointConstant, Other, SwitchCases, OperandPair, }",
       "mapping": "direct",
       "swift": [
         "48c25a8da3edd8999684"
       ],
       "rationale": "Preserves the declared value, field, case or operation; names follow Swift conventions and fallible native calls throw IDAError.",
-      "cpp_fingerprint": "bf9f1151e6003256dcfe471425b9ffb81e5e7ae285ebfee7dd7e7842ebf61c41",
+      "cpp_fingerprint": "b07794bcb8ee79c39e7ed74453bf2426d58496479903145366fc2494045595ba",
       "swift_targets": [
         {
           "path": "Decompiler.MicrocodeOperandKind",
           "declaration": "enum MicrocodeOperandKind"
         }
       ]
+    },
+    {
+      "cpp_id": "71960d0b6f5c37f5c772",
+      "cpp_name": "ida::decompiler::MicrocodeOperand::pair_high",
+      "cpp_kind": "field",
+      "cpp_signature": "std::shared_ptr<MicrocodeOperand>",
+      "mapping": "direct",
+      "swift": ["cd54e497d7de81b4bf73"],
+      "rationale": "Preserves the owned high-significance operand with its actual kind and width.",
+      "cpp_fingerprint": "c7181cef76c1fc6ed3b2e5f757f8a920017d281e200359c10ec80da385c4cdfa",
+      "swift_targets": [{"path": "Decompiler.MicrocodeOperand.pairHigh", "declaration": "var pairHigh: Decompiler.MicrocodeOperand? { get set }"}]
+    },
+    {
+      "cpp_id": "6532ff2762b60527f271",
+      "cpp_name": "ida::decompiler::MicrocodeOperand::pair_low",
+      "cpp_kind": "field",
+      "cpp_signature": "std::shared_ptr<MicrocodeOperand>",
+      "mapping": "direct",
+      "swift": ["67584a33698a03af559e"],
+      "rationale": "Preserves the owned low-significance operand with its actual kind and width.",
+      "cpp_fingerprint": "f7d6e4059652a23fadc845919a40530782da2045497a1c57e55c2349de185335",
+      "swift_targets": [{"path": "Decompiler.MicrocodeOperand.pairLow", "declaration": "var pairLow: Decompiler.MicrocodeOperand? { get set }"}]
+    },
+    {
+      "cpp_id": "d21d1b73c2a9561149a2",
+      "cpp_name": "ida::decompiler::MicrocodeOperandKind::OperandPair",
+      "cpp_kind": "enum_case",
+      "cpp_signature": "ida::decompiler::MicrocodeOperandKind",
+      "mapping": "direct",
+      "swift": ["d688cc672effdcab7f41"],
+      "rationale": "Preserves general operand pairs without changing the legacy register-pair case.",
+      "cpp_fingerprint": "b0d76c2ecf4d2d6783fd15c9c3d5af7609d74e42e06181c2f4c9b5600302c795",
+      "swift_targets": [{"path": "Decompiler.MicrocodeOperandKind.operandPair", "declaration": "case operandPair"}]
     },
     {
       "cpp_id": "7d4ac3f3deebce16bf4b",

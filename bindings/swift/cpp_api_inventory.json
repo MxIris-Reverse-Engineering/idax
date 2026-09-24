@@ -5363,7 +5363,7 @@
     {
       "domain": "decompiler",
       "header": "include/ida/decompiler.hpp",
-      "sha256": "210017e8e3629a4c3537c3702e4af22f7affca9cdee488b7f5ce099fd3d4c5f3",
+      "sha256": "fe3206d06901f4138327c43f399e2ec17473d13f1313942c84f44b3a6efaf932",
       "declarations": [
         {
           "name": "ida::decompiler::AddressMapping",
@@ -9842,6 +9842,18 @@
           "declaration": "std::shared_ptr<MicrocodeInstruction> nested_instruction{}"
         },
         {
+          "name": "ida::decompiler::MicrocodeOperand::pair_high",
+          "kind": "field",
+          "signature": "std::shared_ptr<MicrocodeOperand>",
+          "declaration": "std::shared_ptr<MicrocodeOperand> pair_high{}"
+        },
+        {
+          "name": "ida::decompiler::MicrocodeOperand::pair_low",
+          "kind": "field",
+          "signature": "std::shared_ptr<MicrocodeOperand>",
+          "declaration": "std::shared_ptr<MicrocodeOperand> pair_low{}"
+        },
+        {
           "name": "ida::decompiler::MicrocodeOperand::processor_register_id",
           "kind": "field",
           "signature": "int",
@@ -9916,8 +9928,8 @@
         {
           "name": "ida::decompiler::MicrocodeOperandKind",
           "kind": "enum",
-          "signature": "enum class MicrocodeOperandKind : int { Empty, Register, LocalVariable, RegisterPair, GlobalAddress, StackVariable, HelperReference, BlockReference, NestedInstruction, UnsignedImmediate, SignedImmediate, AddressReference, CallArguments, StringConstant, FloatingPointConstant, Other, SwitchCases, }",
-          "declaration": "enum class MicrocodeOperandKind : int { Empty, Register, LocalVariable, RegisterPair, GlobalAddress, StackVariable, HelperReference, BlockReference, NestedInstruction, UnsignedImmediate, SignedImmediate, AddressReference, CallArguments, StringConstant, FloatingPointConstant, Other, SwitchCases, }"
+          "signature": "enum class MicrocodeOperandKind : int { Empty, Register, LocalVariable, RegisterPair, GlobalAddress, StackVariable, HelperReference, BlockReference, NestedInstruction, UnsignedImmediate, SignedImmediate, AddressReference, CallArguments, StringConstant, FloatingPointConstant, Other, SwitchCases, OperandPair, }",
+          "declaration": "enum class MicrocodeOperandKind : int { Empty, Register, LocalVariable, RegisterPair, GlobalAddress, StackVariable, HelperReference, BlockReference, NestedInstruction, UnsignedImmediate, SignedImmediate, AddressReference, CallArguments, StringConstant, FloatingPointConstant, Other, SwitchCases, OperandPair, }"
         },
         {
           "name": "ida::decompiler::MicrocodeOperandKind::AddressReference",
@@ -9972,6 +9984,12 @@
           "kind": "enum_case",
           "signature": "ida::decompiler::MicrocodeOperandKind",
           "declaration": "NestedInstruction"
+        },
+        {
+          "name": "ida::decompiler::MicrocodeOperandKind::OperandPair",
+          "kind": "enum_case",
+          "signature": "ida::decompiler::MicrocodeOperandKind",
+          "declaration": "OperandPair"
         },
         {
           "name": "ida::decompiler::MicrocodeOperandKind::Other",
