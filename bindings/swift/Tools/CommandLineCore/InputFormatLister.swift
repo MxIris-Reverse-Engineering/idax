@@ -16,22 +16,28 @@ public nonisolated struct InputFormatLister: ParsableCommand {
         """
     )
 
-    @Argument(help: ArgumentHelp("Path to the binary to inspect.", valueName: "path"))
+    @Argument(
+        help: ArgumentHelp(
+            "Path to the binary to inspect, or to a bundle (.app, .framework, …) whose executable to inspect.",
+            valueName: "path"
+        )
+    )
     var binaryPath: String
 
     public init() {}
 
     public mutating func validate() throws {
+        let binaryFilePath = try binaryFileURL().path
         var pathIsDirectory = ObjCBool(false)
-        guard FileManager.default.fileExists(atPath: absoluteBinaryPath, isDirectory: &pathIsDirectory),
+        guard FileManager.default.fileExists(atPath: binaryFilePath, isDirectory: &pathIsDirectory),
               !pathIsDirectory.boolValue
         else {
-            throw ValidationError("The binary does not exist: \(absoluteBinaryPath)")
+            throw ValidationError("The binary does not exist: \(binaryFilePath)")
         }
     }
 
     public mutating func run() throws {
-        let binaryFilePath = absoluteBinaryPath
+        let binaryFilePath = try binaryFileURL().path
         let fatSlices = try MachOFatHeader.slices(inFileAt: URL(fileURLWithPath: binaryFilePath))
         if let fatSlices {
             print("Universal binary with \(fatSlices.count) slices:")
@@ -64,10 +70,13 @@ public nonisolated struct InputFormatLister: ParsableCommand {
         }
     }
 
-    var absoluteBinaryPath: String {
-        BinaryDatabaseCreationPlan.absoluteFileURL(
+    /// The file to inspect: the path as given, or the executable of the
+    /// bundle it names.
+    func binaryFileURL() throws -> URL {
+        let inputFileURL = BinaryDatabaseCreationPlan.absoluteFileURL(
             path: binaryPath,
             currentDirectoryPath: FileManager.default.currentDirectoryPath
-        ).path
+        )
+        return try BundleExecutable.executableFileURL(forInputAt: inputFileURL) ?? inputFileURL
     }
 }

@@ -6,9 +6,9 @@ explicit output-path saving.
 
 | Subcommand | Purpose |
 |---|---|
-| `idax binary` | Create a database from one or more binaries, selecting the architecture slice |
+| `idax binary` | Create a database from one or more binaries or bundles, selecting the architecture slice |
 | `idax dyld-cache` | Create a database from selected dyld shared cache images |
-| `idax formats` | List the slices and loaders IDA offers for a file |
+| `idax formats` | List the slices and loaders IDA offers for a file or bundle |
 
 ## Requirements
 
@@ -77,6 +77,7 @@ swift run idax --help
 idax binary /path/to/UniversalApp
 idax binary --arch x86_64 /path/to/UniversalApp
 idax binary /path/to/App --output /tmp/App --overwrite
+idax binary /Applications/Xcode.app
 ```
 
 ### Architecture selection
@@ -107,11 +108,38 @@ fails without saving if it is not the architecture that was selected. Non-fat
 inputs — a thin Mach-O, an ELF, a PE — are opened with IDA's own detection
 untouched.
 
+### Bundles
+
+A bundle can be given wherever a binary can — an `.app`, `.framework`,
+`.appex`, `.xpc`, or anything else with an `Info.plist` naming an executable.
+Its executable is what gets loaded, found the way `Bundle.executableURL` finds
+it, so every layout in use works: `Contents/MacOS/<name>` for applications and
+extensions, a top-level executable for iOS bundles, and `Versions/Current` for
+macOS frameworks. The resolution is printed:
+
+```
+Loading the executable of /Applications/Xcode.app: /Applications/Xcode.app/Contents/MacOS/Xcode
+```
+
+From then on the bundle and its executable are the same input. The database is
+named after the executable, not the bundle — usually the same name, but an
+application whose executable is called something else (`Electron`, say) gives
+`Electron.i64`; use `--output` to choose. Giving both a bundle and the path of
+its own executable is rejected as a duplicate.
+
+A bundle that names an executable it does not contain is an error that says so.
+Apple's own frameworks are the common case: since macOS 11 their binaries exist
+only in the dyld shared cache, and `/System/Library/Frameworks/AppKit.framework`
+on disk is an empty shell. Load those with
+[`idax dyld-cache`](#idax-dyld-cache--shared-cache-images). A directory that is
+not a bundle at all is also an error. Nested bundles — the frameworks and
+plug-ins inside an application — are not expanded; give them separately.
+
 ### Several binaries at once
 
 ```bash
 idax binary AppA AppB AppC --output-dir /tmp/databases
-idax binary /Applications/*.app/Contents/MacOS/* --output-dir /tmp/databases --jobs 4
+idax binary /Applications/*.app --output-dir /tmp/databases --jobs 4
 ```
 
 Each database is named after its input, in `--output-dir` (the current
@@ -159,12 +187,14 @@ produce something nobody can read.
 | `--skip-final-analysis` | Save without draining the final auto-analysis queue |
 
 Without `--output` or `--output-dir`, each database is named after its input
-file with `.i64` in the current directory.
+file — a bundle's executable, for a bundle — with `.i64` in the current
+directory.
 
 ## `idax formats` — what IDA sees
 
 ```bash
 idax formats /path/to/UniversalApp
+idax formats /Applications/Xcode.app
 ```
 
 ```
@@ -179,7 +209,8 @@ Host architecture: arm64
 ```
 
 No database is created. This is the diagnostic to reach for when `idax binary`
-reports that it could not confirm the loaded architecture.
+reports that it could not confirm the loaded architecture. A bundle is resolved
+to its executable exactly as `idax binary` resolves it.
 
 ## `idax dyld-cache` — shared cache images
 
@@ -275,6 +306,13 @@ ends. The chosen directory is printed:
 ```
 Working database directory: /var/folders/.../idax-work-57375-DB0F0841
 ```
+
+An input that is a symbolic link is replaced by the file it names before any
+of this happens. Linking the link itself would defeat the arrangement: IDA
+follows it back to the original's directory, and a relative one — a
+framework's `Foo.framework/Foo` points at `Versions/Current/Foo` — would
+dangle once moved. The working directory is therefore chosen against the real
+file's volume, and the link inside it carries the real file's name.
 
 A dyld shared cache is split across several files — `.01`, `.atlas`, `.map`,
 sometimes `.symbols` — and IDA finds them by appending to the path it was

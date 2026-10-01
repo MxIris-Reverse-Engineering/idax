@@ -187,6 +187,77 @@ struct WorkingDatabaseDirectoryTests {
         #expect(linkedNames == ["Cache", "Cache.01", "Cache.map"])
     }
 
+    /// `Kit.framework/Kit` is a relative symbolic link to
+    /// `Versions/Current/Kit`. Placing the link itself would leave a dangling
+    /// one in the working directory, and IDA would follow an absolute one
+    /// straight back to the original's directory.
+    @Test func aSymbolicLinkIsReplacedByTheFileItNames() throws {
+        let inputDirectoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: inputDirectoryURL) }
+
+        let versionDirectoryURL = inputDirectoryURL.appendingPathComponent("Versions/A")
+        try FileManager.default.createDirectory(
+            at: versionDirectoryURL,
+            withIntermediateDirectories: true
+        )
+        let realInputFileURL = versionDirectoryURL.appendingPathComponent("Kit")
+        try Data("kit".utf8).write(to: realInputFileURL)
+        let symbolicLinkURL = inputDirectoryURL.appendingPathComponent("Kit")
+        try FileManager.default.createSymbolicLink(
+            atPath: symbolicLinkURL.path,
+            withDestinationPath: "Versions/A/Kit"
+        )
+
+        let workingDirectory = try WorkingDatabaseDirectory.make(
+            forInputAt: symbolicLinkURL,
+            preferredParentDirectory: inputDirectoryURL,
+            linkingSiblingParts: false
+        )
+        defer { workingDirectory.remove() }
+
+        let placedAttributes = try FileManager.default.attributesOfItem(
+            atPath: workingDirectory.inputFileURL.path
+        )
+        #expect(placedAttributes[.type] as? FileAttributeType == .typeRegular)
+        #expect(
+            try fileIdentifier(ofFileAt: workingDirectory.inputFileURL)
+                == fileIdentifier(ofFileAt: realInputFileURL)
+        )
+    }
+
+    /// A cache reached through a symbolic link has its parts beside the real
+    /// file, not beside the link.
+    @Test func partsAreFoundBesideTheFileASymbolicLinkNames() throws {
+        let inputDirectoryURL = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: inputDirectoryURL) }
+
+        let cacheDirectoryURL = inputDirectoryURL.appendingPathComponent("Caches")
+        try FileManager.default.createDirectory(
+            at: cacheDirectoryURL,
+            withIntermediateDirectories: true
+        )
+        for fileName in ["Cache", "Cache.01", "Cache.map"] {
+            try Data(fileName.utf8).write(to: cacheDirectoryURL.appendingPathComponent(fileName))
+        }
+        let symbolicLinkURL = inputDirectoryURL.appendingPathComponent("Cache")
+        try FileManager.default.createSymbolicLink(
+            atPath: symbolicLinkURL.path,
+            withDestinationPath: "Caches/Cache"
+        )
+
+        let workingDirectory = try WorkingDatabaseDirectory.make(
+            forInputAt: symbolicLinkURL,
+            preferredParentDirectory: inputDirectoryURL,
+            linkingSiblingParts: true
+        )
+        defer { workingDirectory.remove() }
+
+        let linkedNames = try FileManager.default
+            .contentsOfDirectory(atPath: workingDirectory.directoryURL.path)
+            .sorted()
+        #expect(linkedNames == ["Cache", "Cache.01", "Cache.map"])
+    }
+
     // MARK: - Helpers
 
     private func makeTemporaryDirectory() throws -> URL {

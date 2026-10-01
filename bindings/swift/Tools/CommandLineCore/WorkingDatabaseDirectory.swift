@@ -62,8 +62,13 @@ nonisolated struct WorkingDatabaseDirectory: Sendable {
         linkingSiblingParts: Bool
     ) throws -> WorkingDatabaseDirectory {
         let fileManager = FileManager.default
+        // Everything below works on the file a symbolic link names, never on
+        // the link. IDA follows one back to the original's directory, and a
+        // relative one — `Kit.framework/Kit` is `Versions/Current/Kit` — would
+        // dangle once moved. Its parts sit beside the real file too.
+        let realInputFileURL = originalInputFileURL.resolvingSymlinksInPath()
         let parentDirectoryURL = try resolveParentDirectory(
-            forInputAt: originalInputFileURL,
+            forInputAt: realInputFileURL,
             preferred: preferredParentDirectory,
             temporaryDirectoryURL: fileManager.temporaryDirectory
         )
@@ -74,26 +79,26 @@ nonisolated struct WorkingDatabaseDirectory: Sendable {
         )
         try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
 
-        // The link keeps the original name: a dyld shared cache's parts are
+        // The link keeps the real file's name: a dyld shared cache's parts are
         // found by appending to it, and IDA's own format names quote it back.
         let inputFileURL = directoryURL.appendingPathComponent(
-            originalInputFileURL.lastPathComponent
+            realInputFileURL.lastPathComponent
         )
         let inputWasCopied: Bool
         do {
-            inputWasCopied = try place(fileAt: originalInputFileURL, as: inputFileURL)
+            inputWasCopied = try place(fileAt: realInputFileURL, as: inputFileURL)
         } catch {
             try? fileManager.removeItem(at: directoryURL)
             throw error
         }
 
         if linkingSiblingParts {
-            let originalDirectoryURL = originalInputFileURL.deletingLastPathComponent()
+            let originalDirectoryURL = realInputFileURL.deletingLastPathComponent()
             let entryNames = (try? fileManager.contentsOfDirectory(
                 atPath: originalDirectoryURL.path
             )) ?? []
             for partName in siblingPartNames(
-                ofFileNamed: originalInputFileURL.lastPathComponent,
+                ofFileNamed: realInputFileURL.lastPathComponent,
                 among: entryNames
             ) {
                 // A part that cannot be placed is not fatal on its own: IDA
@@ -125,8 +130,12 @@ nonisolated struct WorkingDatabaseDirectory: Sendable {
     /// cannot write its working database into a read-only directory either.
     /// The device numbers cannot decide this in advance: macOS reports one
     /// `st_dev` for the system and data volumes together.
+    ///
+    /// A symbolic link is placed as the file it names: `linkItem` and
+    /// `copyItem` would both reproduce the link itself.
     private static func place(fileAt originalFileURL: URL, as placedFileURL: URL) throws -> Bool {
         let fileManager = FileManager.default
+        let originalFileURL = originalFileURL.resolvingSymlinksInPath()
         do {
             try fileManager.linkItem(at: originalFileURL, to: placedFileURL)
             return false

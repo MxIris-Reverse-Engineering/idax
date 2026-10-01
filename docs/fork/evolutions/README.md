@@ -14,3 +14,4 @@
 | draft | [收缩为上游之上的命令行工具](draft-shrink-fork-to-cli.md) | Implemented |
 | draft | [在 Xcode GUI 里构建原生归档的 SwiftPM command plugin](draft-xcode-gui-build-libs-plugin.md) | Implemented |
 | draft | [一次运行建多个 database，并把 IDA 的工作数据库挪出输入目录](draft-batch-database-creation.md) | Implemented |
+| draft | [`idax binary` 接受 bundle，加载其主二进制](draft-bundle-input.md) | Implemented |

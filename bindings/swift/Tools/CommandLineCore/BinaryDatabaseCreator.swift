@@ -19,10 +19,18 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
         because the architecture selection is fixed when IDA initialises and
         one process therefore cannot serve two different slices. --jobs runs
         more than one of those processes at a time.
+
+        A bundle (.app, .framework, .appex, …) can be given in place of a
+        binary; its executable is loaded and names the database.
         """
     )
 
-    @Argument(help: ArgumentHelp("Paths to the binaries to load.", valueName: "path"))
+    @Argument(
+        help: ArgumentHelp(
+            "Paths to the binaries to load, or to bundles whose executables to load.",
+            valueName: "path"
+        )
+    )
     var binaryPaths: [String]
 
     @Option(
@@ -151,6 +159,11 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
 
     public mutating func run() throws {
         let batchPlan = try makeBatchPlan()
+        for creationPlan in batchPlan.jobs {
+            if let bundleURL = creationPlan.bundleURL {
+                print("Loading the executable of \(bundleURL.path): \(creationPlan.binaryFileURL.path)")
+            }
+        }
         if batchPlan.jobs.count == 1 {
             try createDatabase(creationPlan: batchPlan.jobs[0])
             return
@@ -325,15 +338,15 @@ public nonisolated struct BinaryDatabaseCreator: ParsableCommand {
 nonisolated struct BinaryDatabaseCreationPlan: Sendable {
     let binaryFileURL: URL
     let outputFileURL: URL
+    /// The bundle that was given in place of `binaryFileURL`, if one was.
+    let bundleURL: URL?
 
     init(
         binaryPath: String,
         outputDatabasePath: String?,
-        currentDirectoryPath: String
+        currentDirectoryPath: String,
+        bundleURL: URL? = nil
     ) throws {
-        guard !binaryPath.isEmpty else {
-            throw ValidationError("The binary path cannot be empty.")
-        }
         let binaryFileURL = Self.absoluteFileURL(
             path: binaryPath,
             currentDirectoryPath: currentDirectoryPath
@@ -348,6 +361,7 @@ nonisolated struct BinaryDatabaseCreationPlan: Sendable {
         }
         self.binaryFileURL = binaryFileURL
         self.outputFileURL = outputFileURL
+        self.bundleURL = bundleURL
     }
 
     static func outputFileURL(

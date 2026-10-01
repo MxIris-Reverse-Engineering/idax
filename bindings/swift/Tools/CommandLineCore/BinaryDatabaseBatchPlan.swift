@@ -37,7 +37,23 @@ nonisolated struct BinaryDatabaseBatchPlan: Sendable {
         }
 
         var jobs: [BinaryDatabaseCreationPlan] = []
-        for binaryPath in binaryPaths {
+        for inputPath in binaryPaths {
+            guard !inputPath.isEmpty else {
+                throw ValidationError("The binary path cannot be empty.")
+            }
+            // A bundle is replaced by its executable before anything is
+            // derived from the path, so `Foo.app` and
+            // `Foo.app/Contents/MacOS/Foo` are the same input in every
+            // respect, the output name and the duplicate check included.
+            let inputFileURL = BinaryDatabaseCreationPlan.absoluteFileURL(
+                path: inputPath,
+                currentDirectoryPath: currentDirectoryPath
+            )
+            let bundleExecutableURL = try BundleExecutable.executableFileURL(
+                forInputAt: inputFileURL
+            )
+            let binaryPath = bundleExecutableURL?.path ?? inputPath
+
             let resolvedOutputPath = try Self.outputPath(
                 forBinaryAt: binaryPath,
                 outputDatabasePath: outputDatabasePath,
@@ -48,7 +64,8 @@ nonisolated struct BinaryDatabaseBatchPlan: Sendable {
                 try BinaryDatabaseCreationPlan(
                     binaryPath: binaryPath,
                     outputDatabasePath: resolvedOutputPath,
-                    currentDirectoryPath: currentDirectoryPath
+                    currentDirectoryPath: currentDirectoryPath,
+                    bundleURL: bundleExecutableURL == nil ? nil : inputFileURL
                 )
             )
         }
