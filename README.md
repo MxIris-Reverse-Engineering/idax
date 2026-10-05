@@ -197,6 +197,34 @@ every cache that opened normally had none. IDA refuses an input whose unpacked
 database is still lying beside it. Clear such leftovers before concluding the
 format is unsupported.
 
+#### Agent plugin
+
+The `idax` plugin teaches coding agents to drive this tool: which subcommand fits
+the input, the universal-binary slice trap, bundles and batches, the dyld cache
+flags that matter, how to tell success from failure, and what leftover working
+databases mean. It is a skill only — install `idax` itself as described above.
+The plugin lives on this branch rather than the default one, so pin the ref when
+adding the marketplace.
+
+**Claude Code** — inside a session:
+
+```
+/plugin marketplace add MxIris-Reverse-Engineering/idax#feat/swift-bindings
+/plugin install idax@idax
+```
+
+**Codex**:
+
+```bash
+codex plugin marketplace add MxIris-Reverse-Engineering/idax --ref feat/swift-bindings
+codex plugin add idax@idax
+```
+
+An installed plugin only picks up a change when its `version` changes. To pull
+one in: `claude plugin marketplace update idax` then
+`claude plugin update idax@idax` for Claude Code,
+`codex plugin marketplace upgrade idax` for Codex.
+
 ---
 
 ## The error model

@@ -1,0 +1,13 @@
+{
+  "name": "idax",
+  "version": "1.0.0",
+  "description": "Teaches coding agents to build IDA Pro databases headlessly with the idax CLI: the right slice of a universal Mach-O, app and framework bundles, batches, and images inside a dyld shared cache.",
+  "author": {
+    "name": "MxIris-Reverse-Engineering",
+    "url": "https://github.com/MxIris-Reverse-Engineering"
+  },
+  "homepage": "https://github.com/MxIris-Reverse-Engineering/idax/tree/feat/swift-bindings#agent-plugin",
+  "repository": "https://github.com/MxIris-Reverse-Engineering/idax",
+  "license": "MIT",
+  "keywords": ["ida-pro", "idalib", "mach-o", "dyld-shared-cache", "reverse-engineering", "disassembly"]
+}

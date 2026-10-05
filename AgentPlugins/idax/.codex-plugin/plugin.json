@@ -1,0 +1,28 @@
+{
+  "name": "idax",
+  "version": "1.0.0",
+  "description": "Teaches coding agents to build IDA Pro databases headlessly with the idax CLI: the right slice of a universal Mach-O, app and framework bundles, batches, and images inside a dyld shared cache.",
+  "author": {
+    "name": "MxIris-Reverse-Engineering",
+    "url": "https://github.com/MxIris-Reverse-Engineering"
+  },
+  "homepage": "https://github.com/MxIris-Reverse-Engineering/idax/tree/feat/swift-bindings#agent-plugin",
+  "repository": "https://github.com/MxIris-Reverse-Engineering/idax",
+  "license": "MIT",
+  "keywords": ["ida-pro", "idalib", "mach-o", "dyld-shared-cache", "reverse-engineering", "disassembly"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "idax",
+    "shortDescription": "Build IDA Pro databases from binaries and dyld caches",
+    "longDescription": "How to drive the idax CLI: idax binary for executables, dylibs and .app / .framework bundles — loading the host's slice of a universal Mach-O where unattended IDA takes x86_64 — several at once with --output-dir and --jobs, idax dyld-cache for frameworks inside a dyld shared cache with --load-got, and idax formats for diagnosis. Covers reading the result honestly and the working-database leftovers that make IDA refuse an input. Requires the idax CLI and IDA Professional 9.4 with idalib.",
+    "developerName": "MxIris-Reverse-Engineering",
+    "category": "Developer Tools",
+    "capabilities": ["Read"],
+    "websiteURL": "https://github.com/MxIris-Reverse-Engineering/idax/tree/feat/swift-bindings#agent-plugin",
+    "defaultPrompt": [
+      "Build an IDA database for this app",
+      "Create an .i64 for AppKit from this dyld shared cache",
+      "Which architecture slice will IDA load from this binary?"
+    ]
+  }
+}

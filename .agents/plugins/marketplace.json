@@ -1,0 +1,20 @@
+{
+  "name": "idax",
+  "interface": {
+    "displayName": "idax"
+  },
+  "plugins": [
+    {
+      "name": "idax",
+      "source": {
+        "source": "local",
+        "path": "./AgentPlugins/idax"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

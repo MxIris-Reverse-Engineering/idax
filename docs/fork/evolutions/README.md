@@ -15,3 +15,4 @@
 | draft | [在 Xcode GUI 里构建原生归档的 SwiftPM command plugin](draft-xcode-gui-build-libs-plugin.md) | Implemented |
 | draft | [一次运行建多个 database，并把 IDA 的工作数据库挪出输入目录](draft-batch-database-creation.md) | Implemented |
 | draft | [`idax binary` 接受 bundle，加载其主二进制](draft-bundle-input.md) | Implemented |
+| draft | [以插件形式提供 `idax` 的 agent skill](draft-agent-plugin.md) | Implemented |

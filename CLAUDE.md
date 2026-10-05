@@ -12,7 +12,9 @@ The project has four surfaces: the C++ static library (`libidax.a`), Rust bindin
 Every upstream C++ file here is byte-identical to upstream. The fork's own code
 lives only in paths upstream does not have — `include/ida/fork/`,
 `src/fork_input_format.cpp`, `bindings/swift/Sources/CIDAXFork/`,
-`bindings/swift/Tools/`, and `docs/fork/`. Before adding anything else, read
+`bindings/swift/Tools/`, `docs/fork/`, and the tool's agent plugin
+(`AgentPlugins/`, listed by `.claude-plugin/marketplace.json` and
+`.agents/plugins/marketplace.json`). Before adding anything else, read
 [the shrink proposal](docs/fork/evolutions/draft-shrink-fork-to-cli.md): keeping
 that intrusion at zero is what makes upstream syncs cheap.
 
@@ -118,6 +120,44 @@ route, which needs `PKG_CONFIG_PATH` set to the CMake-generated metadata — see
 `bindings/swift/README.md`. That fallback is what produces the
 `couldn't find pc file for idax-swift` warning when Xcode resolves the package;
 the link then fails with `library 'idax_swift_native' not found`.
+
+#### idalib constraints the tool is built around
+
+Each was measured, none is visible from the source, and each is costly to
+rediscover. Read the cited record before changing code that depends on one.
+
+- **An input format reaches IDA only through `init_library(argc, argv)`**, as a
+  `-T` argument — never through `open_database`'s argument string, which selects
+  the right loader but aborts in teardown with internal error 30500 and leaves
+  unpacked-database residue. `init_library` runs once per process, which is why a
+  batch builds each input in a child process: one process cannot serve two
+  architecture slices. Measured in
+  [the binary-mode plan](docs/plans/2026-08-28-idax-cli-binary-mode.md); the
+  child-process consequence is in
+  [the batch proposal](docs/fork/evolutions/draft-batch-database-creation.md).
+- **IDA decides where the working database goes from the input's *real* path.**
+  A symbolic link is resolved first, so pointing IDA at one changes nothing. A
+  hard link has no target to resolve and does move it — hence
+  `WorkingDatabaseDirectory`. [Batch proposal](docs/fork/evolutions/draft-batch-database-creation.md).
+- **`-o<path>`, IDA's own switch for this, is unusable from idalib.**
+  `init_library` refuses it outright, and passing it through `open_database`'s
+  argument string relocates the database and then dies in teardown with internal
+  error 30500. `idat -o` works, which proves nothing about idalib.
+  [Batch proposal](docs/fork/evolutions/draft-batch-database-creation.md).
+- **`st_dev` cannot tell macOS's system and data volumes apart** — both report
+  the same device number — so "can I hard-link here?" is only answerable by
+  trying; the sealed system volume refuses, and the input is copied instead.
+  [Batch proposal](docs/fork/evolutions/draft-batch-database-creation.md).
+- **`FileManager.linkItem` and `copyItem` reproduce a symbolic link** rather than
+  linking or copying its target (Apple documents this for `linkItem`). Resolve
+  first; `link(2)` itself follows the link, which is why the trap is easy to
+  miss. [Bundle proposal](docs/fork/evolutions/draft-bundle-input.md).
+- **`Bundle.executableURL` does not guarantee a file.** For a versioned framework
+  it returns the top-level link `Foo.framework/Foo`; for an on-disk system
+  framework such as AppKit it returns a dangling link, and for a simulator
+  runtime's UIKit it returns nil even though `CFBundleExecutable` is set. Check
+  existence, and read `CFBundleExecutable` to tell "named but absent" from "not
+  a bundle". [Bundle proposal](docs/fork/evolutions/draft-bundle-input.md).
 
 ## Architecture
 
@@ -238,7 +278,12 @@ It is kept because `.agents/fork/` still has to be read as history. For new fork
 2. Code-review findings ruled a false positive or not worth fixing go in
    `docs/fork/adjudicated-findings.md`, with the reasoning that makes the ruling checkable
    next time.
-3. Everything else the repository already records — code structure, git history — is not
+3. A change to the `idax` surface the agent plugin describes — a subcommand, an option, a
+   message or exit status it tells agents to rely on — updates
+   `AgentPlugins/idax/skills/idax-cli/SKILL.md` in the same commit and bumps `version` in
+   both `AgentPlugins/idax/.claude-plugin/plugin.json` and `.codex-plugin/plugin.json`:
+   Claude Code and Codex update an installed plugin only when that version changes.
+4. Everything else the repository already records — code structure, git history — is not
    duplicated into a ledger.
 
 The frozen protocol, for reading `.agents/fork/`:

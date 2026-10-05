@@ -1,0 +1,17 @@
+{
+  "name": "idax",
+  "owner": {
+    "name": "MxIris-Reverse-Engineering",
+    "url": "https://github.com/MxIris-Reverse-Engineering"
+  },
+  "metadata": {
+    "description": "Agent plugin for the idax command-line tool."
+  },
+  "plugins": [
+    {
+      "name": "idax",
+      "source": "./AgentPlugins/idax",
+      "description": "Teaches coding agents to build IDA Pro databases headlessly with the idax CLI: the right slice of a universal Mach-O, app and framework bundles, batches, and images inside a dyld shared cache."
+    }
+  ]
+}
